@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Reservation Confirmed | ER Limousine Service</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <nav class="nav">
+    <div class="wrap nav-inner">
+      <a class="brand" href="/">ER <span>LIMOUSINE</span> SERVICE</a>
+      <a class="nav-cta" href="/">Home</a>
+    </div>
+  </nav>
+
+  <main class="section">
+    <div class="wrap" style="max-width:760px">
+      <div class="booking-card">
+        <div class="eyebrow">Reservation received</div>
+        <h2 style="margin-top:10px">Thank you.</h2>
+        <p id="message">Checking your reservation…</p>
+        <div id="details"></div>
+        <div class="hero-actions">
+          <a class="btn btn-primary" href="/">Book another ride</a>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    (async function () {
+      const params = new URLSearchParams(location.search);
+      const id = params.get("booking");
+      const message = document.getElementById("message");
+      const details = document.getElementById("details");
+
+      if (!id) {
+        message.textContent = "Reservation reference is missing.";
+        return;
+      }
+
+      try {
+        const response = await fetch("/api/booking/" + encodeURIComponent(id));
+        const booking = await response.json();
+        if (!response.ok) throw new Error(booking.error || "Unable to load reservation.");
+
+        message.textContent =
+          booking.paymentStatus === "paid"
+            ? "Payment received. Your reservation is confirmed."
+            : "Payment was submitted. Confirmation may take a few seconds.";
+
+        const q = booking.quote;
+        const t = booking.trip;
+        details.innerHTML = `
+          <div class="summary-row"><span>Reservation</span><strong>${booking.id.slice(0,8).toUpperCase()}</strong></div>
+          <div class="summary-row"><span>Pickup</span><strong>${escapeHtml(t.pickup)}</strong></div>
+          <div class="summary-row"><span>Destination</span><strong>${escapeHtml(t.dropoff)}</strong></div>
+          <div class="summary-row"><span>Date / time</span><strong>${escapeHtml(t.date)} ${escapeHtml(t.time)}</strong></div>
+          <div class="summary-row"><span>Vehicle</span><strong>${escapeHtml(q.vehicle)}</strong></div>
+          <div class="summary-row"><span>Total</span><strong>$${Number(q.total).toFixed(2)}</strong></div>
+          <div class="summary-row"><span>Status</span><strong>${escapeHtml(booking.status)}</strong></div>
+        `;
+      } catch (err) {
+        message.textContent = err.message;
+      }
+
+      function escapeHtml(value) {
+        return String(value || "")
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#039;");
+      }
+    })();
+  </script>
+</body>
+</html>

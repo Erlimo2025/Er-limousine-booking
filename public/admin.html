@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dispatch | ER Limousine Service</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <nav class="nav">
+    <div class="wrap nav-inner">
+      <div class="brand">ER <span>DISPATCH</span></div>
+      <a class="nav-cta" href="/">Customer site</a>
+    </div>
+  </nav>
+
+  <main class="section">
+    <div class="wrap">
+      <div class="section-head">
+        <div class="eyebrow">Private dashboard</div>
+        <h2>Bookings & dispatch</h2>
+        <p>Enter your admin token to view reservations, assign chauffeurs and update trip status.</p>
+      </div>
+
+      <div class="booking-card" style="margin-bottom:18px">
+        <div class="form-grid">
+          <div class="field full">
+            <label>Admin token</label>
+            <input id="token" type="password" placeholder="ADMIN_TOKEN from your .env file">
+          </div>
+        </div>
+        <div class="hero-actions">
+          <button class="btn btn-primary" id="loadBtn">Load bookings</button>
+        </div>
+        <div id="notice" class="notice"></div>
+      </div>
+
+      <div id="bookings" class="admin-grid"></div>
+    </div>
+  </main>
+
+  <script src="/admin.js"></script>
+</body>
+</html>
