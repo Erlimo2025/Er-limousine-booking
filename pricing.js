@@ -1,9 +1,9 @@
 /**
- * TEMPORARY $5 PAYMENT TEST
  * ER Limousine Service LLC
+ * Production pricing
  *
- * This pricing is ONLY being used to test the live Stripe
- * payment and webhook connection.
+ * The server—not the browser—uses this file to calculate prices.
+ * That prevents a customer from changing the fare in their browser.
  */
 
 module.exports = {
@@ -12,29 +12,20 @@ module.exports = {
   vehicleRates: {
     sedan: {
       label: "Luxury Sedan",
-      baseFare: 5,
-      perMile: 0,
-      perMinute: 0,
-      minimumFare: 5,
+      baseFare: 20,
+      perMile: 4,
+      perMinute: 1,
+      minimumFare: 20,
       maxPassengers: 3
     },
 
     suv: {
       label: "Black SUV",
-      baseFare: 5,
-      perMile: 0,
-      perMinute: 0,
-      minimumFare: 5,
+      baseFare: 20,
+      perMile: 4,
+      perMinute: 1,
+      minimumFare: 20,
       maxPassengers: 6
-    },
-
-    sprinter: {
-      label: "Executive Sprinter",
-      baseFare: 5,
-      perMile: 0,
-      perMinute: 0,
-      minimumFare: 5,
-      maxPassengers: 12
     }
   },
 
