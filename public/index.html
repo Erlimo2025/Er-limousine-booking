@@ -3,192 +3,885 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>ER Limousine Service | Chauffeur & Airport Transportation</title>
-  <meta name="description" content="Private chauffeur, airport transfer, black SUV and executive transportation in New Jersey and New York.">
+  <title>ER Limousine Service | New Jersey & New York</title>
+  <meta name="description" content="Premium private chauffeur, airport transfer and black SUV transportation across New Jersey and New York.">
   <link rel="stylesheet" href="/styles.css">
 </head>
+
 <body>
-  <nav class="nav">
-    <div class="wrap nav-inner">
-      <a class="brand" href="/">ER <span>LIMOUSINE</span> SERVICE</a>
-      <div class="nav-links">
-        <a href="#services">Services</a>
-        <a href="#fleet">Fleet</a>
-        <a href="#book">Book</a>
-      </div>
-      <a class="nav-cta" href="#book">Reserve a ride</a>
+
+<nav class="nav">
+  <div class="wrap nav-inner">
+
+    <a class="brand" href="#home">
+      <span class="brand-er">ER</span>
+      <span class="brand-name">
+        <strong>LIMOUSINE SERVICE LLC</strong>
+        <small>LUXURY • RELIABILITY • ALWAYS ON TIME</small>
+      </span>
+    </a>
+
+    <div class="nav-links">
+      <a href="#home">Home</a>
+      <a href="#book">Book a Ride</a>
+      <a href="#fleet">Our Fleet</a>
+      <a href="#services">Airport Service</a>
+      <a href="#about">About Us</a>
+      <a href="#contact">Contact</a>
     </div>
-  </nav>
 
-  <main>
-    <section class="wrap hero">
-      <div>
-        <div class="eyebrow">Private chauffeur service</div>
-        <h1>Arrive with confidence.</h1>
-        <p>
-          Professional black-car transportation for airport transfers, business travel,
-          point-to-point service and hourly chauffeur bookings across New Jersey and New York.
-        </p>
-        <div class="hero-actions">
-          <a class="btn btn-primary" href="#book">Get instant quote</a>
-          <a class="btn btn-secondary" href="#fleet">View fleet</a>
+    <a class="nav-cta" href="#book">Book Now</a>
+
+  </div>
+</nav>
+
+
+<main>
+
+<!-- HERO -->
+<section class="premium-hero" id="home">
+
+  <div class="hero-dark-overlay"></div>
+
+  <div class="wrap premium-hero-inner">
+
+    <div class="premium-copy">
+
+      <div class="eyebrow">ER LIMOUSINE SERVICE LLC</div>
+
+      <h1>
+        Premium Transportation
+        <span>Across New Jersey & New York</span>
+      </h1>
+
+      <p class="hero-subtitle">
+        Airports • Corporate Travel • Private Chauffeur • Special Events
+      </p>
+
+      <div class="hero-features">
+
+        <div>
+          <span class="feature-icon">✈</span>
+          <strong>Airport<br>Transfers</strong>
         </div>
+
+        <div>
+          <span class="feature-icon">▣</span>
+          <strong>Corporate<br>Accounts</strong>
+        </div>
+
+        <div>
+          <span class="feature-icon">♟</span>
+          <strong>Professional<br>Chauffeurs</strong>
+        </div>
+
+        <div>
+          <span class="feature-icon">◷</span>
+          <strong>On-Time<br>Service</strong>
+        </div>
+
       </div>
 
-      <div class="hero-card">
-        <div class="car">
-          <div class="car-shape"></div>
-          <div class="car-caption">
-            <strong>Black SUV Service</strong><br>
-            <span style="color:#c7c2b6">Airport • Corporate • Hourly</span>
-          </div>
-        </div>
-        <div class="stats">
-          <div class="stat"><b>24/7</b><small>Reservation access</small></div>
-          <div class="stat"><b>Private</b><small>Door-to-door service</small></div>
-          <div class="stat"><b>Secure</b><small>Online payment</small></div>
-        </div>
+    </div>
+
+
+    <!-- BOOKING PANEL -->
+    <div class="quick-booking" id="book">
+
+      <h2>Book Your Ride</h2>
+
+      <div class="trip-tabs">
+
+        <button
+          type="button"
+          class="trip-tab active"
+          data-trip-type="oneway">
+          One Way
+        </button>
+
+        <button
+          type="button"
+          class="trip-tab"
+          data-trip-type="roundtrip">
+          Round Trip
+        </button>
+
+        <button
+          type="button"
+          class="trip-tab"
+          data-trip-type="airport">
+          Airport
+        </button>
+
+        <button
+          type="button"
+          class="trip-tab"
+          data-trip-type="hourly">
+          Hourly
+        </button>
+
       </div>
-    </section>
 
-    <section id="services" class="section">
-      <div class="wrap">
-        <div class="section-head">
-          <div class="eyebrow">Services</div>
-          <h2>Built around your schedule.</h2>
-          <p>Airport transportation, direct city rides, hourly chauffeur service and private executive travel.</p>
-        </div>
-        <div class="cards">
-          <div class="card">
-            <div class="eyebrow">01</div>
-            <h3>Airport Transfers</h3>
-            <p>EWR, JFK, LGA and Teterboro pickup and drop-off with flight-number collection.</p>
+
+      <form id="bookingForm">
+
+        <input
+          type="hidden"
+          id="tripType"
+          name="tripType"
+          value="oneway"
+        >
+
+
+        <div class="field full">
+          <label for="pickup">Pickup Location</label>
+
+          <input
+            id="pickup"
+            name="pickup"
+            autocomplete="off"
+            placeholder="Enter pickup address"
+            required
+          >
+
+          <div
+            id="pickupSuggestions"
+            class="address-suggestions">
           </div>
-          <div class="card">
-            <div class="eyebrow">02</div>
-            <h3>Point-to-Point</h3>
-            <p>Private transportation between homes, hotels, offices, venues and cruise terminals.</p>
+        </div>
+
+
+        <div class="field full" id="dropoffField">
+          <label for="dropoff">Drop-off Location</label>
+
+          <input
+            id="dropoff"
+            name="dropoff"
+            autocomplete="off"
+            placeholder="Enter destination"
+            required
+          >
+
+          <div
+            id="dropoffSuggestions"
+            class="address-suggestions">
           </div>
-          <div class="card">
-            <div class="eyebrow">03</div>
-            <h3>Hourly Chauffeur</h3>
-            <p>Keep the vehicle and chauffeur on standby for meetings, events and multi-stop itineraries.</p>
+        </div>
+
+
+        <div class="two-fields">
+
+          <div class="field">
+            <label for="date">Date</label>
+
+            <input
+              type="date"
+              id="date"
+              name="date"
+              required
+            >
           </div>
-        </div>
-      </div>
-    </section>
 
-    <section id="fleet" class="section">
-      <div class="wrap">
-        <div class="section-head">
-          <div class="eyebrow">Fleet</div>
-          <h2>Choose the right vehicle.</h2>
-          <p>The pricing engine supports separate rates and passenger limits for each vehicle class.</p>
-        </div>
-        <div class="cards">
-          <div class="card"><h3>Luxury Sedan</h3><p>Up to 3 passengers.</p><div class="price">Business & airport travel</div></div>
-          <div class="card"><h3>Black SUV</h3><p>Up to 6 passengers.</p><div class="price">Suburban / Escalade class</div></div>
-        </div>
-      </div>
-    </section>
 
-    <section id="book" class="section">
-      <div class="wrap">
-        <div class="section-head">
-          <div class="eyebrow">Online booking</div>
-          <h2>Quote. Reserve. Pay.</h2>
-          <p>Enter your trip details, receive a live route-based quote and continue to secure checkout.</p>
+          <div class="field">
+            <label for="time">Pickup Time</label>
+
+            <input
+              type="time"
+              id="time"
+              name="time"
+              required
+            >
+          </div>
+
         </div>
 
-        <div class="booking-shell">
-          <form class="booking-card" id="bookingForm">
-            <div class="form-grid">
-              <div class="field full">
-                <label for="pickup">Pickup address</label>
-                <input id="pickup" name="pickup" placeholder="547 Argyle Ave, Orange, NJ" required>
-              </div>
-              <div class="field full">
-                <label for="dropoff">Destination</label>
-                <input id="dropoff" name="dropoff" placeholder="Newark Liberty International Airport" required>
-              </div>
-              <div class="field">
-                <label for="date">Date</label>
-                <input type="date" id="date" name="date" required>
-              </div>
-              <div class="field">
-                <label for="time">Pickup time</label>
-                <input type="time" id="time" name="time" required>
-              </div>
-              <div class="field">
-                <label for="vehicle">Vehicle</label>
-                <select id="vehicle" name="vehicle" required>
-                  <option value="sedan">Luxury Sedan</option>
-                  <option value="suv" selected>Black SUV</option>
-                </select>
-              </div>
-              <div class="field">
-                <label for="passengers">Passengers</label>
-                <input type="number" id="passengers" name="passengers" min="1" max="12" value="1" required>
-              </div>
-              <div class="field">
-                <label for="firstName">First name</label>
-                <input id="firstName" name="firstName" required>
-              </div>
-              <div class="field">
-                <label for="lastName">Last name</label>
-                <input id="lastName" name="lastName" required>
-              </div>
-              <div class="field">
-                <label for="email">Email</label>
-                <input type="email" id="email" name="email" required>
-              </div>
-              <div class="field">
-                <label for="phone">Mobile phone</label>
-                <input type="tel" id="phone" name="phone" required>
-              </div>
-              <div class="field">
-                <label for="flightNumber">Flight number</label>
-                <input id="flightNumber" name="flightNumber" placeholder="Optional">
-              </div>
-              <div class="field">
-                <label for="notes">Special notes</label>
-                <input id="notes" name="notes" placeholder="Car seat, luggage, meet & greet...">
-              </div>
+
+        <!-- ROUND TRIP RETURN -->
+        <div
+          class="two-fields hidden-field"
+          id="returnFields">
+
+          <div class="field">
+            <label for="returnDate">Return Date</label>
+
+            <input
+              type="date"
+              id="returnDate"
+              name="returnDate"
+            >
+          </div>
+
+          <div class="field">
+            <label for="returnTime">Return Time</label>
+
+            <input
+              type="time"
+              id="returnTime"
+              name="returnTime"
+            >
+          </div>
+
+        </div>
+
+
+        <!-- HOURLY -->
+        <div
+          class="field full hidden-field"
+          id="hourlyField">
+
+          <label for="hours">
+            Number of Hours
+          </label>
+
+          <select id="hours" name="hours">
+
+            <option value="3">
+              3 Hours — $390
+            </option>
+
+            <option value="3.5">
+              3.5 Hours — $455
+            </option>
+
+            <option value="4">
+              4 Hours — $520
+            </option>
+
+            <option value="4.5">
+              4.5 Hours — $585
+            </option>
+
+            <option value="5">
+              5 Hours — $650
+            </option>
+
+            <option value="5.5">
+              5.5 Hours — $715
+            </option>
+
+            <option value="6">
+              6 Hours — $780
+            </option>
+
+            <option value="7">
+              7 Hours — $910
+            </option>
+
+            <option value="8">
+              8 Hours — $1,040
+            </option>
+
+          </select>
+
+          <small>
+            Black SUV only • $130/hour • 3-hour minimum
+          </small>
+
+        </div>
+
+
+        <div class="two-fields">
+
+          <div class="field">
+
+            <label for="passengers">
+              Passengers
+            </label>
+
+            <select
+              id="passengers"
+              name="passengers"
+              required>
+
+              <option value="1">1 Passenger</option>
+              <option value="2">2 Passengers</option>
+              <option value="3">3 Passengers</option>
+              <option value="4">4 Passengers</option>
+              <option value="5">5 Passengers</option>
+              <option value="6">6 Passengers</option>
+
+            </select>
+
+          </div>
+
+
+          <div class="field">
+
+            <label for="vehicle">
+              Vehicle Type
+            </label>
+
+            <select
+              id="vehicle"
+              name="vehicle"
+              required>
+
+              <option value="sedan">
+                Luxury Sedan
+              </option>
+
+              <option value="suv" selected>
+                Black SUV
+              </option>
+
+            </select>
+
+          </div>
+
+        </div>
+
+
+        <!-- FLIGHT -->
+        <div
+          class="field full"
+          id="flightField">
+
+          <label for="flightNumber">
+            Flight Number
+          </label>
+
+          <input
+            id="flightNumber"
+            name="flightNumber"
+            placeholder="Optional for airport pickups"
+          >
+
+        </div>
+
+
+        <div class="customer-details">
+
+          <h3>Passenger Information</h3>
+
+
+          <div class="two-fields">
+
+            <div class="field">
+
+              <label for="firstName">
+                First Name
+              </label>
+
+              <input
+                id="firstName"
+                name="firstName"
+                required
+              >
+
             </div>
 
-            <div id="notice" class="notice"></div>
-            <div class="hero-actions">
-              <button class="btn btn-secondary" type="button" id="quoteBtn">Calculate quote</button>
-              <button class="btn btn-primary" type="submit" id="payBtn" disabled>Reserve & pay</button>
+
+            <div class="field">
+
+              <label for="lastName">
+                Last Name
+              </label>
+
+              <input
+                id="lastName"
+                name="lastName"
+                required
+              >
+
             </div>
-          </form>
 
-          <aside class="summary-card">
-            <h3>Trip summary</h3>
-            <div class="summary-row"><span>Vehicle</span><strong id="sumVehicle">Black SUV</strong></div>
-            <div class="summary-row"><span>Distance</span><strong id="sumMiles">—</strong></div>
-            <div class="summary-row"><span>Estimated drive time</span><strong id="sumMinutes">—</strong></div>
-            <div class="summary-row"><span>Total</span><strong class="quote-price" id="sumTotal">—</strong></div>
-            <p class="summary-note">
-              Final pricing is calculated securely by the server. Configure your own mileage,
-              time, minimum-fare and surcharge rules before launch.
-            </p>
-          </aside>
+          </div>
+
+
+          <div class="two-fields">
+
+            <div class="field">
+
+              <label for="email">
+                Email
+              </label>
+
+              <input
+                type="email"
+                id="email"
+                name="email"
+                required
+              >
+
+            </div>
+
+
+            <div class="field">
+
+              <label for="phone">
+                Mobile Phone
+              </label>
+
+              <input
+                type="tel"
+                id="phone"
+                name="phone"
+                required
+              >
+
+            </div>
+
+          </div>
+
+
+          <div class="field full">
+
+            <label for="notes">
+              Special Requests
+            </label>
+
+            <input
+              id="notes"
+              name="notes"
+              placeholder="Luggage, meet & greet, special instructions..."
+            >
+
+          </div>
+
         </div>
-      </div>
-    </section>
-  </main>
 
-  <footer class="footer">
-    <div class="wrap footer-grid">
-      <div>
-        <strong>ER Limousine Service LLC</strong><br>
-        <span>New Jersey & New York chauffeur transportation</span>
-      </div>
-      <div id="contactBlock">Loading contact information…</div>
+
+        <div id="notice" class="notice"></div>
+
+
+        <button
+          class="btn btn-primary main-quote-btn"
+          type="button"
+          id="quoteBtn">
+          Get Quote
+        </button>
+
+
+        <button
+          class="btn btn-pay"
+          type="submit"
+          id="payBtn"
+          disabled>
+          Reserve & Pay
+        </button>
+
+
+        <div class="secure-line">
+          🔒 Safe & Secure Booking
+          <span>•</span>
+          Pay Online
+        </div>
+
+      </form>
+
     </div>
-  </footer>
 
-  <script src="/app.js"></script>
+  </div>
+
+</section>
+
+
+<!-- TRIP SUMMARY -->
+<section class="quote-area">
+
+  <div class="wrap">
+
+    <aside class="summary-card">
+
+      <div class="summary-heading">
+        <div class="eyebrow">YOUR QUOTE</div>
+        <h3>Trip Summary</h3>
+      </div>
+
+
+      <div class="summary-grid">
+
+        <div class="summary-row">
+          <span>Vehicle</span>
+          <strong id="sumVehicle">
+            Black SUV
+          </strong>
+        </div>
+
+
+        <div class="summary-row">
+          <span>Distance</span>
+          <strong id="sumMiles">—</strong>
+        </div>
+
+
+        <div class="summary-row">
+          <span>Estimated Drive Time</span>
+          <strong id="sumMinutes">—</strong>
+        </div>
+
+
+        <div class="summary-row total-row">
+          <span>Total</span>
+
+          <strong
+            class="quote-price"
+            id="sumTotal">
+            —
+          </strong>
+        </div>
+
+      </div>
+
+
+      <p class="summary-note">
+        Your fare is calculated securely before payment.
+      </p>
+
+    </aside>
+
+  </div>
+
+</section>
+
+
+<!-- FLEET -->
+<section id="fleet" class="fleet-section">
+
+  <div class="wrap">
+
+    <div class="section-title">
+
+      <div class="eyebrow">
+        OUR FLEET
+      </div>
+
+      <h2>
+        Travel in Comfort & Style
+      </h2>
+
+      <p>
+        Professional chauffeur service with premium,
+        impeccably maintained vehicles.
+      </p>
+
+    </div>
+
+
+    <div class="fleet-grid">
+
+
+      <!-- SEDAN -->
+      <article class="fleet-card">
+
+        <div class="vehicle-image sedan-image">
+
+          <div class="vehicle-placeholder">
+            LUXURY SEDAN
+          </div>
+
+        </div>
+
+
+        <div class="fleet-content">
+
+          <h3>Luxury Sedan</h3>
+
+          <p class="passenger-count">
+            👤 1–3 Passengers
+          </p>
+
+
+          <div class="fleet-features">
+
+            <span>Comfort</span>
+            <span>Privacy</span>
+            <span>Business Travel</span>
+
+          </div>
+
+
+          <a
+            href="#book"
+            class="fleet-button"
+            data-select-vehicle="sedan">
+            Book Luxury Sedan
+          </a>
+
+        </div>
+
+      </article>
+
+
+      <!-- 2025 SUBURBAN -->
+      <article class="fleet-card featured">
+
+        <div class="popular-badge">
+          MOST POPULAR
+        </div>
+
+
+        <div class="vehicle-image suburban-image">
+
+          <div class="vehicle-placeholder">
+            2025 CHEVROLET SUBURBAN PREMIER
+          </div>
+
+        </div>
+
+
+        <div class="fleet-content">
+
+          <h3>Black SUV</h3>
+
+          <p class="vehicle-subtitle">
+            2025 Chevrolet Suburban Premier
+          </p>
+
+          <p class="passenger-count">
+            👤 1–6 Passengers
+          </p>
+
+
+          <div class="fleet-features">
+
+            <span>Spacious</span>
+            <span>Luggage</span>
+            <span>Premium Comfort</span>
+
+          </div>
+
+
+          <a
+            href="#book"
+            class="fleet-button"
+            data-select-vehicle="suv">
+            Book Black SUV
+          </a>
+
+        </div>
+
+      </article>
+
+    </div>
+
+  </div>
+
+</section>
+
+
+<!-- SERVICE STRIP -->
+<section
+  id="services"
+  class="service-strip">
+
+  <div class="wrap service-grid">
+
+
+    <div class="service-item">
+
+      <div class="service-icon">✈</div>
+
+      <div>
+        <strong>EWR, JFK & LGA</strong>
+        <span>Airport Transportation</span>
+      </div>
+
+    </div>
+
+
+    <div class="service-item">
+
+      <div class="service-icon">▣</div>
+
+      <div>
+        <strong>Secure Online Payment</strong>
+        <span>Fast & Secure Checkout</span>
+      </div>
+
+    </div>
+
+
+    <div class="service-item">
+
+      <div class="service-icon">◆</div>
+
+      <div>
+        <strong>Professional Service</strong>
+        <span>Comfort & Reliability</span>
+      </div>
+
+    </div>
+
+
+    <div class="service-item">
+
+      <div class="service-icon">☎</div>
+
+      <div>
+        <strong>24/7 Available</strong>
+        <span>Reserve Online Anytime</span>
+      </div>
+
+    </div>
+
+  </div>
+
+</section>
+
+
+<!-- ABOUT / TRUST -->
+<section
+  id="about"
+  class="trust-section">
+
+  <div class="wrap trust-inner">
+
+    <div class="trust-copy">
+
+      <div class="eyebrow">
+        ER LIMOUSINE SERVICE LLC
+      </div>
+
+      <h2>
+        Your Time Matters.
+      </h2>
+
+      <p>
+        Let ER Limousine Service take you there.
+        Premium private transportation throughout
+        New Jersey and New York.
+      </p>
+
+
+      <div class="trust-buttons">
+
+        <a
+          href="#book"
+          class="btn btn-primary">
+          Book Now
+        </a>
+
+        <a
+          href="#book"
+          class="btn btn-outline">
+          Get a Quote
+        </a>
+
+      </div>
+
+    </div>
+
+
+    <div class="promise-grid">
+
+
+      <div class="promise">
+
+        <strong>100%</strong>
+
+        <span>
+          On-Time Service
+        </span>
+
+      </div>
+
+
+      <div class="promise">
+
+        <strong>24/7</strong>
+
+        <span>
+          Available
+        </span>
+
+      </div>
+
+
+      <div class="promise">
+
+        <strong>5★</strong>
+
+        <span>
+          Service
+        </span>
+
+      </div>
+
+
+    </div>
+
+  </div>
+
+</section>
+
+</main>
+
+
+<!-- FOOTER -->
+<footer
+  class="footer"
+  id="contact">
+
+  <div class="wrap footer-grid">
+
+
+    <div class="footer-brand">
+
+      <strong>
+        ER Limousine Service LLC
+      </strong>
+
+      <p>
+        Premium New Jersey & New York
+        chauffeur transportation.
+      </p>
+
+    </div>
+
+
+    <div>
+
+      <strong>Contact</strong>
+
+      <p id="contactBlock">
+        Loading contact information…
+      </p>
+
+    </div>
+
+
+    <div>
+
+      <strong>Services</strong>
+
+      <p>
+        Airport Transfers<br>
+        Point-to-Point<br>
+        Round Trip<br>
+        Black SUV Hourly Service
+      </p>
+
+    </div>
+
+
+    <div>
+
+      <strong>Quick Links</strong>
+
+      <p>
+        <a href="#book">Book a Ride</a><br>
+        <a href="#fleet">Our Fleet</a><br>
+        <a href="/admin.html">Private Dashboard</a>
+      </p>
+
+    </div>
+
+  </div>
+
+
+  <div class="footer-bottom">
+
+    © ER Limousine Service LLC.
+    All rights reserved.
+
+  </div>
+
+</footer>
+
+
+<script src="/app.js"></script>
+
 </body>
 </html>
