@@ -8,7 +8,6 @@ const crypto = require("crypto");
 const pricing = require("./pricing");
 
 const app = express();
-
 const PORT = process.env.PORT || 3000;
 
 const SITE_URL =
@@ -34,47 +33,32 @@ function ensureDataFile() {
   const dir = path.dirname(DATA_FILE);
 
   if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, {
-      recursive: true
-    });
+    fs.mkdirSync(dir, { recursive: true });
   }
 
   if (!fs.existsSync(DATA_FILE)) {
-    fs.writeFileSync(
-      DATA_FILE,
-      "[]",
-      "utf8"
-    );
+    fs.writeFileSync(DATA_FILE, "[]", "utf8");
   }
 }
-
 
 function readBookings() {
   ensureDataFile();
 
   try {
     return JSON.parse(
-      fs.readFileSync(
-        DATA_FILE,
-        "utf8"
-      )
+      fs.readFileSync(DATA_FILE, "utf8")
     );
   } catch (_) {
     return [];
   }
 }
 
-
 function writeBookings(bookings) {
   ensureDataFile();
 
   fs.writeFileSync(
     DATA_FILE,
-    JSON.stringify(
-      bookings,
-      null,
-      2
-    ),
+    JSON.stringify(bookings, null, 2),
     "utf8"
   );
 }
@@ -84,40 +68,26 @@ function writeBookings(bookings) {
    HELPERS
 ========================================= */
 
-function sanitizeText(
-  value,
-  max = 200
-) {
+function sanitizeText(value, max = 200) {
   return String(value || "")
     .trim()
     .slice(0, max);
 }
 
-
 function money(number) {
   return (
-    Math.round(
-      Number(number || 0) * 100
-    ) / 100
+    Math.round(Number(number || 0) * 100) /
+    100
   );
 }
 
-
 function normalizePromoCode(value) {
-  return sanitizeText(
-    value,
-    30
-  ).toUpperCase();
+  return sanitizeText(value, 30).toUpperCase();
 }
-
 
 function normalizeEmail(value) {
-  return sanitizeText(
-    value,
-    160
-  ).toLowerCase();
+  return sanitizeText(value, 160).toLowerCase();
 }
-
 
 function normalizePhone(value) {
   return String(value || "")
@@ -129,72 +99,40 @@ function normalizePhone(value) {
    FIRST-RIDE CHECK
 ========================================= */
 
-function hasPreviousPaidRide(
-  email,
-  phone
-) {
-
+function hasPreviousPaidRide(email, phone) {
   const customerEmail =
     normalizeEmail(email);
 
   const customerPhone =
     normalizePhone(phone);
 
-
-  if (
-    !customerEmail &&
-    !customerPhone
-  ) {
+  if (!customerEmail && !customerPhone) {
     return false;
   }
 
-
-  const bookings =
-    readBookings();
-
-
-  return bookings.some(
-    (booking) => {
-
-      if (
-        booking.paymentStatus !==
-        "paid"
-      ) {
-        return false;
-      }
-
-
-      const oldEmail =
-        normalizeEmail(
-          booking.customer?.email
-        );
-
-      const oldPhone =
-        normalizePhone(
-          booking.customer?.phone
-        );
-
-
-      const sameEmail =
-        customerEmail &&
-        oldEmail &&
-        customerEmail ===
-          oldEmail;
-
-
-      const samePhone =
-        customerPhone &&
-        oldPhone &&
-        customerPhone ===
-          oldPhone;
-
-
-      return Boolean(
-        sameEmail ||
-        samePhone
-      );
+  return readBookings().some((booking) => {
+    if (booking.paymentStatus !== "paid") {
+      return false;
     }
-  );
+
+    const oldEmail =
+      normalizeEmail(booking.customer?.email);
+
+    const oldPhone =
+      normalizePhone(booking.customer?.phone);
+
+    const sameEmail =
+      customerEmail &&
+      oldEmail &&
+      customerEmail === oldEmail;
+
+    const samePhone =
+      customerPhone &&
+      oldPhone &&
+      customerPhone === oldPhone;
+
+    return Boolean(sameEmail || samePhone);
+  });
 }
 
 
@@ -203,22 +141,16 @@ function hasPreviousPaidRide(
 ========================================= */
 
 function getPromotion(body) {
-
   const code =
-    normalizePromoCode(
-      body.promoCode
-    );
-
+    normalizePromoCode(body.promoCode);
 
   if (!code) {
     return null;
   }
 
-
   const promotion =
     pricing.promotions &&
     pricing.promotions[code];
-
 
   if (
     !promotion ||
@@ -229,7 +161,6 @@ function getPromotion(body) {
     );
   }
 
-
   if (
     promotion.firstRideOnly &&
     hasPreviousPaidRide(
@@ -237,32 +168,23 @@ function getPromotion(body) {
       body.phone
     )
   ) {
-
     throw new Error(
       `${code} is only available for your first ride.`
     );
   }
 
-
   const percentOff =
-    Number(
-      promotion.percentOff
-    );
-
+    Number(promotion.percentOff);
 
   if (
-    !Number.isFinite(
-      percentOff
-    ) ||
+    !Number.isFinite(percentOff) ||
     percentOff <= 0 ||
     percentOff > 100
   ) {
-
     throw new Error(
       "Promo code is not configured correctly."
     );
   }
-
 
   return {
     code,
@@ -279,7 +201,6 @@ function getPromotion(body) {
 ========================================= */
 
 function validateBookingInput(body) {
-
   const required = [
     "pickup",
     "dropoff",
@@ -292,15 +213,11 @@ function validateBookingInput(body) {
     "phone"
   ];
 
-
   const missing =
     required.filter(
       (key) =>
-        !sanitizeText(
-          body[key]
-        )
+        !sanitizeText(body[key])
     );
-
 
   if (missing.length) {
     throw new Error(
@@ -308,28 +225,17 @@ function validateBookingInput(body) {
     );
   }
 
-
-  if (
-    !pricing.vehicleRates[
-      body.vehicle
-    ]
-  ) {
+  if (!pricing.vehicleRates[body.vehicle]) {
     throw new Error(
       "Unknown vehicle type."
     );
   }
 
-
   const passengers =
-    Number(
-      body.passengers || 1
-    );
-
+    Number(body.passengers || 1);
 
   if (
-    !Number.isFinite(
-      passengers
-    ) ||
+    !Number.isFinite(passengers) ||
     passengers < 1
   ) {
     throw new Error(
@@ -337,18 +243,12 @@ function validateBookingInput(body) {
     );
   }
 
-
   const maxPassengers =
     pricing.vehicleRates[
       body.vehicle
     ].maxPassengers;
 
-
-  if (
-    passengers >
-    maxPassengers
-  ) {
-
+  if (passengers > maxPassengers) {
     throw new Error(
       `${
         pricing.vehicleRates[
@@ -370,11 +270,8 @@ async function getRouteEstimate(
   origin,
   destination
 ) {
-
   const key =
-    process.env
-      .GOOGLE_MAPS_API_KEY;
-
+    process.env.GOOGLE_MAPS_API_KEY;
 
   if (!key) {
     throw new Error(
@@ -382,14 +279,9 @@ async function getRouteEstimate(
     );
   }
 
-
-  const url =
-    "https://routes.googleapis.com/directions/v2:computeRoutes";
-
-
   const response =
     await fetch(
-      url,
+      "https://routes.googleapis.com/directions/v2:computeRoutes",
       {
         method: "POST",
 
@@ -404,48 +296,38 @@ async function getRouteEstimate(
             "routes.distanceMeters,routes.duration"
         },
 
-        body:
-          JSON.stringify({
-            origin: {
-              address:
-                origin
-            },
+        body: JSON.stringify({
+          origin: {
+            address: origin
+          },
 
-            destination: {
-              address:
-                destination
-            },
+          destination: {
+            address: destination
+          },
 
-            travelMode:
-              "DRIVE",
+          travelMode: "DRIVE",
 
-            routingPreference:
-              "TRAFFIC_AWARE"
-          })
+          routingPreference:
+            "TRAFFIC_AWARE"
+        })
       }
     );
 
-
   if (!response.ok) {
-
     const detail =
       await response.text();
-
 
     throw new Error(
       `Route lookup failed (${response.status}): ${detail.slice(0, 300)}`
     );
   }
 
-
   const data =
     await response.json();
-
 
   const route =
     data.routes &&
     data.routes[0];
-
 
   if (!route) {
     throw new Error(
@@ -453,31 +335,316 @@ async function getRouteEstimate(
     );
   }
 
-
   const miles =
     route.distanceMeters /
     1609.344;
 
-
   const seconds =
     Number(
       String(
-        route.duration ||
-        "0s"
-      ).replace(
-        "s",
-        ""
-      )
+        route.duration || "0s"
+      ).replace("s", "")
     );
-
-
-  const minutes =
-    seconds / 60;
-
 
   return {
     miles,
-    minutes
+    minutes: seconds / 60
+  };
+}
+
+
+/* =========================================
+   GOOGLE PLACE VERIFICATION
+========================================= */
+
+async function lookupPlace(query) {
+  const key =
+    process.env.GOOGLE_MAPS_API_KEY;
+
+  if (!key) {
+    throw new Error(
+      "Google Maps API key is not configured."
+    );
+  }
+
+  const response =
+    await fetch(
+      "https://places.googleapis.com/v1/places:searchText",
+      {
+        method: "POST",
+
+        headers: {
+          "Content-Type":
+            "application/json",
+
+          "X-Goog-Api-Key":
+            key,
+
+          "X-Goog-FieldMask":
+            "places.displayName,places.formattedAddress,places.addressComponents,places.location,places.types"
+        },
+
+        body: JSON.stringify({
+          textQuery:
+            sanitizeText(query, 200),
+
+          maxResultCount: 1,
+
+          languageCode: "en"
+        })
+      }
+    );
+
+  if (!response.ok) {
+    const detail =
+      await response.text();
+
+    throw new Error(
+      `Address verification failed (${response.status}): ${detail.slice(0, 250)}`
+    );
+  }
+
+  const data =
+    await response.json();
+
+  return (
+    Array.isArray(data.places) &&
+    data.places[0]
+      ? data.places[0]
+      : null
+  );
+}
+
+
+function componentEquals(
+  place,
+  type,
+  expected
+) {
+  const components =
+    Array.isArray(
+      place?.addressComponents
+    )
+      ? place.addressComponents
+      : [];
+
+  return components.some(
+    (component) => {
+      const types =
+        Array.isArray(component.types)
+          ? component.types
+          : [];
+
+      const name =
+        String(
+          component.longText || ""
+        )
+          .trim()
+          .toLowerCase();
+
+      return (
+        types.includes(type) &&
+        name ===
+          expected.toLowerCase()
+      );
+    }
+  );
+}
+
+
+function distanceMiles(
+  lat1,
+  lon1,
+  lat2,
+  lon2
+) {
+  const toRadians =
+    (degrees) =>
+      degrees * Math.PI / 180;
+
+  const earthRadiusMiles =
+    3958.8;
+
+  const dLat =
+    toRadians(lat2 - lat1);
+
+  const dLon =
+    toRadians(lon2 - lon1);
+
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRadians(lat1)) *
+    Math.cos(toRadians(lat2)) *
+    Math.sin(dLon / 2) ** 2;
+
+  const c =
+    2 *
+    Math.atan2(
+      Math.sqrt(a),
+      Math.sqrt(1 - a)
+    );
+
+  return earthRadiusMiles * c;
+}
+
+
+/* =========================================
+   $150 EWR → MANHATTAN SPECIAL
+========================================= */
+
+async function verifyFixedOffer(body) {
+  const code =
+    sanitizeText(
+      body.offerCode,
+      50
+    ).toUpperCase();
+
+  if (!code) {
+    return null;
+  }
+
+  const offer =
+    pricing.fixedOffers &&
+    pricing.fixedOffers[code];
+
+  if (
+    !offer ||
+    offer.active !== true
+  ) {
+    throw new Error(
+      "This special offer is not available."
+    );
+  }
+
+  if (
+    code !==
+    "EWR_MANHATTAN_SUV"
+  ) {
+    throw new Error(
+      "Unknown special offer."
+    );
+  }
+
+  if (
+    body.vehicle !== "suv" ||
+    offer.vehicle !== "suv"
+  ) {
+    throw new Error(
+      "The $150 EWR → Manhattan special is for Black SUV only."
+    );
+  }
+
+  const [
+    pickupPlace,
+    dropoffPlace
+  ] = await Promise.all([
+    lookupPlace(body.pickup),
+    lookupPlace(body.dropoff)
+  ]);
+
+  if (
+    !pickupPlace ||
+    !dropoffPlace
+  ) {
+    throw new Error(
+      "We could not verify the pickup or destination for this special."
+    );
+  }
+
+  /*
+    Verify EWR using the actual Google
+    location returned for the pickup.
+
+    EWR center:
+    approximately 40.6895, -74.1745
+  */
+
+  const pickupLat =
+    Number(
+      pickupPlace.location?.latitude
+    );
+
+  const pickupLng =
+    Number(
+      pickupPlace.location?.longitude
+    );
+
+  let isEwr = false;
+
+  if (
+    Number.isFinite(pickupLat) &&
+    Number.isFinite(pickupLng)
+  ) {
+    const milesFromEwr =
+      distanceMiles(
+        pickupLat,
+        pickupLng,
+        40.6895,
+        -74.1745
+      );
+
+    isEwr =
+      milesFromEwr <= 3;
+  }
+
+  const pickupText =
+    `${
+      pickupPlace.displayName?.text || ""
+    } ${
+      pickupPlace.formattedAddress || ""
+    }`
+      .toLowerCase();
+
+  if (
+    pickupText.includes(
+      "newark liberty international airport"
+    ) ||
+    pickupText.includes(
+      "newark liberty"
+    )
+  ) {
+    isEwr = true;
+  }
+
+  /*
+    Manhattan is New York County.
+    Google may also identify it as
+    the Manhattan sublocality.
+  */
+
+  const isManhattan =
+    componentEquals(
+      dropoffPlace,
+      "administrative_area_level_2",
+      "New York County"
+    ) ||
+    componentEquals(
+      dropoffPlace,
+      "sublocality_level_1",
+      "Manhattan"
+    ) ||
+    componentEquals(
+      dropoffPlace,
+      "sublocality",
+      "Manhattan"
+    );
+
+  if (!isEwr) {
+    throw new Error(
+      "The $150 special requires pickup at Newark Liberty International Airport (EWR)."
+    );
+  }
+
+  if (!isManhattan) {
+    throw new Error(
+      "The $150 EWR Airport Special is available only for trips to Manhattan. Please use Get Quote for this destination."
+    );
+  }
+
+  return {
+    code,
+    label: offer.label,
+    price: money(offer.price)
   };
 }
 
@@ -490,11 +657,9 @@ function isAirportTrip(
   pickup,
   dropoff
 ) {
-
   const text =
     `${pickup} ${dropoff}`
       .toLowerCase();
-
 
   return [
     "airport",
@@ -513,23 +678,17 @@ function isAirportTrip(
 
 
 function isLateNight(time) {
-
   const hour =
     Number(
       String(time)
         .split(":")[0]
     );
 
-
   const start =
-    pricing
-      .lateNightStartHour;
-
+    pricing.lateNightStartHour;
 
   const end =
-    pricing
-      .lateNightEndHour;
-
+    pricing.lateNightEndHour;
 
   return (
     hour >= start ||
@@ -543,15 +702,12 @@ function isLateNight(time) {
 ========================================= */
 
 async function calculateQuote(body) {
-
   validateBookingInput(body);
-
 
   const rate =
     pricing.vehicleRates[
       body.vehicle
     ];
-
 
   const route =
     await getRouteEstimate(
@@ -559,6 +715,61 @@ async function calculateQuote(body) {
       body.dropoff
     );
 
+  /*
+    Verify fixed offer before
+    calculating normal pricing.
+  */
+
+  const fixedOffer =
+    await verifyFixedOffer(body);
+
+  if (fixedOffer) {
+    return {
+      vehicle:
+        rate.label,
+
+      vehicleKey:
+        body.vehicle,
+
+      miles:
+        money(route.miles),
+
+      minutes:
+        Math.round(
+          route.minutes
+        ),
+
+      baseTotal:
+        fixedOffer.price,
+
+      discount: 0,
+
+      discountedFare:
+        fixedOffer.price,
+
+      gratuity: 0,
+
+      originalTotal:
+        fixedOffer.price,
+
+      total:
+        fixedOffer.price,
+
+      currency:
+        pricing.currency,
+
+      promotion: null,
+
+      surcharges: [],
+
+      fixedOffer
+    };
+  }
+
+
+  /*
+    NORMAL TRIP PRICING
+  */
 
   let fare =
     rate.baseFare +
@@ -568,11 +779,8 @@ async function calculateQuote(body) {
       rate.perMinute +
     pricing.tollAllowance;
 
-
   const surcharges = [];
 
-
-  /* AIRPORT */
 
   if (
     isAirportTrip(
@@ -581,10 +789,8 @@ async function calculateQuote(body) {
     ) &&
     pricing.airportSurcharge > 0
   ) {
-
     fare +=
       pricing.airportSurcharge;
-
 
     surcharges.push({
       label:
@@ -596,18 +802,12 @@ async function calculateQuote(body) {
   }
 
 
-  /* LATE NIGHT */
-
   if (
-    isLateNight(
-      body.time
-    ) &&
+    isLateNight(body.time) &&
     pricing.lateNightSurcharge > 0
   ) {
-
     fare +=
       pricing.lateNightSurcharge;
-
 
     surcharges.push({
       label:
@@ -625,34 +825,29 @@ async function calculateQuote(body) {
       rate.minimumFare
     );
 
-
   fare =
     money(fare);
 
 
-  /* PROMOTION */
+  /*
+    PROMOTION
+  */
 
   const promotion =
     getPromotion(body);
 
-
   let discount = 0;
 
-
   if (promotion) {
-
     discount =
-      fare *
-      (
-        promotion.percentOff /
-        100
+      money(
+        fare *
+        (
+          promotion.percentOff /
+          100
+        )
       );
-
-
-    discount =
-      money(discount);
   }
-
 
   const discountedFare =
     money(
@@ -662,9 +857,6 @@ async function calculateQuote(body) {
       )
     );
 
-
-  /* GRATUITY */
-
   const gratuity =
     money(
       discountedFare *
@@ -673,7 +865,6 @@ async function calculateQuote(body) {
         100
       )
     );
-
 
   const originalTotal =
     money(
@@ -687,16 +878,13 @@ async function calculateQuote(body) {
       )
     );
 
-
   const total =
     money(
       discountedFare +
       gratuity
     );
 
-
   return {
-
     vehicle:
       rate.label,
 
@@ -704,9 +892,7 @@ async function calculateQuote(body) {
       body.vehicle,
 
     miles:
-      money(
-        route.miles
-      ),
+      money(route.miles),
 
     minutes:
       Math.round(
@@ -731,7 +917,9 @@ async function calculateQuote(body) {
 
     promotion,
 
-    surcharges
+    surcharges,
+
+    fixedOffer: null
   };
 }
 
@@ -744,15 +932,12 @@ function createBookingRecord(
   body,
   quote
 ) {
-
   return {
-
     id:
       crypto.randomUUID(),
 
     createdAt:
-      new Date()
-        .toISOString(),
+      new Date().toISOString(),
 
     status:
       "awaiting_payment",
@@ -765,7 +950,6 @@ function createBookingRecord(
 
 
     customer: {
-
       firstName:
         sanitizeText(
           body.firstName,
@@ -793,7 +977,6 @@ function createBookingRecord(
 
 
     trip: {
-
       tripType:
         sanitizeText(
           body.tripType,
@@ -842,8 +1025,7 @@ function createBookingRecord(
 
       passengers:
         Number(
-          body.passengers ||
-          1
+          body.passengers || 1
         ),
 
       vehicle:
@@ -867,7 +1049,13 @@ function createBookingRecord(
       promoCode:
         normalizePromoCode(
           body.promoCode
-        )
+        ),
+
+      offerCode:
+        sanitizeText(
+          body.offerCode,
+          50
+        ).toUpperCase()
     },
 
 
@@ -875,13 +1063,9 @@ function createBookingRecord(
 
 
     dispatch: {
-
       driver: "",
-
       driverPhone: "",
-
       vehicle: "",
-
       plate: ""
     }
   };
@@ -897,13 +1081,10 @@ function requireAdmin(
   res,
   next
 ) {
-
   const configured =
     process.env.ADMIN_TOKEN;
 
-
   if (!configured) {
-
     return res
       .status(503)
       .json({
@@ -912,26 +1093,16 @@ function requireAdmin(
       });
   }
 
-
   const auth =
-    req.get(
-      "authorization"
-    ) || "";
-
+    req.get("authorization") ||
+    "";
 
   const supplied =
-    auth.startsWith(
-      "Bearer "
-    )
+    auth.startsWith("Bearer ")
       ? auth.slice(7)
       : "";
 
-
-  if (
-    supplied !==
-    configured
-  ) {
-
+  if (supplied !== configured) {
     return res
       .status(401)
       .json({
@@ -939,7 +1110,6 @@ function requireAdmin(
           "Unauthorized"
       });
   }
-
 
   next();
 }
@@ -959,13 +1129,11 @@ app.post(
   }),
 
   async (req, res) => {
-
     if (
       !stripe ||
       !process.env
         .STRIPE_WEBHOOK_SECRET
     ) {
-
       return res
         .status(503)
         .send(
@@ -973,17 +1141,13 @@ app.post(
         );
     }
 
-
     let event;
 
-
     try {
-
       const sig =
         req.headers[
           "stripe-signature"
         ];
-
 
       event =
         stripe.webhooks
@@ -994,9 +1158,7 @@ app.post(
               .STRIPE_WEBHOOK_SECRET
           );
 
-
     } catch (error) {
-
       return res
         .status(400)
         .send(
@@ -1009,33 +1171,24 @@ app.post(
       event.type ===
       "checkout.session.completed"
     ) {
-
       const session =
         event.data.object;
 
-
       const bookingId =
         session.metadata &&
-        session.metadata
-          .bookingId;
-
+        session.metadata.bookingId;
 
       if (bookingId) {
-
         const bookings =
           readBookings();
-
 
         const booking =
           bookings.find(
             (item) =>
-              item.id ===
-              bookingId
+              item.id === bookingId
           );
 
-
         if (booking) {
-
           booking.paymentStatus =
             "paid";
 
@@ -1049,14 +1202,10 @@ app.post(
             new Date()
               .toISOString();
 
-
-          writeBookings(
-            bookings
-          );
+          writeBookings(bookings);
         }
       }
     }
-
 
     res.json({
       received: true
@@ -1074,7 +1223,6 @@ app.use(
     limit: "50kb"
   })
 );
-
 
 app.use(
   express.static(
@@ -1094,17 +1242,13 @@ app.get(
   "/api/public-config",
 
   (req, res) => {
-
     res.json({
-
       companyPhone:
-        process.env
-          .COMPANY_PHONE ||
+        process.env.COMPANY_PHONE ||
         "(973) 555-0100",
 
       companyEmail:
-        process.env
-          .COMPANY_EMAIL ||
+        process.env.COMPANY_EMAIL ||
         "bookings@erlimousineservice.com",
 
       vehicles:
@@ -1113,10 +1257,8 @@ app.get(
         ).map(
           ([key, value]) => ({
             key,
-
             label:
               value.label,
-
             maxPassengers:
               value.maxPassengers
           })
@@ -1134,34 +1276,27 @@ app.get(
   "/api/address-suggestions",
 
   async (req, res) => {
-
     try {
-
       const query =
         sanitizeText(
           req.query.q,
           200
         );
 
-
       if (
         !query ||
         query.length < 3
       ) {
-
         return res.json({
           suggestions: []
         });
       }
 
-
       const key =
         process.env
           .GOOGLE_MAPS_API_KEY;
 
-
       if (!key) {
-
         return res
           .status(503)
           .json({
@@ -1172,16 +1307,13 @@ app.get(
           });
       }
 
-
       const response =
         await fetch(
           "https://places.googleapis.com/v1/places:autocomplete",
-
           {
             method: "POST",
 
             headers: {
-
               "Content-Type":
                 "application/json",
 
@@ -1191,7 +1323,6 @@ app.get(
 
             body:
               JSON.stringify({
-
                 input:
                   query,
 
@@ -1199,11 +1330,8 @@ app.get(
                   ["us"],
 
                 locationBias: {
-
                   circle: {
-
                     center: {
-
                       latitude:
                         40.7357,
 
@@ -1219,19 +1347,15 @@ app.get(
           }
         );
 
-
       if (!response.ok) {
-
         const detail =
           await response.text();
-
 
         console.error(
           "Google Places autocomplete error:",
           response.status,
           detail
         );
-
 
         return res
           .status(502)
@@ -1243,10 +1367,8 @@ app.get(
           });
       }
 
-
       const data =
         await response.json();
-
 
       const suggestions =
         Array.isArray(
@@ -1264,19 +1386,15 @@ app.get(
               .slice(0, 6)
           : [];
 
-
       return res.json({
         suggestions
       });
 
-
     } catch (error) {
-
       console.error(
         "Address autocomplete error:",
         error
       );
-
 
       return res
         .status(500)
@@ -1299,22 +1417,15 @@ app.post(
   "/api/quote",
 
   async (req, res) => {
-
     try {
-
       const quote =
         await calculateQuote(
           req.body
         );
 
-
-      res.json(
-        quote
-      );
-
+      res.json(quote);
 
     } catch (error) {
-
       res
         .status(400)
         .json({
@@ -1334,11 +1445,8 @@ app.post(
   "/api/checkout",
 
   async (req, res) => {
-
     try {
-
       if (!stripe) {
-
         return res
           .status(503)
           .json({
@@ -1347,12 +1455,13 @@ app.post(
           });
       }
 
-
       /*
         IMPORTANT:
-        Price is calculated again on the
-        server here. The browser cannot
-        choose the Stripe payment amount.
+        The price is calculated again
+        on the server.
+
+        The browser cannot choose the
+        Stripe payment amount.
       */
 
       const quote =
@@ -1360,26 +1469,34 @@ app.post(
           req.body
         );
 
-
       const booking =
         createBookingRecord(
           req.body,
           quote
         );
 
-
       const bookings =
         readBookings();
-
 
       bookings.unshift(
         booking
       );
 
-
       writeBookings(
         bookings
       );
+
+
+      let description =
+        `${booking.trip.pickup} → ${booking.trip.dropoff} | ${booking.trip.date} ${booking.trip.time}`;
+
+      if (quote.fixedOffer) {
+        description =
+          `${booking.trip.pickup} → ${booking.trip.dropoff} | EWR → Manhattan $150 Flat Rate`;
+      } else if (quote.promotion) {
+        description =
+          `${booking.trip.pickup} → ${booking.trip.dropoff} | ${quote.promotion.code} applied`;
+      }
 
 
       const session =
@@ -1387,7 +1504,6 @@ app.post(
           .checkout
           .sessions
           .create({
-
             mode:
               "payment",
 
@@ -1396,41 +1512,39 @@ app.post(
                 .customer
                 .email,
 
-
             line_items: [
               {
                 quantity: 1,
 
                 price_data: {
-
                   currency:
                     quote.currency,
 
                   unit_amount:
                     Math.round(
-                      quote.total *
-                      100
+                      quote.total * 100
                     ),
 
                   product_data: {
-
                     name:
-                      `ER Limousine Service — ${quote.vehicle}`,
+                      quote.fixedOffer
+                        ? "ER Limousine Service — EWR to Manhattan Black SUV"
+                        : `ER Limousine Service — ${quote.vehicle}`,
 
-                    description:
-                      quote.promotion
-                        ? `${booking.trip.pickup} → ${booking.trip.dropoff} | ${quote.promotion.code} applied`
-                        : `${booking.trip.pickup} → ${booking.trip.dropoff} | ${booking.trip.date} ${booking.trip.time}`
+                    description
                   }
                 }
               }
             ],
 
-
             metadata: {
-
               bookingId:
                 booking.id,
+
+              offerCode:
+                quote.fixedOffer
+                  ? quote.fixedOffer.code
+                  : "",
 
               promoCode:
                 quote.promotion
@@ -1443,10 +1557,8 @@ app.post(
                 )
             },
 
-
             success_url:
               `${SITE_URL}/success.html?booking=${booking.id}&session_id={CHECKOUT_SESSION_ID}`,
-
 
             cancel_url:
               `${SITE_URL}/?cancelled=1`
@@ -1456,14 +1568,11 @@ app.post(
       booking.stripeSessionId =
         session.id;
 
-
       writeBookings(
         bookings
       );
 
-
       res.json({
-
         url:
           session.url,
 
@@ -1471,9 +1580,7 @@ app.post(
           booking.id
       });
 
-
     } catch (error) {
-
       res
         .status(400)
         .json({
@@ -1495,7 +1602,6 @@ app.get(
   requireAdmin,
 
   (req, res) => {
-
     res.json(
       readBookings()
     );
@@ -1513,28 +1619,18 @@ app.patch(
   requireAdmin,
 
   (req, res) => {
-
     const allowedStatuses = [
-
       "awaiting_payment",
-
       "confirmed",
-
       "assigned",
-
       "driver_en_route",
-
       "passenger_on_board",
-
       "completed",
-
       "cancelled"
     ];
 
-
     const bookings =
       readBookings();
-
 
     const booking =
       bookings.find(
@@ -1543,9 +1639,7 @@ app.patch(
           req.params.id
       );
 
-
     if (!booking) {
-
       return res
         .status(404)
         .json({
@@ -1554,18 +1648,12 @@ app.patch(
         });
     }
 
-
-    if (
-      req.body.status
-    ) {
-
+    if (req.body.status) {
       if (
-        !allowedStatuses
-          .includes(
-            req.body.status
-          )
+        !allowedStatuses.includes(
+          req.body.status
+        )
       ) {
-
         return res
           .status(400)
           .json({
@@ -1574,18 +1662,12 @@ app.patch(
           });
       }
 
-
       booking.status =
         req.body.status;
     }
 
-
-    if (
-      req.body.dispatch
-    ) {
-
+    if (req.body.dispatch) {
       booking.dispatch = {
-
         driver:
           sanitizeText(
             req.body
@@ -1620,16 +1702,13 @@ app.patch(
       };
     }
 
-
     booking.updatedAt =
       new Date()
         .toISOString();
 
-
     writeBookings(
       bookings
     );
-
 
     res.json(
       booking
@@ -1646,7 +1725,6 @@ app.get(
   "/api/booking/:id",
 
   (req, res) => {
-
     const booking =
       readBookings()
         .find(
@@ -1655,9 +1733,7 @@ app.get(
             req.params.id
         );
 
-
     if (!booking) {
-
       return res
         .status(404)
         .json({
@@ -1666,9 +1742,7 @@ app.get(
         });
     }
 
-
     res.json({
-
       id:
         booking.id,
 
@@ -1712,7 +1786,6 @@ app.get(
 app.listen(
   PORT,
   () => {
-
     ensureDataFile();
 
     console.log(
