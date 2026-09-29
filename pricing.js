@@ -2,8 +2,8 @@
  * ER Limousine Service LLC
  * Production pricing
  *
- * The server—not the browser—uses this file to calculate prices.
- * That prevents a customer from changing the fare in their browser.
+ * All prices and promotions are calculated
+ * on the server for security.
  */
 
 module.exports = {
@@ -13,7 +13,7 @@ module.exports = {
     sedan: {
       label: "Luxury Sedan",
       baseFare: 20,
-      perMile: 4,
+      perMile: 3,
       perMinute: 1,
       minimumFare: 20,
       maxPassengers: 3
@@ -34,6 +34,14 @@ module.exports = {
   lateNightStartHour: 23,
   lateNightEndHour: 5,
   gratuityPercent: 0,
+  tollAllowance: 0,
 
-  tollAllowance: 0
+  promotions: {
+    FIRST15: {
+      label: "First Ride 15% Off",
+      percentOff: 15,
+      firstRideOnly: true,
+      active: true
+    }
+  }
 };
