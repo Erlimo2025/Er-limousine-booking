@@ -52,12 +52,16 @@ function ensureDataFile() {
 function readBookings() {
   ensureDataFile();
 
-  return JSON.parse(
-    fs.readFileSync(
-      DATA_FILE,
-      "utf8"
-    )
-  );
+  try {
+    return JSON.parse(
+      fs.readFileSync(
+        DATA_FILE,
+        "utf8"
+      )
+    );
+  } catch (_) {
+    return [];
+  }
 }
 
 
@@ -90,6 +94,190 @@ function sanitizeText(
 }
 
 
+function money(number) {
+  return (
+    Math.round(
+      Number(number || 0) * 100
+    ) / 100
+  );
+}
+
+
+function normalizePromoCode(value) {
+  return sanitizeText(
+    value,
+    30
+  ).toUpperCase();
+}
+
+
+function normalizeEmail(value) {
+  return sanitizeText(
+    value,
+    160
+  ).toLowerCase();
+}
+
+
+function normalizePhone(value) {
+  return String(value || "")
+    .replace(/\D/g, "");
+}
+
+
+/* =========================================
+   FIRST-RIDE CHECK
+========================================= */
+
+function hasPreviousPaidRide(
+  email,
+  phone
+) {
+
+  const customerEmail =
+    normalizeEmail(email);
+
+  const customerPhone =
+    normalizePhone(phone);
+
+
+  if (
+    !customerEmail &&
+    !customerPhone
+  ) {
+    return false;
+  }
+
+
+  const bookings =
+    readBookings();
+
+
+  return bookings.some(
+    (booking) => {
+
+      if (
+        booking.paymentStatus !==
+        "paid"
+      ) {
+        return false;
+      }
+
+
+      const oldEmail =
+        normalizeEmail(
+          booking.customer?.email
+        );
+
+      const oldPhone =
+        normalizePhone(
+          booking.customer?.phone
+        );
+
+
+      const sameEmail =
+        customerEmail &&
+        oldEmail &&
+        customerEmail ===
+          oldEmail;
+
+
+      const samePhone =
+        customerPhone &&
+        oldPhone &&
+        customerPhone ===
+          oldPhone;
+
+
+      return Boolean(
+        sameEmail ||
+        samePhone
+      );
+    }
+  );
+}
+
+
+/* =========================================
+   PROMOTION
+========================================= */
+
+function getPromotion(body) {
+
+  const code =
+    normalizePromoCode(
+      body.promoCode
+    );
+
+
+  if (!code) {
+    return null;
+  }
+
+
+  const promotion =
+    pricing.promotions &&
+    pricing.promotions[code];
+
+
+  if (
+    !promotion ||
+    promotion.active !== true
+  ) {
+    throw new Error(
+      "Promo code is invalid or inactive."
+    );
+  }
+
+
+  if (
+    promotion.firstRideOnly &&
+    hasPreviousPaidRide(
+      body.email,
+      body.phone
+    )
+  ) {
+
+    throw new Error(
+      `${code} is only available for your first ride.`
+    );
+  }
+
+
+  const percentOff =
+    Number(
+      promotion.percentOff
+    );
+
+
+  if (
+    !Number.isFinite(
+      percentOff
+    ) ||
+    percentOff <= 0 ||
+    percentOff > 100
+  ) {
+
+    throw new Error(
+      "Promo code is not configured correctly."
+    );
+  }
+
+
+  return {
+    code,
+    label:
+      promotion.label ||
+      `${percentOff}% Off`,
+    percentOff
+  };
+}
+
+
+/* =========================================
+   VALIDATE BOOKING
+========================================= */
+
 function validateBookingInput(body) {
 
   const required = [
@@ -104,17 +292,22 @@ function validateBookingInput(body) {
     "phone"
   ];
 
+
   const missing =
     required.filter(
       (key) =>
-        !sanitizeText(body[key])
+        !sanitizeText(
+          body[key]
+        )
     );
+
 
   if (missing.length) {
     throw new Error(
       `Missing required fields: ${missing.join(", ")}`
     );
   }
+
 
   if (
     !pricing.vehicleRates[
@@ -126,13 +319,17 @@ function validateBookingInput(body) {
     );
   }
 
+
   const passengers =
     Number(
       body.passengers || 1
     );
 
+
   if (
-    !Number.isFinite(passengers) ||
+    !Number.isFinite(
+      passengers
+    ) ||
     passengers < 1
   ) {
     throw new Error(
@@ -140,15 +337,18 @@ function validateBookingInput(body) {
     );
   }
 
+
   const maxPassengers =
     pricing.vehicleRates[
       body.vehicle
     ].maxPassengers;
 
+
   if (
     passengers >
     maxPassengers
   ) {
+
     throw new Error(
       `${
         pricing.vehicleRates[
@@ -175,14 +375,17 @@ async function getRouteEstimate(
     process.env
       .GOOGLE_MAPS_API_KEY;
 
+
   if (!key) {
     throw new Error(
       "Google Maps API key is not configured."
     );
   }
 
+
   const url =
     "https://routes.googleapis.com/directions/v2:computeRoutes";
+
 
   const response =
     await fetch(
@@ -201,41 +404,48 @@ async function getRouteEstimate(
             "routes.distanceMeters,routes.duration"
         },
 
-        body: JSON.stringify({
-          origin: {
-            address: origin
-          },
+        body:
+          JSON.stringify({
+            origin: {
+              address:
+                origin
+            },
 
-          destination: {
-            address:
-              destination
-          },
+            destination: {
+              address:
+                destination
+            },
 
-          travelMode:
-            "DRIVE",
+            travelMode:
+              "DRIVE",
 
-          routingPreference:
-            "TRAFFIC_AWARE"
-        })
+            routingPreference:
+              "TRAFFIC_AWARE"
+          })
       }
     );
+
 
   if (!response.ok) {
 
     const detail =
       await response.text();
 
+
     throw new Error(
       `Route lookup failed (${response.status}): ${detail.slice(0, 300)}`
     );
   }
 
+
   const data =
     await response.json();
+
 
   const route =
     data.routes &&
     data.routes[0];
+
 
   if (!route) {
     throw new Error(
@@ -243,19 +453,27 @@ async function getRouteEstimate(
     );
   }
 
+
   const miles =
     route.distanceMeters /
     1609.344;
 
+
   const seconds =
     Number(
       String(
-        route.duration || "0s"
-      ).replace("s", "")
+        route.duration ||
+        "0s"
+      ).replace(
+        "s",
+        ""
+      )
     );
+
 
   const minutes =
     seconds / 60;
+
 
   return {
     miles,
@@ -276,6 +494,7 @@ function isAirportTrip(
   const text =
     `${pickup} ${dropoff}`
       .toLowerCase();
+
 
   return [
     "airport",
@@ -301,13 +520,16 @@ function isLateNight(time) {
         .split(":")[0]
     );
 
+
   const start =
     pricing
       .lateNightStartHour;
 
+
   const end =
     pricing
       .lateNightEndHour;
+
 
   return (
     hour >= start ||
@@ -316,35 +538,27 @@ function isLateNight(time) {
 }
 
 
-function money(number) {
-  return (
-    Math.round(
-      number * 100
-    ) / 100
-  );
-}
-
-
 /* =========================================
    PRICE CALCULATION
 ========================================= */
 
-async function calculateQuote(
-  body
-) {
+async function calculateQuote(body) {
 
   validateBookingInput(body);
+
 
   const rate =
     pricing.vehicleRates[
       body.vehicle
     ];
 
+
   const route =
     await getRouteEstimate(
       body.pickup,
       body.dropoff
     );
+
 
   let fare =
     rate.baseFare +
@@ -354,8 +568,11 @@ async function calculateQuote(
       rate.perMinute +
     pricing.tollAllowance;
 
+
   const surcharges = [];
 
+
+  /* AIRPORT */
 
   if (
     isAirportTrip(
@@ -368,6 +585,7 @@ async function calculateQuote(
     fare +=
       pricing.airportSurcharge;
 
+
     surcharges.push({
       label:
         "Airport service",
@@ -378,23 +596,25 @@ async function calculateQuote(
   }
 
 
+  /* LATE NIGHT */
+
   if (
-    isLateNight(body.time) &&
-    pricing
-      .lateNightSurcharge > 0
+    isLateNight(
+      body.time
+    ) &&
+    pricing.lateNightSurcharge > 0
   ) {
 
     fare +=
-      pricing
-        .lateNightSurcharge;
+      pricing.lateNightSurcharge;
+
 
     surcharges.push({
       label:
         "Late-night service",
 
       amount:
-        pricing
-          .lateNightSurcharge
+        pricing.lateNightSurcharge
     });
   }
 
@@ -406,17 +626,73 @@ async function calculateQuote(
     );
 
 
+  fare =
+    money(fare);
+
+
+  /* PROMOTION */
+
+  const promotion =
+    getPromotion(body);
+
+
+  let discount = 0;
+
+
+  if (promotion) {
+
+    discount =
+      fare *
+      (
+        promotion.percentOff /
+        100
+      );
+
+
+    discount =
+      money(discount);
+  }
+
+
+  const discountedFare =
+    money(
+      Math.max(
+        0,
+        fare - discount
+      )
+    );
+
+
+  /* GRATUITY */
+
   const gratuity =
-    fare *
-    (
-      pricing
-        .gratuityPercent /
-      100
+    money(
+      discountedFare *
+      (
+        pricing.gratuityPercent /
+        100
+      )
+    );
+
+
+  const originalTotal =
+    money(
+      fare +
+      (
+        fare *
+        (
+          pricing.gratuityPercent /
+          100
+        )
+      )
     );
 
 
   const total =
-    fare + gratuity;
+    money(
+      discountedFare +
+      gratuity
+    );
 
 
   return {
@@ -438,16 +714,22 @@ async function calculateQuote(
       ),
 
     baseTotal:
-      money(fare),
+      fare,
 
-    gratuity:
-      money(gratuity),
+    discount,
 
-    total:
-      money(total),
+    discountedFare,
+
+    gratuity,
+
+    originalTotal,
+
+    total,
 
     currency:
       pricing.currency,
+
+    promotion,
 
     surcharges
   };
@@ -512,6 +794,12 @@ function createBookingRecord(
 
     trip: {
 
+      tripType:
+        sanitizeText(
+          body.tripType,
+          30
+        ),
+
       pickup:
         sanitizeText(
           body.pickup
@@ -531,6 +819,24 @@ function createBookingRecord(
       time:
         sanitizeText(
           body.time,
+          20
+        ),
+
+      returnDate:
+        sanitizeText(
+          body.returnDate,
+          20
+        ),
+
+      returnTime:
+        sanitizeText(
+          body.returnTime,
+          20
+        ),
+
+      hours:
+        sanitizeText(
+          body.hours,
           20
         ),
 
@@ -556,6 +862,11 @@ function createBookingRecord(
         sanitizeText(
           body.notes,
           700
+        ),
+
+      promoCode:
+        normalizePromoCode(
+          body.promoCode
         )
     },
 
@@ -589,6 +900,7 @@ function requireAdmin(
 
   const configured =
     process.env.ADMIN_TOKEN;
+
 
   if (!configured) {
 
@@ -724,15 +1036,13 @@ app.post(
 
         if (booking) {
 
-          booking
-            .paymentStatus =
+          booking.paymentStatus =
             "paid";
 
           booking.status =
             "confirmed";
 
-          booking
-            .stripeSessionId =
+          booking.stripeSessionId =
             session.id;
 
           booking.paidAt =
@@ -782,6 +1092,7 @@ app.use(
 
 app.get(
   "/api/public-config",
+
   (req, res) => {
 
     res.json({
@@ -802,8 +1113,10 @@ app.get(
         ).map(
           ([key, value]) => ({
             key,
+
             label:
               value.label,
+
             maxPassengers:
               value.maxPassengers
           })
@@ -854,6 +1167,7 @@ app.get(
           .json({
             error:
               "Google Maps API key is not configured.",
+
             suggestions: []
           });
       }
@@ -862,6 +1176,7 @@ app.get(
       const response =
         await fetch(
           "https://places.googleapis.com/v1/places:autocomplete",
+
           {
             method: "POST",
 
@@ -884,10 +1199,14 @@ app.get(
                   ["us"],
 
                 locationBias: {
+
                   circle: {
+
                     center: {
+
                       latitude:
                         40.7357,
+
                       longitude:
                         -74.1724
                     },
@@ -906,6 +1225,7 @@ app.get(
         const detail =
           await response.text();
 
+
         console.error(
           "Google Places autocomplete error:",
           response.status,
@@ -918,6 +1238,7 @@ app.get(
           .json({
             error:
               "Address search is temporarily unavailable.",
+
             suggestions: []
           });
       }
@@ -962,6 +1283,7 @@ app.get(
         .json({
           error:
             "Address search is temporarily unavailable.",
+
           suggestions: []
         });
     }
@@ -986,7 +1308,9 @@ app.post(
         );
 
 
-      res.json(quote);
+      res.json(
+        quote
+      );
 
 
     } catch (error) {
@@ -1023,6 +1347,13 @@ app.post(
           });
       }
 
+
+      /*
+        IMPORTANT:
+        Price is calculated again on the
+        server here. The browser cannot
+        choose the Stripe payment amount.
+      */
 
       const quote =
         await calculateQuote(
@@ -1087,7 +1418,9 @@ app.post(
                       `ER Limousine Service — ${quote.vehicle}`,
 
                     description:
-                      `${booking.trip.pickup} → ${booking.trip.dropoff} | ${booking.trip.date} ${booking.trip.time}`
+                      quote.promotion
+                        ? `${booking.trip.pickup} → ${booking.trip.dropoff} | ${quote.promotion.code} applied`
+                        : `${booking.trip.pickup} → ${booking.trip.dropoff} | ${booking.trip.date} ${booking.trip.time}`
                   }
                 }
               }
@@ -1095,8 +1428,19 @@ app.post(
 
 
             metadata: {
+
               bookingId:
-                booking.id
+                booking.id,
+
+              promoCode:
+                quote.promotion
+                  ? quote.promotion.code
+                  : "",
+
+              discount:
+                String(
+                  quote.discount || 0
+                )
             },
 
 
@@ -1109,8 +1453,7 @@ app.post(
           });
 
 
-      booking
-        .stripeSessionId =
+      booking.stripeSessionId =
         session.id;
 
 
@@ -1212,7 +1555,9 @@ app.patch(
     }
 
 
-    if (req.body.status) {
+    if (
+      req.body.status
+    ) {
 
       if (
         !allowedStatuses
@@ -1331,8 +1676,7 @@ app.get(
         booking.status,
 
       paymentStatus:
-        booking
-          .paymentStatus,
+        booking.paymentStatus,
 
       trip:
         booking.trip,
