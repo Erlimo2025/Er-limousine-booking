@@ -2,8 +2,8 @@
  * ER Limousine Service LLC
  * Production pricing
  *
- * All prices and promotions are calculated
- * on the server for security.
+ * All prices, fixed offers and promotions
+ * are calculated on the server for security.
  */
 
 module.exports = {
@@ -35,6 +35,16 @@ module.exports = {
   lateNightEndHour: 5,
   gratuityPercent: 0,
   tollAllowance: 0,
+
+  fixedOffers: {
+    EWR_MANHATTAN_SUV: {
+      label: "EWR to Manhattan Black SUV — $150 Flat Rate",
+      price: 150,
+      vehicle: "suv",
+      active: true,
+      allowPromotions: false
+    }
+  },
 
   promotions: {
     FIRST15: {
