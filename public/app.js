@@ -37,6 +37,15 @@ const sumMiles = document.getElementById("sumMiles");
 const sumMinutes = document.getElementById("sumMinutes");
 const sumTotal = document.getElementById("sumTotal");
 
+const promoCode = document.getElementById("promoCode");
+const applyPromoBtn = document.getElementById("applyPromoBtn");
+const promoMessage = document.getElementById("promoMessage");
+
+const promoSummary = document.getElementById("promoSummary");
+const promoSummaryLabel =
+  document.getElementById("promoSummaryLabel");
+const sumDiscount = document.getElementById("sumDiscount");
+
 let currentQuote = null;
 let suggestionTimers = {};
 
@@ -46,8 +55,41 @@ let suggestionTimers = {};
 ========================================= */
 
 function getFormData() {
-  return Object.fromEntries(
-    new FormData(form).entries()
+
+  const data =
+    Object.fromEntries(
+      new FormData(form).entries()
+    );
+
+  if (data.promoCode) {
+    data.promoCode =
+      String(data.promoCode)
+        .trim()
+        .toUpperCase();
+  }
+
+  return data;
+}
+
+
+/* =========================================
+   MONEY
+========================================= */
+
+function formatMoney(
+  amount,
+  currency = "usd"
+) {
+
+  return new Intl.NumberFormat(
+    "en-US",
+    {
+      style: "currency",
+      currency:
+        String(currency).toUpperCase()
+    }
+  ).format(
+    Number(amount || 0)
   );
 }
 
@@ -56,14 +98,125 @@ function getFormData() {
    NOTICES
 ========================================= */
 
-function showNotice(message, type = "error") {
-  notice.className = `notice ${type}`;
-  notice.textContent = message;
+function showNotice(
+  message,
+  type = "error"
+) {
+
+  notice.className =
+    `notice ${type}`;
+
+  notice.textContent =
+    message;
 }
 
+
 function clearNotice() {
-  notice.className = "notice";
-  notice.textContent = "";
+
+  notice.className =
+    "notice";
+
+  notice.textContent =
+    "";
+}
+
+
+/* =========================================
+   PROMOTION DISPLAY
+========================================= */
+
+function resetPromoDisplay() {
+
+  if (promoSummary) {
+    promoSummary.hidden = true;
+  }
+
+  if (sumDiscount) {
+    sumDiscount.textContent =
+      "−$0.00";
+  }
+
+  if (promoSummaryLabel) {
+    promoSummaryLabel.textContent =
+      "FIRST15 — 15% Off";
+  }
+
+  if (promoMessage) {
+
+    promoMessage.textContent =
+      "First-time customer? Use code FIRST15 for 15% off.";
+
+    promoMessage.className = "";
+
+  }
+
+}
+
+
+function showPromoResult(data) {
+
+  if (
+    data.promotion &&
+    Number(data.discount) > 0
+  ) {
+
+    if (promoSummary) {
+      promoSummary.hidden = false;
+    }
+
+    if (promoSummaryLabel) {
+
+      promoSummaryLabel.textContent =
+        data.promotion.label ||
+        `${data.promotion.code || "Promo"} applied`;
+
+    }
+
+    if (sumDiscount) {
+
+      sumDiscount.textContent =
+        `−${formatMoney(
+          data.discount,
+          data.currency
+        )}`;
+
+    }
+
+    if (promoMessage) {
+
+      promoMessage.textContent =
+        `${data.promotion.code || "Promo code"} applied successfully.`;
+
+      promoMessage.className =
+        "promo-success";
+
+    }
+
+    return;
+  }
+
+
+  if (promoSummary) {
+    promoSummary.hidden = true;
+  }
+
+
+  if (
+    promoCode &&
+    promoCode.value.trim()
+  ) {
+
+    if (promoMessage) {
+
+      promoMessage.textContent =
+        "Enter FIRST15 and click Apply for 15% off your first ride.";
+
+      promoMessage.className = "";
+
+    }
+
+  }
+
 }
 
 
@@ -72,6 +225,7 @@ function clearNotice() {
 ========================================= */
 
 function resetQuote() {
+
   currentQuote = null;
 
   payBtn.disabled = true;
@@ -81,8 +235,15 @@ function resetQuote() {
   sumTotal.textContent = "—";
 
   sumVehicle.textContent =
-    vehicle.options[vehicle.selectedIndex]
-      ?.textContent || "Black SUV";
+    vehicle.options[
+      vehicle.selectedIndex
+    ]?.textContent ||
+    "Black SUV";
+
+  if (promoSummary) {
+    promoSummary.hidden = true;
+  }
+
 }
 
 
@@ -94,30 +255,43 @@ function selectTripType(type) {
 
   tripTypeInput.value = type;
 
-  tripTabs.forEach((button) => {
 
-    button.classList.toggle(
-      "active",
-      button.dataset.tripType === type
-    );
+  tripTabs.forEach(
+    (button) => {
 
-  });
+      button.classList.toggle(
+        "active",
+        button.dataset.tripType === type
+      );
+
+    }
+  );
 
 
-  /*
-    Reset trip-specific fields first.
-  */
+  dropoffField.classList.remove(
+    "hidden-field"
+  );
 
-  dropoffField.classList.remove("hidden-field");
   dropoff.required = true;
 
-  returnFields.classList.add("hidden-field");
+
+  returnFields.classList.add(
+    "hidden-field"
+  );
+
   returnDate.required = false;
   returnTime.required = false;
 
-  hourlyField.classList.add("hidden-field");
 
-  flightField.classList.add("hidden-field");
+  hourlyField.classList.add(
+    "hidden-field"
+  );
+
+
+  flightField.classList.add(
+    "hidden-field"
+  );
+
 
   vehicle.disabled = false;
 
@@ -126,7 +300,9 @@ function selectTripType(type) {
 
   if (type === "roundtrip") {
 
-    returnFields.classList.remove("hidden-field");
+    returnFields.classList.remove(
+      "hidden-field"
+    );
 
     returnDate.required = true;
     returnTime.required = true;
@@ -138,7 +314,9 @@ function selectTripType(type) {
 
   if (type === "airport") {
 
-    flightField.classList.remove("hidden-field");
+    flightField.classList.remove(
+      "hidden-field"
+    );
 
   }
 
@@ -147,11 +325,9 @@ function selectTripType(type) {
 
   if (type === "hourly") {
 
-    hourlyField.classList.remove("hidden-field");
-
-    /*
-      Hourly service is Black SUV only.
-    */
+    hourlyField.classList.remove(
+      "hidden-field"
+    );
 
     vehicle.value = "suv";
     vehicle.disabled = true;
@@ -164,17 +340,22 @@ function selectTripType(type) {
 }
 
 
-tripTabs.forEach((button) => {
+tripTabs.forEach(
+  (button) => {
 
-  button.addEventListener("click", () => {
+    button.addEventListener(
+      "click",
+      () => {
 
-    selectTripType(
-      button.dataset.tripType
+        selectTripType(
+          button.dataset.tripType
+        );
+
+      }
     );
 
-  });
-
-});
+  }
+);
 
 
 /* =========================================
@@ -183,34 +364,47 @@ tripTabs.forEach((button) => {
 
 function resetPassengerOptions() {
 
-  const tripType = tripTypeInput.value;
+  const tripType =
+    tripTypeInput.value;
+
 
   let maximum =
-    vehicle.value === "sedan" ? 3 : 6;
+    vehicle.value === "sedan"
+      ? 3
+      : 6;
 
-
-  /*
-    Hourly bookings always use SUV.
-  */
 
   if (tripType === "hourly") {
     maximum = 6;
   }
 
 
-  Array.from(passengers.options)
-    .forEach((option) => {
+  Array.from(
+    passengers.options
+  ).forEach(
+    (option) => {
 
-      const number = Number(option.value);
+      const number =
+        Number(option.value);
 
-      option.hidden = number > maximum;
-      option.disabled = number > maximum;
+      option.hidden =
+        number > maximum;
 
-    });
+      option.disabled =
+        number > maximum;
+
+    }
+  );
 
 
-  if (Number(passengers.value) > maximum) {
-    passengers.value = String(maximum);
+  if (
+    Number(passengers.value) >
+    maximum
+  ) {
+
+    passengers.value =
+      String(maximum);
+
   }
 
 }
@@ -228,26 +422,33 @@ vehicle.addEventListener(
 
 function localDateString() {
 
-  const now = new Date();
+  const now =
+    new Date();
+
 
   now.setMinutes(
     now.getMinutes() -
     now.getTimezoneOffset()
   );
 
+
   return now
     .toISOString()
     .slice(0, 10);
-
 }
 
 
 function configureDates() {
 
-  const today = localDateString();
+  const today =
+    localDateString();
 
-  dateInput.min = today;
-  returnDate.min = today;
+
+  dateInput.min =
+    today;
+
+  returnDate.min =
+    today;
 
 
   dateInput.addEventListener(
@@ -255,11 +456,14 @@ function configureDates() {
     () => {
 
       returnDate.min =
-        dateInput.value || today;
+        dateInput.value ||
+        today;
+
 
       if (
         returnDate.value &&
-        returnDate.value < returnDate.min
+        returnDate.value <
+          returnDate.min
       ) {
 
         returnDate.value =
@@ -277,18 +481,23 @@ function configureDates() {
    ADDRESS AUTOCOMPLETE
 ========================================= */
 
-async function findAddresses(query) {
+async function findAddresses(
+  query
+) {
 
-  if (query.trim().length < 3) {
+  if (
+    query.trim().length < 3
+  ) {
     return [];
   }
 
 
   try {
 
-    const response = await fetch(
-      `/api/address-suggestions?q=${encodeURIComponent(query)}`
-    );
+    const response =
+      await fetch(
+        `/api/address-suggestions?q=${encodeURIComponent(query)}`
+      );
 
 
     if (!response.ok) {
@@ -296,10 +505,13 @@ async function findAddresses(query) {
     }
 
 
-    const data = await response.json();
+    const data =
+      await response.json();
 
 
-    return Array.isArray(data.suggestions)
+    return Array.isArray(
+      data.suggestions
+    )
       ? data.suggestions
       : [];
 
@@ -322,47 +534,53 @@ function renderSuggestions(
   container.innerHTML = "";
 
 
-  suggestions.forEach((item) => {
+  suggestions.forEach(
+    (item) => {
 
-    const suggestion =
-      document.createElement("div");
-
-    suggestion.className =
-      "address-suggestion";
-
-
-    const description =
-      typeof item === "string"
-        ? item
-        : item.description;
+      const suggestion =
+        document.createElement(
+          "div"
+        );
 
 
-    suggestion.textContent =
-      description;
+      suggestion.className =
+        "address-suggestion";
 
 
-    suggestion.addEventListener(
-      "mousedown",
-      (event) => {
-
-        event.preventDefault();
-
-        input.value =
-          description;
-
-        container.innerHTML = "";
-
-        resetQuote();
-
-      }
-    );
+      const description =
+        typeof item === "string"
+          ? item
+          : item.description;
 
 
-    container.appendChild(
-      suggestion
-    );
+      suggestion.textContent =
+        description;
 
-  });
+
+      suggestion.addEventListener(
+        "mousedown",
+        (event) => {
+
+          event.preventDefault();
+
+          input.value =
+            description;
+
+          container.innerHTML =
+            "";
+
+          resetQuote();
+
+        }
+      );
+
+
+      container.appendChild(
+        suggestion
+      );
+
+    }
+  );
 
 }
 
@@ -393,7 +611,9 @@ function enableAddressAutocomplete(
 
       if (query.length < 3) {
 
-        container.innerHTML = "";
+        container.innerHTML =
+          "";
+
         return;
 
       }
@@ -404,7 +624,9 @@ function enableAddressAutocomplete(
           async () => {
 
             const results =
-              await findAddresses(query);
+              await findAddresses(
+                query
+              );
 
 
             renderSuggestions(
@@ -428,7 +650,8 @@ function enableAddressAutocomplete(
       setTimeout(
         () => {
 
-          container.innerHTML = "";
+          container.innerHTML =
+            "";
 
         },
         150
@@ -448,10 +671,12 @@ async function requestQuote() {
 
   clearNotice();
 
+
   quoteBtn.disabled = true;
 
   quoteBtn.textContent =
     "Calculating…";
+
 
   payBtn.disabled = true;
 
@@ -460,17 +685,9 @@ async function requestQuote() {
 
   try {
 
-    /*
-      A disabled select does not appear
-      in FormData.
-
-      Hourly service locks the vehicle
-      to Black SUV, so temporarily enable
-      it while reading the form.
-    */
-
     const wasDisabled =
       vehicle.disabled;
+
 
     vehicle.disabled = false;
 
@@ -530,7 +747,8 @@ async function requestQuote() {
     }
 
 
-    currentQuote = data;
+    currentQuote =
+      data;
 
 
     sumVehicle.textContent =
@@ -570,26 +788,40 @@ async function requestQuote() {
 
 
     sumTotal.textContent =
-      new Intl.NumberFormat(
-        "en-US",
-        {
-          style: "currency",
-
-          currency:
-            String(
-              data.currency || "usd"
-            ).toUpperCase()
-        }
-      ).format(data.total);
+      formatMoney(
+        data.total,
+        data.currency
+      );
 
 
-    payBtn.disabled = false;
+    showPromoResult(data);
 
 
-    showNotice(
-      "Quote ready. Continue to secure payment.",
-      "success"
-    );
+    payBtn.disabled =
+      false;
+
+
+    if (
+      data.promotion &&
+      Number(data.discount) > 0
+    ) {
+
+      showNotice(
+        `${data.promotion.code} applied — you saved ${formatMoney(
+          data.discount,
+          data.currency
+        )}.`,
+        "success"
+      );
+
+    } else {
+
+      showNotice(
+        "Quote ready. Continue to secure payment.",
+        "success"
+      );
+
+    }
 
 
     return data;
@@ -597,17 +829,40 @@ async function requestQuote() {
 
   } catch (error) {
 
+    if (promoSummary) {
+      promoSummary.hidden = true;
+    }
+
+
+    if (
+      promoCode &&
+      promoCode.value.trim() &&
+      promoMessage
+    ) {
+
+      promoMessage.textContent =
+        error.message ||
+        "Promo code could not be applied.";
+
+      promoMessage.className =
+        "promo-error";
+
+    }
+
+
     showNotice(
       error.message ||
       "Unable to calculate quote."
     );
+
 
     return null;
 
 
   } finally {
 
-    quoteBtn.disabled = false;
+    quoteBtn.disabled =
+      false;
 
     quoteBtn.textContent =
       "Get Quote";
@@ -624,12 +879,99 @@ quoteBtn.addEventListener(
 
 
 /* =========================================
+   APPLY PROMO CODE
+========================================= */
+
+if (applyPromoBtn) {
+
+  applyPromoBtn.addEventListener(
+    "click",
+    async () => {
+
+      if (!promoCode) {
+        return;
+      }
+
+
+      const code =
+        promoCode.value
+          .trim()
+          .toUpperCase();
+
+
+      promoCode.value =
+        code;
+
+
+      if (!code) {
+
+        if (promoMessage) {
+
+          promoMessage.textContent =
+            "Enter a promo code first.";
+
+          promoMessage.className =
+            "promo-error";
+
+        }
+
+        return;
+
+      }
+
+
+      applyPromoBtn.disabled =
+        true;
+
+      applyPromoBtn.textContent =
+        "Applying…";
+
+
+      try {
+
+        await requestQuote();
+
+      } finally {
+
+        applyPromoBtn.disabled =
+          false;
+
+        applyPromoBtn.textContent =
+          "Apply";
+
+      }
+
+    }
+  );
+
+}
+
+
+/* =========================================
    RESET QUOTE WHEN BOOKING CHANGES
 ========================================= */
 
 form.addEventListener(
   "input",
-  () => {
+  (event) => {
+
+    if (
+      event.target === promoCode
+    ) {
+
+      if (promoCode) {
+
+        promoCode.value =
+          promoCode.value
+            .toUpperCase();
+
+      }
+
+
+      resetPromoDisplay();
+
+    }
+
 
     if (currentQuote) {
       resetQuote();
@@ -657,6 +999,7 @@ form.addEventListener(
       const quote =
         await requestQuote();
 
+
       if (!quote) {
         return;
       }
@@ -664,7 +1007,8 @@ form.addEventListener(
     }
 
 
-    payBtn.disabled = true;
+    payBtn.disabled =
+      true;
 
     payBtn.textContent =
       "Opening secure checkout…";
@@ -675,7 +1019,9 @@ form.addEventListener(
       const wasDisabled =
         vehicle.disabled;
 
-      vehicle.disabled = false;
+
+      vehicle.disabled =
+        false;
 
 
       const bookingData =
@@ -739,7 +1085,9 @@ form.addEventListener(
         "Unable to start checkout."
       );
 
-      payBtn.disabled = false;
+
+      payBtn.disabled =
+        false;
 
       payBtn.textContent =
         "Reserve & Pay";
@@ -758,41 +1106,42 @@ document
   .querySelectorAll(
     "[data-select-vehicle]"
   )
-  .forEach((button) => {
+  .forEach(
+    (button) => {
 
-    button.addEventListener(
-      "click",
-      () => {
+      button.addEventListener(
+        "click",
+        () => {
 
-        const selected =
-          button.dataset.selectVehicle;
+          const selected =
+            button.dataset
+              .selectVehicle;
 
 
-        /*
-          Do not allow Sedan selection
-          while Hourly service is active.
-        */
+          if (
+            tripTypeInput.value ===
+            "hourly"
+          ) {
 
-        if (
-          tripTypeInput.value === "hourly"
-        ) {
+            vehicle.value =
+              "suv";
 
-          vehicle.value = "suv";
+          } else {
 
-        } else {
+            vehicle.value =
+              selected;
 
-          vehicle.value = selected;
+          }
+
+
+          resetPassengerOptions();
+          resetQuote();
 
         }
+      );
 
-
-        resetPassengerOptions();
-        resetQuote();
-
-      }
-    );
-
-  });
+    }
+  );
 
 
 /* =========================================
@@ -835,8 +1184,8 @@ async function loadPublicConfig() {
   } catch (_) {
 
     /*
-      Contact information failing to load
-      should not stop the booking form.
+      Contact information failing
+      should not stop booking.
     */
 
   }
@@ -852,9 +1201,13 @@ async function initialize() {
 
   configureDates();
 
-  selectTripType("oneway");
+  selectTripType(
+    "oneway"
+  );
 
   resetPassengerOptions();
+
+  resetPromoDisplay();
 
 
   enableAddressAutocomplete(
