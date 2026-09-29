@@ -3,8 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>ER Limousine Service | New Jersey & New York</title>
-  <meta name="description" content="Premium private chauffeur, airport transfer and black SUV transportation across New Jersey and New York.">
+
+  <title>ER Limousine Service | EWR to Manhattan Black SUV & NJ/NY Chauffeur</title>
+
+  <meta
+    name="description"
+    content="Book an EWR to Manhattan Black SUV for a $150 flat rate with ER Limousine Service. Premium private chauffeur and airport transportation across New Jersey and New York."
+  >
+
   <link rel="stylesheet" href="/styles.css">
 </head>
 
@@ -15,6 +21,7 @@
 
     <a class="brand" href="#home">
       <span class="brand-er">ER</span>
+
       <span class="brand-name">
         <strong>LIMOUSINE SERVICE LLC</strong>
         <small>LUXURY • RELIABILITY • ALWAYS ON TIME</small>
@@ -47,7 +54,34 @@
 
     <div class="premium-copy">
 
-      <div class="eyebrow">ER LIMOUSINE SERVICE LLC</div>
+      <!-- EWR TO MANHATTAN SPECIAL -->
+      <div class="airport-special">
+
+        <div class="airport-special-route">
+          ✈ EWR → MANHATTAN
+        </div>
+
+        <div class="airport-special-price">
+          BLACK SUV — $150 FLAT RATE
+        </div>
+
+        <div class="airport-special-details">
+          Up to 6 passengers • Private chauffeur
+        </div>
+
+        <a
+          href="#book"
+          class="airport-special-button"
+          id="ewrManhattanSpecialBtn">
+          BOOK THIS RIDE →
+        </a>
+
+      </div>
+
+
+      <div class="eyebrow">
+        ER LIMOUSINE SERVICE LLC
+      </div>
 
       <h1>
         Premium Transportation
@@ -132,9 +166,19 @@
           value="oneway"
         >
 
+        <input
+          type="hidden"
+          id="offerCode"
+          name="offerCode"
+          value=""
+        >
+
 
         <div class="field full">
-          <label for="pickup">Pickup Location</label>
+
+          <label for="pickup">
+            Pickup Location
+          </label>
 
           <input
             id="pickup"
@@ -148,11 +192,17 @@
             id="pickupSuggestions"
             class="address-suggestions">
           </div>
+
         </div>
 
 
-        <div class="field full" id="dropoffField">
-          <label for="dropoff">Drop-off Location</label>
+        <div
+          class="field full"
+          id="dropoffField">
+
+          <label for="dropoff">
+            Drop-off Location
+          </label>
 
           <input
             id="dropoff"
@@ -166,13 +216,17 @@
             id="dropoffSuggestions"
             class="address-suggestions">
           </div>
+
         </div>
 
 
         <div class="two-fields">
 
           <div class="field">
-            <label for="date">Date</label>
+
+            <label for="date">
+              Date
+            </label>
 
             <input
               type="date"
@@ -180,11 +234,15 @@
               name="date"
               required
             >
+
           </div>
 
 
           <div class="field">
-            <label for="time">Pickup Time</label>
+
+            <label for="time">
+              Pickup Time
+            </label>
 
             <input
               type="time"
@@ -192,6 +250,7 @@
               name="time"
               required
             >
+
           </div>
 
         </div>
@@ -203,23 +262,32 @@
           id="returnFields">
 
           <div class="field">
-            <label for="returnDate">Return Date</label>
+
+            <label for="returnDate">
+              Return Date
+            </label>
 
             <input
               type="date"
               id="returnDate"
               name="returnDate"
             >
+
           </div>
 
+
           <div class="field">
-            <label for="returnTime">Return Time</label>
+
+            <label for="returnTime">
+              Return Time
+            </label>
 
             <input
               type="time"
               id="returnTime"
               name="returnTime"
             >
+
           </div>
 
         </div>
@@ -234,7 +302,9 @@
             Number of Hours
           </label>
 
-          <select id="hours" name="hours">
+          <select
+            id="hours"
+            name="hours">
 
             <option value="3">
               3 Hours — $390
@@ -294,12 +364,29 @@
               name="passengers"
               required>
 
-              <option value="1">1 Passenger</option>
-              <option value="2">2 Passengers</option>
-              <option value="3">3 Passengers</option>
-              <option value="4">4 Passengers</option>
-              <option value="5">5 Passengers</option>
-              <option value="6">6 Passengers</option>
+              <option value="1">
+                1 Passenger
+              </option>
+
+              <option value="2">
+                2 Passengers
+              </option>
+
+              <option value="3">
+                3 Passengers
+              </option>
+
+              <option value="4">
+                4 Passengers
+              </option>
+
+              <option value="5">
+                5 Passengers
+              </option>
+
+              <option value="6">
+                6 Passengers
+              </option>
 
             </select>
 
@@ -321,7 +408,9 @@
                 Luxury Sedan
               </option>
 
-              <option value="suv" selected>
+              <option
+                value="suv"
+                selected>
                 Black SUV
               </option>
 
@@ -353,7 +442,9 @@
         <!-- PASSENGER INFORMATION -->
         <div class="customer-details">
 
-          <h3>Passenger Information</h3>
+          <h3>
+            Passenger Information
+          </h3>
 
 
           <div class="two-fields">
@@ -476,7 +567,10 @@
         </div>
 
 
-        <div id="notice" class="notice"></div>
+        <div
+          id="notice"
+          class="notice">
+        </div>
 
 
         <button
@@ -519,41 +613,71 @@
     <aside class="summary-card">
 
       <div class="summary-heading">
-        <div class="eyebrow">YOUR QUOTE</div>
-        <h3>Trip Summary</h3>
+
+        <div class="eyebrow">
+          YOUR QUOTE
+        </div>
+
+        <h3>
+          Trip Summary
+        </h3>
+
       </div>
 
 
       <div class="summary-grid">
 
         <div class="summary-row">
-          <span>Vehicle</span>
+
+          <span>
+            Vehicle
+          </span>
+
           <strong id="sumVehicle">
             Black SUV
           </strong>
+
         </div>
 
 
         <div class="summary-row">
-          <span>Distance</span>
-          <strong id="sumMiles">—</strong>
+
+          <span>
+            Distance
+          </span>
+
+          <strong id="sumMiles">
+            —
+          </strong>
+
         </div>
 
 
         <div class="summary-row">
-          <span>Estimated Drive Time</span>
-          <strong id="sumMinutes">—</strong>
+
+          <span>
+            Estimated Drive Time
+          </span>
+
+          <strong id="sumMinutes">
+            —
+          </strong>
+
         </div>
 
 
         <div class="summary-row total-row">
-          <span>Total</span>
+
+          <span>
+            Total
+          </span>
 
           <strong
             class="quote-price"
             id="sumTotal">
             —
           </strong>
+
         </div>
 
       </div>
@@ -588,7 +712,9 @@
 
 
 <!-- FLEET -->
-<section id="fleet" class="fleet-section">
+<section
+  id="fleet"
+  class="fleet-section">
 
   <div class="wrap">
 
@@ -627,7 +753,9 @@
 
         <div class="fleet-content">
 
-          <h3>Luxury Sedan</h3>
+          <h3>
+            Luxury Sedan
+          </h3>
 
           <p class="passenger-count">
             👤 1–3 Passengers
@@ -636,9 +764,17 @@
 
           <div class="fleet-features">
 
-            <span>Comfort</span>
-            <span>Privacy</span>
-            <span>Business Travel</span>
+            <span>
+              Comfort
+            </span>
+
+            <span>
+              Privacy
+            </span>
+
+            <span>
+              Business Travel
+            </span>
 
           </div>
 
@@ -674,7 +810,9 @@
 
         <div class="fleet-content">
 
-          <h3>Black SUV</h3>
+          <h3>
+            Black SUV
+          </h3>
 
           <p class="vehicle-subtitle">
             2025 Chevrolet Suburban Premier
@@ -687,9 +825,17 @@
 
           <div class="fleet-features">
 
-            <span>Spacious</span>
-            <span>Luggage</span>
-            <span>Premium Comfort</span>
+            <span>
+              Spacious
+            </span>
+
+            <span>
+              Luggage
+            </span>
+
+            <span>
+              Premium Comfort
+            </span>
 
           </div>
 
@@ -722,11 +868,20 @@
 
     <div class="service-item">
 
-      <div class="service-icon">✈</div>
+      <div class="service-icon">
+        ✈
+      </div>
 
       <div>
-        <strong>EWR, JFK & LGA</strong>
-        <span>Airport Transportation</span>
+
+        <strong>
+          EWR, JFK & LGA
+        </strong>
+
+        <span>
+          Airport Transportation
+        </span>
+
       </div>
 
     </div>
@@ -734,11 +889,20 @@
 
     <div class="service-item">
 
-      <div class="service-icon">▣</div>
+      <div class="service-icon">
+        ▣
+      </div>
 
       <div>
-        <strong>Secure Online Payment</strong>
-        <span>Fast & Secure Checkout</span>
+
+        <strong>
+          Secure Online Payment
+        </strong>
+
+        <span>
+          Fast & Secure Checkout
+        </span>
+
       </div>
 
     </div>
@@ -746,11 +910,20 @@
 
     <div class="service-item">
 
-      <div class="service-icon">◆</div>
+      <div class="service-icon">
+        ◆
+      </div>
 
       <div>
-        <strong>Professional Service</strong>
-        <span>Comfort & Reliability</span>
+
+        <strong>
+          Professional Service
+        </strong>
+
+        <span>
+          Comfort & Reliability
+        </span>
+
       </div>
 
     </div>
@@ -758,11 +931,20 @@
 
     <div class="service-item">
 
-      <div class="service-icon">☎</div>
+      <div class="service-icon">
+        ☎
+      </div>
 
       <div>
-        <strong>24/7 Available</strong>
-        <span>Reserve Online Anytime</span>
+
+        <strong>
+          24/7 Available
+        </strong>
+
+        <span>
+          Reserve Online Anytime
+        </span>
+
       </div>
 
     </div>
@@ -819,7 +1001,9 @@
 
       <div class="promise">
 
-        <strong>100%</strong>
+        <strong>
+          100%
+        </strong>
 
         <span>
           On-Time Service
@@ -830,7 +1014,9 @@
 
       <div class="promise">
 
-        <strong>24/7</strong>
+        <strong>
+          24/7
+        </strong>
 
         <span>
           Available
@@ -841,7 +1027,9 @@
 
       <div class="promise">
 
-        <strong>5★</strong>
+        <strong>
+          5★
+        </strong>
 
         <span>
           Service
@@ -882,7 +1070,9 @@
 
     <div>
 
-      <strong>Contact</strong>
+      <strong>
+        Contact
+      </strong>
 
       <p id="contactBlock">
         Loading contact information…
@@ -893,7 +1083,9 @@
 
     <div>
 
-      <strong>Services</strong>
+      <strong>
+        Services
+      </strong>
 
       <p>
         Airport Transfers<br>
@@ -907,12 +1099,24 @@
 
     <div>
 
-      <strong>Quick Links</strong>
+      <strong>
+        Quick Links
+      </strong>
 
       <p>
-        <a href="#book">Book a Ride</a><br>
-        <a href="#fleet">Our Fleet</a><br>
-        <a href="/admin.html">Private Dashboard</a>
+        <a href="#book">
+          Book a Ride
+        </a>
+        <br>
+
+        <a href="#fleet">
+          Our Fleet
+        </a>
+        <br>
+
+        <a href="/admin.html">
+          Private Dashboard
+        </a>
       </p>
 
     </div>
