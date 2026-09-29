@@ -46,6 +46,11 @@ const promoSummaryLabel =
   document.getElementById("promoSummaryLabel");
 const sumDiscount = document.getElementById("sumDiscount");
 
+const offerCode = document.getElementById("offerCode");
+
+const ewrManhattanSpecialBtn =
+  document.getElementById("ewrManhattanSpecialBtn");
+
 let currentQuote = null;
 let suggestionTimers = {};
 
@@ -64,6 +69,13 @@ function getFormData() {
   if (data.promoCode) {
     data.promoCode =
       String(data.promoCode)
+        .trim()
+        .toUpperCase();
+  }
+
+  if (data.offerCode) {
+    data.offerCode =
+      String(data.offerCode)
         .trim()
         .toUpperCase();
   }
@@ -147,13 +159,33 @@ function resetPromoDisplay() {
       "First-time customer? Use code FIRST15 for 15% off.";
 
     promoMessage.className = "";
+  }
+}
 
+
+function showSpecialPromoMessage() {
+
+  if (promoSummary) {
+    promoSummary.hidden = true;
   }
 
+  if (promoMessage) {
+
+    promoMessage.textContent =
+      "Promo codes do not apply to the $150 EWR → Manhattan special.";
+
+    promoMessage.className = "";
+  }
 }
 
 
 function showPromoResult(data) {
+
+  if (data.fixedOffer) {
+
+    showSpecialPromoMessage();
+    return;
+  }
 
   if (
     data.promotion &&
@@ -169,7 +201,6 @@ function showPromoResult(data) {
       promoSummaryLabel.textContent =
         data.promotion.label ||
         `${data.promotion.code || "Promo"} applied`;
-
     }
 
     if (sumDiscount) {
@@ -179,7 +210,6 @@ function showPromoResult(data) {
           data.discount,
           data.currency
         )}`;
-
     }
 
     if (promoMessage) {
@@ -189,17 +219,14 @@ function showPromoResult(data) {
 
       promoMessage.className =
         "promo-success";
-
     }
 
     return;
   }
 
-
   if (promoSummary) {
     promoSummary.hidden = true;
   }
-
 
   if (
     promoCode &&
@@ -212,11 +239,8 @@ function showPromoResult(data) {
         "Enter FIRST15 and click Apply for 15% off your first ride.";
 
       promoMessage.className = "";
-
     }
-
   }
-
 }
 
 
@@ -243,7 +267,98 @@ function resetQuote() {
   if (promoSummary) {
     promoSummary.hidden = true;
   }
+}
 
+
+/* =========================================
+   SPECIAL OFFER
+========================================= */
+
+function specialOfferActive() {
+
+  return Boolean(
+    offerCode &&
+    offerCode.value ===
+      "EWR_MANHATTAN_SUV"
+  );
+}
+
+
+function clearSpecialOffer() {
+
+  if (offerCode) {
+    offerCode.value = "";
+  }
+
+  if (promoCode) {
+    promoCode.disabled = false;
+  }
+
+  if (applyPromoBtn) {
+    applyPromoBtn.disabled = false;
+  }
+
+  resetPromoDisplay();
+}
+
+
+function activateEwrManhattanSpecial() {
+
+  selectTripType("airport");
+
+  if (offerCode) {
+    offerCode.value =
+      "EWR_MANHATTAN_SUV";
+  }
+
+  pickup.value =
+    "Newark Liberty International Airport (EWR), 3 Brewster Rd, Newark, NJ 07114";
+
+  dropoff.value = "";
+
+  vehicle.value = "suv";
+  vehicle.disabled = true;
+
+  resetPassengerOptions();
+  resetQuote();
+
+  if (promoCode) {
+
+    promoCode.value = "";
+    promoCode.disabled = true;
+  }
+
+  if (applyPromoBtn) {
+    applyPromoBtn.disabled = true;
+  }
+
+  showSpecialPromoMessage();
+
+  clearNotice();
+
+  showNotice(
+    "EWR → Manhattan $150 Black SUV special selected. Enter your Manhattan destination.",
+    "success"
+  );
+
+  setTimeout(
+    () => {
+      dropoff.focus();
+    },
+    250
+  );
+}
+
+
+if (ewrManhattanSpecialBtn) {
+
+  ewrManhattanSpecialBtn.addEventListener(
+    "click",
+    () => {
+
+      activateEwrManhattanSpecial();
+    }
+  );
 }
 
 
@@ -255,7 +370,6 @@ function selectTripType(type) {
 
   tripTypeInput.value = type;
 
-
   tripTabs.forEach(
     (button) => {
 
@@ -263,17 +377,14 @@ function selectTripType(type) {
         "active",
         button.dataset.tripType === type
       );
-
     }
   );
-
 
   dropoffField.classList.remove(
     "hidden-field"
   );
 
   dropoff.required = true;
-
 
   returnFields.classList.add(
     "hidden-field"
@@ -282,21 +393,15 @@ function selectTripType(type) {
   returnDate.required = false;
   returnTime.required = false;
 
-
   hourlyField.classList.add(
     "hidden-field"
   );
-
 
   flightField.classList.add(
     "hidden-field"
   );
 
-
   vehicle.disabled = false;
-
-
-  /* ROUND TRIP */
 
   if (type === "roundtrip") {
 
@@ -306,22 +411,14 @@ function selectTripType(type) {
 
     returnDate.required = true;
     returnTime.required = true;
-
   }
-
-
-  /* AIRPORT */
 
   if (type === "airport") {
 
     flightField.classList.remove(
       "hidden-field"
     );
-
   }
-
-
-  /* HOURLY */
 
   if (type === "hourly") {
 
@@ -331,9 +428,7 @@ function selectTripType(type) {
 
     vehicle.value = "suv";
     vehicle.disabled = true;
-
   }
-
 
   resetPassengerOptions();
   resetQuote();
@@ -347,13 +442,13 @@ tripTabs.forEach(
       "click",
       () => {
 
+        clearSpecialOffer();
+
         selectTripType(
           button.dataset.tripType
         );
-
       }
     );
-
   }
 );
 
@@ -367,17 +462,14 @@ function resetPassengerOptions() {
   const tripType =
     tripTypeInput.value;
 
-
   let maximum =
     vehicle.value === "sedan"
       ? 3
       : 6;
 
-
   if (tripType === "hourly") {
     maximum = 6;
   }
-
 
   Array.from(
     passengers.options
@@ -392,10 +484,8 @@ function resetPassengerOptions() {
 
       option.disabled =
         number > maximum;
-
     }
   );
-
 
   if (
     Number(passengers.value) >
@@ -404,15 +494,21 @@ function resetPassengerOptions() {
 
     passengers.value =
       String(maximum);
-
   }
-
 }
 
 
 vehicle.addEventListener(
   "change",
-  resetPassengerOptions
+  () => {
+
+    if (specialOfferActive()) {
+      clearSpecialOffer();
+    }
+
+    resetPassengerOptions();
+    resetQuote();
+  }
 );
 
 
@@ -425,12 +521,10 @@ function localDateString() {
   const now =
     new Date();
 
-
   now.setMinutes(
     now.getMinutes() -
     now.getTimezoneOffset()
   );
-
 
   return now
     .toISOString()
@@ -443,13 +537,11 @@ function configureDates() {
   const today =
     localDateString();
 
-
   dateInput.min =
     today;
 
   returnDate.min =
     today;
-
 
   dateInput.addEventListener(
     "change",
@@ -459,7 +551,6 @@ function configureDates() {
         dateInput.value ||
         today;
 
-
       if (
         returnDate.value &&
         returnDate.value <
@@ -468,12 +559,9 @@ function configureDates() {
 
         returnDate.value =
           returnDate.min;
-
       }
-
     }
   );
-
 }
 
 
@@ -491,7 +579,6 @@ async function findAddresses(
     return [];
   }
 
-
   try {
 
     const response =
@@ -499,15 +586,12 @@ async function findAddresses(
         `/api/address-suggestions?q=${encodeURIComponent(query)}`
       );
 
-
     if (!response.ok) {
       return [];
     }
 
-
     const data =
       await response.json();
-
 
     return Array.isArray(
       data.suggestions
@@ -515,13 +599,10 @@ async function findAddresses(
       ? data.suggestions
       : [];
 
-
   } catch (_) {
 
     return [];
-
   }
-
 }
 
 
@@ -533,7 +614,6 @@ function renderSuggestions(
 
   container.innerHTML = "";
 
-
   suggestions.forEach(
     (item) => {
 
@@ -542,20 +622,16 @@ function renderSuggestions(
           "div"
         );
 
-
       suggestion.className =
         "address-suggestion";
-
 
       const description =
         typeof item === "string"
           ? item
           : item.description;
 
-
       suggestion.textContent =
         description;
-
 
       suggestion.addEventListener(
         "mousedown",
@@ -570,18 +646,14 @@ function renderSuggestions(
             "";
 
           resetQuote();
-
         }
       );
-
 
       container.appendChild(
         suggestion
       );
-
     }
   );
-
 }
 
 
@@ -595,7 +667,6 @@ function enableAddressAutocomplete(
     return;
   }
 
-
   input.addEventListener(
     "input",
     () => {
@@ -604,10 +675,8 @@ function enableAddressAutocomplete(
         suggestionTimers[key]
       );
 
-
       const query =
         input.value.trim();
-
 
       if (query.length < 3) {
 
@@ -615,9 +684,7 @@ function enableAddressAutocomplete(
           "";
 
         return;
-
       }
-
 
       suggestionTimers[key] =
         setTimeout(
@@ -628,20 +695,16 @@ function enableAddressAutocomplete(
                 query
               );
 
-
             renderSuggestions(
               container,
               input,
               results
             );
-
           },
           300
         );
-
     }
   );
-
 
   input.addEventListener(
     "blur",
@@ -652,14 +715,11 @@ function enableAddressAutocomplete(
 
           container.innerHTML =
             "";
-
         },
         150
       );
-
     }
   );
-
 }
 
 
@@ -671,30 +731,24 @@ async function requestQuote() {
 
   clearNotice();
 
-
   quoteBtn.disabled = true;
 
   quoteBtn.textContent =
     "Calculating…";
 
-
   payBtn.disabled = true;
 
   currentQuote = null;
-
 
   try {
 
     const wasDisabled =
       vehicle.disabled;
 
-
     vehicle.disabled = false;
-
 
     const valid =
       form.reportValidity();
-
 
     if (!valid) {
 
@@ -702,17 +756,13 @@ async function requestQuote() {
         wasDisabled;
 
       return null;
-
     }
-
 
     const bookingData =
       getFormData();
 
-
     vehicle.disabled =
       wasDisabled;
-
 
     const response =
       await fetch(
@@ -732,10 +782,8 @@ async function requestQuote() {
         }
       );
 
-
     const data =
       await response.json();
-
 
     if (!response.ok) {
 
@@ -743,17 +791,13 @@ async function requestQuote() {
         data.error ||
         "Unable to calculate quote."
       );
-
     }
-
 
     currentQuote =
       data;
 
-
     sumVehicle.textContent =
       data.vehicle;
-
 
     if (
       data.miles === null ||
@@ -767,9 +811,7 @@ async function requestQuote() {
 
       sumMiles.textContent =
         `${data.miles} mi`;
-
     }
-
 
     if (
       data.minutes === null ||
@@ -783,9 +825,7 @@ async function requestQuote() {
 
       sumMinutes.textContent =
         `${data.minutes} min`;
-
     }
-
 
     sumTotal.textContent =
       formatMoney(
@@ -793,15 +833,19 @@ async function requestQuote() {
         data.currency
       );
 
-
     showPromoResult(data);
-
 
     payBtn.disabled =
       false;
 
+    if (data.fixedOffer) {
 
-    if (
+      showNotice(
+        "$150 EWR → Manhattan Black SUV special applied.",
+        "success"
+      );
+
+    } else if (
       data.promotion &&
       Number(data.discount) > 0
     ) {
@@ -820,12 +864,9 @@ async function requestQuote() {
         "Quote ready. Continue to secure payment.",
         "success"
       );
-
     }
 
-
     return data;
-
 
   } catch (error) {
 
@@ -833,31 +874,12 @@ async function requestQuote() {
       promoSummary.hidden = true;
     }
 
-
-    if (
-      promoCode &&
-      promoCode.value.trim() &&
-      promoMessage
-    ) {
-
-      promoMessage.textContent =
-        error.message ||
-        "Promo code could not be applied.";
-
-      promoMessage.className =
-        "promo-error";
-
-    }
-
-
     showNotice(
       error.message ||
       "Unable to calculate quote."
     );
 
-
     return null;
-
 
   } finally {
 
@@ -866,9 +888,7 @@ async function requestQuote() {
 
     quoteBtn.textContent =
       "Get Quote";
-
   }
-
 }
 
 
@@ -888,20 +908,28 @@ if (applyPromoBtn) {
     "click",
     async () => {
 
-      if (!promoCode) {
+      if (specialOfferActive()) {
+
+        showSpecialPromoMessage();
+
+        showNotice(
+          "FIRST15 cannot be combined with the $150 EWR → Manhattan special."
+        );
+
         return;
       }
 
+      if (!promoCode) {
+        return;
+      }
 
       const code =
         promoCode.value
           .trim()
           .toUpperCase();
 
-
       promoCode.value =
         code;
-
 
       if (!code) {
 
@@ -912,20 +940,16 @@ if (applyPromoBtn) {
 
           promoMessage.className =
             "promo-error";
-
         }
 
         return;
-
       }
-
 
       applyPromoBtn.disabled =
         true;
 
       applyPromoBtn.textContent =
         "Applying…";
-
 
       try {
 
@@ -938,12 +962,9 @@ if (applyPromoBtn) {
 
         applyPromoBtn.textContent =
           "Apply";
-
       }
-
     }
   );
-
 }
 
 
@@ -964,19 +985,16 @@ form.addEventListener(
         promoCode.value =
           promoCode.value
             .toUpperCase();
-
       }
 
-
-      resetPromoDisplay();
-
+      if (!specialOfferActive()) {
+        resetPromoDisplay();
+      }
     }
-
 
     if (currentQuote) {
       resetQuote();
     }
-
   }
 );
 
@@ -993,19 +1011,15 @@ form.addEventListener(
 
     clearNotice();
 
-
     if (!currentQuote) {
 
       const quote =
         await requestQuote();
 
-
       if (!quote) {
         return;
       }
-
     }
-
 
     payBtn.disabled =
       true;
@@ -1013,24 +1027,18 @@ form.addEventListener(
     payBtn.textContent =
       "Opening secure checkout…";
 
-
     try {
 
       const wasDisabled =
         vehicle.disabled;
 
-
-      vehicle.disabled =
-        false;
-
+      vehicle.disabled = false;
 
       const bookingData =
         getFormData();
 
-
       vehicle.disabled =
         wasDisabled;
-
 
       const response =
         await fetch(
@@ -1050,10 +1058,8 @@ form.addEventListener(
           }
         );
 
-
       const data =
         await response.json();
-
 
       if (!response.ok) {
 
@@ -1061,22 +1067,17 @@ form.addEventListener(
           data.error ||
           "Unable to start checkout."
         );
-
       }
-
 
       if (!data.url) {
 
         throw new Error(
           "Secure checkout link was not returned."
         );
-
       }
-
 
       window.location.href =
         data.url;
-
 
     } catch (error) {
 
@@ -1085,15 +1086,12 @@ form.addEventListener(
         "Unable to start checkout."
       );
 
-
       payBtn.disabled =
         false;
 
       payBtn.textContent =
         "Reserve & Pay";
-
     }
-
   }
 );
 
@@ -1113,10 +1111,11 @@ document
         "click",
         () => {
 
+          clearSpecialOffer();
+
           const selected =
             button.dataset
               .selectVehicle;
-
 
           if (
             tripTypeInput.value ===
@@ -1128,18 +1127,17 @@ document
 
           } else {
 
+            vehicle.disabled =
+              false;
+
             vehicle.value =
               selected;
-
           }
-
 
           resetPassengerOptions();
           resetQuote();
-
         }
       );
-
     }
   );
 
@@ -1157,29 +1155,23 @@ async function loadPublicConfig() {
         "/api/public-config"
       );
 
-
     if (!response.ok) {
       return;
     }
 
-
     const config =
       await response.json();
-
 
     const contactBlock =
       document.getElementById(
         "contactBlock"
       );
 
-
     if (contactBlock) {
 
       contactBlock.textContent =
         `${config.companyPhone || ""} • ${config.companyEmail || ""}`;
-
     }
-
 
   } catch (_) {
 
@@ -1187,9 +1179,7 @@ async function loadPublicConfig() {
       Contact information failing
       should not stop booking.
     */
-
   }
-
 }
 
 
@@ -1209,13 +1199,11 @@ async function initialize() {
 
   resetPromoDisplay();
 
-
   enableAddressAutocomplete(
     pickup,
     pickupSuggestions,
     "pickup"
   );
-
 
   enableAddressAutocomplete(
     dropoff,
@@ -1223,15 +1211,12 @@ async function initialize() {
     "dropoff"
   );
 
-
   await loadPublicConfig();
-
 
   const params =
     new URLSearchParams(
       window.location.search
     );
-
 
   if (
     params.get("cancelled")
@@ -1240,9 +1225,7 @@ async function initialize() {
     showNotice(
       "Payment was cancelled. Your card was not charged."
     );
-
   }
-
 }
 
 
