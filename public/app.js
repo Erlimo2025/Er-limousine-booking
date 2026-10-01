@@ -53,6 +53,20 @@ const ewrManhattanSpecialBtn =
 
 let currentQuote = null;
 let suggestionTimers = {};
+let hourlyVehicles = {};
+
+function updateHourlyRates() {
+  if (tripTypeInput.value !== "hourly") return;
+  const rate = hourlyVehicles[vehicle.value]?.hourlyRate;
+  if (!Number.isFinite(rate)) return;
+  const label = vehicle.options[vehicle.selectedIndex].textContent.trim();
+  document.getElementById("hourlyRateInfo").textContent = `${label} • $${rate}/hour • 3-hour minimum`;
+  Array.from(hours.options).forEach(option => {
+    option.textContent = `${option.value} Hours — ${formatMoney(Number(option.value) * rate, "usd")}`;
+  });
+}
+
+hours.addEventListener("change", resetQuote);
 
 
 /* =========================================
@@ -337,7 +351,7 @@ function activateEwrManhattanSpecial() {
   clearNotice();
 
   showNotice(
-    "EWR → Manhattan $150 Black SUV special selected. Enter your Manhattan destination.",
+    "EWR → Manhattan $150 Chevrolet Suburban Premier special selected. Enter your Manhattan destination.",
     "success"
   );
 
@@ -426,8 +440,7 @@ function selectTripType(type) {
       "hidden-field"
     );
 
-    vehicle.value = "suv";
-    vehicle.disabled = true;
+    updateHourlyRates();
   }
 
   resetPassengerOptions();
@@ -503,6 +516,7 @@ vehicle.addEventListener(
       clearSpecialOffer();
     }
 
+    updateHourlyRates();
     resetPassengerOptions();
     resetQuote();
   }
@@ -816,7 +830,9 @@ async function requestQuote() {
     ) {
 
       sumMinutes.textContent =
-        `${hours.value} hours`;
+        data.hourlyRate
+          ? `${data.hours} hours • $${data.hourlyRate}/hour`
+          : `${hours.value} hours`;
 
     } else {
 
@@ -838,7 +854,7 @@ async function requestQuote() {
     if (data.fixedOffer) {
 
       showNotice(
-        "$150 EWR → Manhattan Black SUV special applied.",
+        "$150 EWR → Manhattan Chevrolet Suburban Premier special applied.",
         "success"
       );
 
@@ -1114,22 +1130,9 @@ document
             button.dataset
               .selectVehicle;
 
-          if (
-            tripTypeInput.value ===
-            "hourly"
-          ) {
-
-            vehicle.value =
-              "suv";
-
-          } else {
-
-            vehicle.disabled =
-              false;
-
-            vehicle.value =
-              selected;
-          }
+          vehicle.disabled = false;
+          vehicle.value = selected;
+          updateHourlyRates();
 
           resetPassengerOptions();
           resetQuote();
@@ -1158,6 +1161,9 @@ async function loadPublicConfig() {
 
     const config =
       await response.json();
+
+    hourlyVehicles = Object.fromEntries((config.vehicles || []).map(item => [item.key, item]));
+    updateHourlyRates();
 
     const topPhone = document.getElementById("topPhone");
     const phoneNumber = String(config.companyPhone || "").trim();

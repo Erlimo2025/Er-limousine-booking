@@ -17,7 +17,8 @@ module.exports = {
       perMinute: 1.25,
       minimumFare: 30,
       maxPassengers: 6,
-      maxLuggage: 6
+      maxLuggage: 6,
+      hourlyRate: 150
     },
 
     suv: {
@@ -26,7 +27,8 @@ module.exports = {
       perMile: 4,
       perMinute: 1,
       minimumFare: 20,
-      maxPassengers: 6
+      maxPassengers: 6,
+      hourlyRate: 130
     }
   },
 

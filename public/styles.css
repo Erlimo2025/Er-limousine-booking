@@ -88,13 +88,20 @@ button {
 
 .top-bar-actions {
   margin-left: auto;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  font-size: .875rem;
+  gap: 16px;
+}
+
+.top-bar-actions > a {
+  padding: 8px 12px;
+  white-space: nowrap;
 }
 
 .account-login {
   border: 1px solid var(--gold);
   border-radius: 5px;
-  padding: 6px 12px;
+  padding: 8px 16px;
   background: transparent;
   color: var(--gold-light);
   font-size: inherit;
@@ -107,7 +114,7 @@ button {
 
 .login-status {
   display: block;
-  font-size: .6rem;
+  font-size: .72rem;
   font-weight: 400;
 }
 
@@ -211,15 +218,15 @@ button {
   min-height: 690px;
   overflow: hidden;
   background:
-    linear-gradient(90deg, rgba(4,13,21,.97) 0%, rgba(5,15,24,.88) 38%, rgba(5,15,24,.55) 67%, rgba(5,15,24,.72) 100%),
-    radial-gradient(circle at 55% 35%, #52606b 0%, #1b2c39 33%, #071018 72%);
+    url("/nyc-skyline-background.png") center bottom / cover no-repeat;
+  background-color: var(--black);
 }
 
 .premium-hero::before {
   content: "";
   position: absolute;
   inset: 0;
-  opacity: .35;
+  opacity: 0;
   background:
     linear-gradient(155deg, transparent 55%, rgba(215,169,79,.18) 55.3%, transparent 55.8%),
     linear-gradient(25deg, transparent 64%, rgba(255,255,255,.08) 64.2%, transparent 64.6%);
@@ -230,8 +237,8 @@ button {
   position: absolute;
   inset: 0;
   background:
-    linear-gradient(to top, rgba(4,11,17,.85), transparent 40%),
-    radial-gradient(circle at 20% 35%, transparent 0%, rgba(0,0,0,.18) 65%);
+    linear-gradient(180deg, rgba(3,12,22,.62) 0%, rgba(3,12,22,.52) 55%, rgba(3,12,22,.30) 100%),
+    linear-gradient(90deg, rgba(3,12,22,.18), transparent 70%);
 }
 
 .premium-hero-inner {
@@ -1117,6 +1124,248 @@ textarea:focus {
 /* =========================
    TABLET
 ========================= */
+
+/* Wide, balanced desktop hero; retain tablet and mobile sizing. */
+@media (min-width: 1001px) {
+  .premium-hero-inner,
+  .nav-inner,
+  .top-bar-inner {
+    width: min(1680px, calc(100% - 96px));
+  }
+
+  .premium-hero {
+    min-height: auto;
+  }
+
+  .premium-hero-inner {
+    grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr);
+    align-items: stretch;
+    padding-top: 24px;
+    padding-bottom: 32px;
+    gap: 40px;
+  }
+
+  .premium-copy {
+    padding: 8px 0 20px;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+  }
+
+  .premium-copy h1 {
+    max-width: none;
+    font-size: clamp(3.6rem, 4.6vw, 4.8rem);
+    line-height: 1.06;
+    margin: 14px 0 18px;
+  }
+
+  .premium-copy h1 span {
+    font-size: .72em;
+  }
+
+  .hero-subtitle {
+    font-size: clamp(1.1rem, 1.5vw, 1.4rem);
+  }
+
+  .hero-features {
+    max-width: none;
+    margin-top: auto;
+    padding-top: 40px;
+    gap: 24px;
+  }
+
+  .hero-features > div {
+    font-size: 1.05rem;
+  }
+
+  .feature-icon {
+    font-size: 2.6rem;
+    margin-bottom: 10px;
+  }
+
+  .airport-special {
+    max-width: none;
+    padding: 24px 28px;
+    margin-bottom: 30px;
+  }
+
+  .airport-special-route {
+    font-size: 1rem;
+  }
+
+  .airport-special-price {
+    font-size: clamp(1.8rem, 2.25vw, 2.5rem);
+    margin-top: 8px;
+  }
+
+  .airport-special-details {
+    font-size: 1.05rem;
+    margin-top: 10px;
+  }
+
+  .airport-special-details::first-line {
+    color: var(--gold-light);
+    font-weight: 700;
+  }
+
+  .airport-special-button {
+    margin-top: 16px;
+    padding: 13px 24px;
+    font-size: 1rem;
+  }
+
+  .quick-booking {
+    padding: 22px 24px;
+  }
+
+  .quick-booking h2 {
+    font-size: 2.35rem;
+    line-height: 1.15;
+    margin-bottom: 12px;
+  }
+
+  .quick-booking .trip-tabs {
+    margin-bottom: 12px;
+  }
+
+  .quick-booking .trip-tab {
+    padding: 9px 7px;
+    font-size: .9rem;
+  }
+
+  .quick-booking .field {
+    gap: 4px;
+    margin-bottom: 8px;
+  }
+
+  .quick-booking label {
+    font-size: .875rem;
+    line-height: 1.25;
+  }
+
+  .quick-booking input,
+  .quick-booking select,
+  .quick-booking textarea {
+    padding: 9px 11px;
+    min-height: 44px;
+  }
+
+  .quick-booking .two-fields {
+    gap: 14px;
+  }
+
+  .quick-booking .promo-row {
+    display: flex;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .quick-booking .promo-row input {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .quick-booking .promo-button {
+    padding: 0 16px;
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    background: #f1f2f3;
+    color: var(--text);
+  }
+
+  .quick-booking .customer-details {
+    padding-top: 10px;
+    margin-top: 4px;
+  }
+
+  .quick-booking .customer-details h3 {
+    margin-bottom: 9px;
+  }
+
+  .quick-booking .main-quote-btn,
+  .quick-booking .btn-pay {
+    padding: 10px 16px;
+  }
+
+  .quick-booking .secure-line {
+    padding-top: 8px;
+  }
+
+  .quote-area {
+    padding: 20px 0;
+  }
+
+  .summary-card {
+    padding: 17px 22px;
+  }
+
+  .summary-row {
+    padding: 12px 16px;
+  }
+
+  .fleet-section {
+    padding: 44px 0 48px;
+  }
+
+  .section-title {
+    margin-bottom: 24px;
+  }
+
+  .section-title h2 {
+    font-size: 2.5rem;
+  }
+
+  .service-strip {
+    padding: 22px 0;
+  }
+
+  .service-icon {
+    font-size: 1.65rem;
+  }
+
+  .trust-section {
+    padding: 44px 0;
+  }
+
+  .trust-inner {
+    gap: 36px;
+  }
+
+  .trust-copy h2 {
+    font-size: clamp(2.3rem, 3vw, 2.75rem);
+    line-height: 1.15;
+    margin: 6px 0;
+  }
+
+  .trust-copy p {
+    margin: 10px 0;
+  }
+
+  .trust-buttons {
+    margin-top: 18px;
+  }
+
+  .promise-grid {
+    gap: 14px;
+  }
+
+  .promise strong {
+    font-size: 2.15rem;
+  }
+
+  .footer {
+    padding-top: 32px;
+  }
+
+  .footer-grid {
+    gap: 28px;
+    padding-bottom: 24px;
+  }
+
+  .footer-bottom {
+    padding: 14px;
+  }
+}
 
 @media (max-width: 1000px) {
 

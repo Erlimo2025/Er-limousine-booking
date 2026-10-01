@@ -709,7 +709,16 @@ async function calculateQuote(body) {
       body.vehicle
     ];
 
-  const route =
+  const isHourly = body.tripType === "hourly";
+  const bookedHours = Number(body.hours);
+  if (isHourly && ![3, 3.5, 4, 4.5, 5, 5.5, 6, 7, 8].includes(bookedHours)) {
+    throw new Error("Choose a valid hourly duration (3-hour minimum).");
+  }
+  if (isHourly && sanitizeText(body.offerCode)) {
+    throw new Error("The EWR → Manhattan special cannot be used for hourly bookings.");
+  }
+
+  const route = isHourly ? null :
     await getRouteEstimate(
       body.pickup,
       body.dropoff
@@ -771,7 +780,7 @@ async function calculateQuote(body) {
     NORMAL TRIP PRICING
   */
 
-  let fare =
+  let fare = isHourly ? bookedHours * rate.hourlyRate :
     rate.baseFare +
     route.miles *
       rate.perMile +
@@ -886,18 +895,21 @@ async function calculateQuote(body) {
 
   return {
     vehicle:
-      rate.label,
+      isHourly && body.vehicle === "escalade" ? "Cadillac Escalade ESV" : rate.label,
 
     vehicleKey:
       body.vehicle,
 
     miles:
-      money(route.miles),
+      isHourly ? null : money(route.miles),
 
     minutes:
-      Math.round(
+      isHourly ? null : Math.round(
         route.minutes
       ),
+
+    hourlyRate: isHourly ? rate.hourlyRate : undefined,
+    hours: isHourly ? bookedHours : undefined,
 
     baseTotal:
       fare,
@@ -1262,7 +1274,9 @@ app.get(
             maxPassengers:
               value.maxPassengers,
             maxLuggage:
-              value.maxLuggage
+              value.maxLuggage,
+            hourlyRate:
+              value.hourlyRate
           })
         )
     });
