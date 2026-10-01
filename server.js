@@ -200,7 +200,33 @@ function getPromotion(body) {
    VALIDATE BOOKING
 ========================================= */
 
+function getConfiguredVehicleRate(vehicle) {
+  if (
+    typeof vehicle !== "string" ||
+    !["escalade", "suv"].includes(vehicle) ||
+    !Object.hasOwn(pricing.vehicleRates, vehicle)
+  ) {
+    throw new Error("Unknown vehicle type.");
+  }
+  const rate = pricing.vehicleRates[vehicle];
+  if (!rate || typeof rate !== "object" || Array.isArray(rate)) {
+    throw new Error("Vehicle pricing is not configured correctly.");
+  }
+  return rate;
+}
+
+function validateCalculatedFare(vehicle, total) {
+  getConfiguredVehicleRate(vehicle);
+  if (typeof total !== "number" || !Number.isFinite(total) || total <= 0) {
+    throw new Error("Calculated fare must be a finite amount greater than zero.");
+  }
+}
+
 function validateBookingInput(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body) || !Object.hasOwn(body, "vehicle")) {
+    throw new Error("A valid vehicle is required.");
+  }
+  const rate = getConfiguredVehicleRate(body.vehicle);
   const required = [
     "pickup",
     "dropoff",
@@ -225,12 +251,6 @@ function validateBookingInput(body) {
     );
   }
 
-  if (!pricing.vehicleRates[body.vehicle]) {
-    throw new Error(
-      "Unknown vehicle type."
-    );
-  }
-
   const passengers =
     Number(body.passengers || 1);
 
@@ -244,16 +264,12 @@ function validateBookingInput(body) {
   }
 
   const maxPassengers =
-    pricing.vehicleRates[
-      body.vehicle
-    ].maxPassengers;
+    rate.maxPassengers;
 
   if (passengers > maxPassengers) {
     throw new Error(
       `${
-        pricing.vehicleRates[
-          body.vehicle
-        ].label
+        rate.label
       } supports up to ${
         maxPassengers
       } passengers.`
@@ -705,9 +721,7 @@ async function calculateQuote(body) {
   validateBookingInput(body);
 
   const rate =
-    pricing.vehicleRates[
-      body.vehicle
-    ];
+    getConfiguredVehicleRate(body.vehicle);
 
   const isHourly = body.tripType === "hourly";
   const bookedHours = Number(body.hours);
@@ -733,6 +747,7 @@ async function calculateQuote(body) {
     await verifyFixedOffer(body);
 
   if (fixedOffer) {
+    validateCalculatedFare(body.vehicle, fixedOffer.price);
     return {
       vehicle:
         rate.label,
@@ -892,6 +907,8 @@ async function calculateQuote(body) {
       discountedFare +
       gratuity
     );
+
+  validateCalculatedFare(body.vehicle, total);
 
   return {
     vehicle:
@@ -1485,6 +1502,17 @@ app.post(
           req.body
         );
 
+      // Independently validate the final server quote before storing a booking
+      // or creating a Stripe session, even if quote calculation changes later.
+      validateCalculatedFare(req.body.vehicle, quote.total);
+      if (quote.vehicleKey !== req.body.vehicle) {
+        throw new Error("Calculated fare does not match the selected vehicle.");
+      }
+      const checkoutAmount = Math.round(quote.total * 100);
+      if (!Number.isSafeInteger(checkoutAmount) || checkoutAmount <= 0) {
+        throw new Error("Calculated Checkout amount is invalid.");
+      }
+
       const booking =
         createBookingRecord(
           req.body,
@@ -1537,9 +1565,7 @@ app.post(
                     quote.currency,
 
                   unit_amount:
-                    Math.round(
-                      quote.total * 100
-                    ),
+                    checkoutAmount,
 
                   product_data: {
                     name:
