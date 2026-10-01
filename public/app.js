@@ -39,8 +39,12 @@ const specialPrice = mobileSpecial.querySelector(".airport-special-price");
 const desktopSpecialPrice = specialPrice.textContent;
 const suburbanOption = vehicle.querySelector('option[value="suv"]');
 const desktopSuburbanLabel = suburbanOption.textContent;
+const mobileStats = Array.from(document.querySelectorAll("[data-mobile-stat]"), element => ({element, original: element.textContent}));
 
 function arrangeMobileHomepage() {
+  mobileStats.forEach(({element, original}) => {
+    element.textContent = mobileBooking.matches ? element.dataset.mobileStat : original;
+  });
   if (mobileBooking.matches) {
     suburbanOption.textContent = "Suburban Premier";
     const vehicleLabel = document.createElement("span");
@@ -1268,6 +1272,9 @@ async function loadPublicConfig() {
       document.getElementById("topPhoneNumber").textContent = phoneNumber;
       topPhone.href = `tel:${phoneNumber.replace(/[^+\d]/g, "")}`;
       topPhone.hidden = false;
+      const callNote = document.getElementById("topCallNote");
+      callNote.href = topPhone.href;
+      callNote.hidden = false;
     }
 
     const contactBlock =
@@ -1277,8 +1284,13 @@ async function loadPublicConfig() {
 
     if (contactBlock) {
 
-      contactBlock.textContent =
-        `${config.companyPhone || ""} • ${config.companyEmail || ""}`;
+      const phoneLink = document.createElement("a");
+      phoneLink.textContent = config.companyPhone || "";
+      phoneLink.href = `tel:${String(config.companyPhone || "").replace(/[^+\d]/g, "")}`;
+      const emailLink = document.createElement("a");
+      emailLink.textContent = config.companyEmail || "";
+      emailLink.href = `mailto:${config.companyEmail || ""}`;
+      contactBlock.replaceChildren(phoneLink, document.createTextNode(" • "), emailLink);
     }
 
   } catch (_) {
