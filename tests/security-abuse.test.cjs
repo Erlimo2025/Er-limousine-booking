@@ -6,6 +6,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 const http = require("node:http");
+const crypto = require("node:crypto");
 const realExpress = require("express");
 const Stripe = require("stripe");
 const root = path.resolve(__dirname, "..");
@@ -55,7 +56,7 @@ async function harness(t, env = {}, saved = "[]") {
     static now() { return clock; }
   }
   const context = {
-    __dirname: root, console, URL, Date: TestDate,
+    __dirname: root, console, URL, Buffer, Date: TestDate,
     process: {env: {GOOGLE_MAPS_API_KEY: "mock-google-key", STRIPE_SECRET_KEY: "mock",
       STRIPE_WEBHOOK_SECRET: "whsec_local_mock", ADMIN_TOKEN: "local-test-token", ...env}},
     setInterval: () => ({unref() {}}),
@@ -659,4 +660,149 @@ test("independent checkout checks reject corrupted Round Trip fares/promo/total 
     assert.equal((await h.request("/api/checkout", body)).status, 400);
   }
   assert.equal(h.state.creates.length, 0); assert.equal(h.records().length, 0);
+});
+
+test("customer reservation requires a booking-specific token; IDs, wrong or malformed tokens fail generically", async t => {
+  const h = await harness(t);
+  const checkout = await h.request("/api/checkout", booking);
+  assert.equal(checkout.status, 200);
+  assert.deepEqual(Object.keys(checkout.body).sort(), ["bookingId", "url"]);
+  const cookie = checkout.headers.get("set-cookie").split(";")[0];
+  const name = cookie.split("=")[0];
+  const token = cookie.slice(name.length + 1);
+  const record = h.records()[0];
+  assert.equal(record.customerAccess.tokenHash, crypto.createHash("sha256").update(token).digest("hex"));
+  assert.equal(JSON.stringify(record).includes(token), false);
+  const route = `/api/booking/${record.id}`;
+  const good = await h.request(route, undefined, {cookie});
+  assert.equal(good.status, 200);
+  assert.equal(good.body.id, record.id);
+  for (const headers of [{}, {cookie: `${name}=${"a".repeat(43)}`},
+    {cookie: `${name}=short`}, {cookie: `${name}=${"!".repeat(43)}`},
+    {cookie: `${name}=${"a".repeat(44)}`}, {cookie: `${cookie}; ${cookie}`},
+    {authorization: `Bearer ${token}`}]) {
+    const result = await h.request(route, undefined, headers);
+    assert.equal(result.status, 401);
+    assert.deepEqual(result.body, {error: "Reservation access unavailable."});
+    assert.equal(result.headers.get("cache-control"), "no-store");
+    assert.equal(result.headers.get("referrer-policy"), "no-referrer");
+  }
+  assert.equal((await h.request(`${route}?token=${token}`)).status, 401);
+  const unknown = await h.request("/api/booking/unknown", undefined, {cookie});
+  assert.equal(unknown.status, 401);
+  assert.deepEqual(unknown.body, {error: "Reservation access unavailable."});
+  const other = await h.request("/api/checkout", {...booking, notes: "second reservation"});
+  const otherCookie = other.headers.get("set-cookie").split(";")[0];
+  const otherToken = otherCookie.slice(otherCookie.indexOf("=") + 1);
+  assert.equal((await h.request(route, undefined, {cookie: otherCookie})).status, 401);
+  assert.equal((await h.request(route, undefined, {cookie: `${name}=${otherToken}`})).status, 401);
+});
+
+test("customer tokens expire after final service plus 7 days, with minimum 30 days from issue", async t => {
+  for (const [body, expires] of [
+    [booking, "2026-11-17T17:00:00Z"],
+    [{...booking, tripType: "roundtrip", returnDate: "2026-11-11", returnTime: "14:00"}, "2026-11-18T19:00:00Z"],
+    [{...booking, tripType: "hourly", hours: 3}, "2026-11-17T20:00:00Z"],
+    [{...booking, date: "2026-10-02"}, "2026-10-31T16:00:00Z"]
+  ]) {
+    const h = await harness(t);
+    const result = await h.request("/api/checkout", body);
+    const cookie = result.headers.get("set-cookie").split(";")[0];
+    const record = h.records()[0];
+    assert.equal(record.customerAccess.expiresAt, Date.parse(expires));
+    const route = `/api/booking/${record.id}`;
+    assert.equal((await h.request(route, undefined, {cookie})).status, 200);
+    h.advance(Date.parse(expires) - Date.parse("2026-10-01T16:00:00Z") - 1);
+    assert.equal((await h.request(route, undefined, {cookie})).status, 200);
+    h.advance(1);
+    assert.equal((await h.request(route, undefined, {cookie})).status, 401);
+    assert.equal(h.records()[0].customerAccess.expiresAt, record.customerAccess.expiresAt);
+  }
+});
+
+test("reservation response whitelists fields and preserves driver visibility rules", async t => {
+  const h = await harness(t);
+  const checkout = await h.request("/api/checkout", booking);
+  const cookie = checkout.headers.get("set-cookie").split(";")[0];
+  const record = h.records()[0];
+  record.trip.notes = "private requests";
+  record.trip.flightNumber = "UA123";
+  record.dispatch = {driver: "Mock chauffeur", driverPhone: "2015550199", vehicle: "Mock SUV", plate: "TEST",
+    internalNotes: "private dispatch notes"};
+  const visible = ["assigned", "driver_en_route", "passenger_on_board", "completed"];
+  for (const status of ["awaiting_payment", "confirmed", ...visible, "cancelled"]) {
+    record.status = status;
+    h.context.fixtureRecords = [record];
+    vm.runInContext("writeBookings(fixtureRecords)", h.context);
+    const result = await h.request(`/api/booking/${record.id}`, undefined, {cookie});
+    assert.equal(result.status, 200);
+    assert.deepEqual(Object.keys(result.body).sort(), ["dispatch", "id", "paymentStatus", "quote", "status", "trip"]);
+    assert.deepEqual(Object.keys(result.body.trip).sort(), ["date", "dropoff", "pickup", "time"]);
+    assert.deepEqual(Object.keys(result.body.quote).sort(), ["total", "vehicle"]);
+    assert.equal(result.headers.get("cache-control"), "no-store");
+    assert.equal(result.headers.get("referrer-policy"), "no-referrer");
+    if (visible.includes(status)) {
+      assert.deepEqual(Object.keys(result.body.dispatch).sort(), ["driver", "driverPhone", "plate", "vehicle"]);
+      assert.equal(result.body.dispatch.driver, "Mock chauffeur");
+    } else assert.equal(result.body.dispatch, null);
+    assert.equal(JSON.stringify(result.body).includes(record.customerAccess.tokenHash), false);
+    assert.equal(Object.hasOwn(result.body, "customer"), false);
+    assert.equal(Object.hasOwn(result.body, "stripeSessionId"), false);
+    assert.equal(Object.hasOwn(result.body, "checkoutAttempt"), false);
+  }
+});
+
+test("legacy records deny access and do not get credentials through duplicate checkout", async t => {
+  const h = await harness(t);
+  const checkout = await h.request("/api/checkout", booking);
+  const cookie = checkout.headers.get("set-cookie").split(";")[0];
+  const record = h.records()[0];
+  delete record.customerAccess;
+  h.context.fixtureRecords = [record]; vm.runInContext("writeBookings(fixtureRecords)", h.context);
+  assert.equal((await h.request(`/api/booking/${record.id}`, undefined, {cookie})).status, 401);
+  const retried = await h.request("/api/checkout", booking);
+  assert.equal(retried.status, 200);
+  assert.equal(retried.headers.get("set-cookie"), null);
+  assert.equal(Object.hasOwn(h.records()[0], "customerAccess"), false);
+  for (const customerAccess of [{}, {tokenHash: "bad", expiresAt: Date.now()},
+    {tokenHash: "a".repeat(64), expiresAt: "invalid"}, {tokenHash: "a".repeat(64), expiresAt: null}]) {
+    h.context.fixtureRecords = [{...record, customerAccess}]; vm.runInContext("writeBookings(fixtureRecords)", h.context);
+    assert.equal((await h.request(`/api/booking/${record.id}`, undefined, {cookie})).status, 401);
+  }
+});
+
+test("customer access survives restart; concurrent checkout shares token and normal retries rotate it", async t => {
+  const h = await harness(t); h.state.createDelay = 20;
+  const results = await Promise.all(Array.from({length: 5}, () => h.request("/api/checkout", booking)));
+  const cookies = results.map(result => result.headers.get("set-cookie").split(";")[0]);
+  assert.equal(new Set(cookies).size, 1);
+  assert.equal(h.state.creates.length, 1); assert.equal(h.records().length, 1);
+  const route = `/api/booking/${results[0].body.bookingId}`;
+  assert.equal((await h.request(route, undefined, {cookie: cookies[0]})).status, 200);
+  const restarted = await harness(t, {}, h.data);
+  assert.equal((await restarted.request(route, undefined, {cookie: cookies[0]})).status, 200);
+  const retry = await h.request("/api/checkout", booking);
+  const nextCookie = retry.headers.get("set-cookie").split(";")[0];
+  assert.notEqual(nextCookie, cookies[0]);
+  assert.equal((await h.request(route, undefined, {cookie: cookies[0]})).status, 401);
+  assert.equal((await h.request(route, undefined, {cookie: nextCookie})).status, 200);
+  assert.equal(h.state.creates.length, 1);
+});
+
+test("customer cookie and confirmation page prevent browser/script/referrer leakage", async t => {
+  const h = await harness(t, {NODE_ENV: "production"});
+  const checkout = await h.request("/api/checkout", booking);
+  const cookie = checkout.headers.get("set-cookie");
+  assert.match(cookie, /^__Secure-er_booking_access_/);
+  for (const flag of [/HttpOnly/, /; Secure/, /SameSite=Strict/, /Max-Age=/, /Expires=/]) assert.match(cookie, flag);
+  assert.ok(cookie.includes(`Path=/api/booking/${checkout.body.bookingId}`));
+  assert.doesNotMatch(cookie, /Domain=/);
+  assert.equal(checkout.headers.get("cache-control"), "no-store");
+  assert.equal(checkout.headers.get("referrer-policy"), "no-referrer");
+  const page = await h.request("/success.html?booking=mock-reference");
+  assert.equal(page.status, 200);
+  assert.equal(page.headers.get("cache-control"), "no-store");
+  assert.equal(page.headers.get("referrer-policy"), "no-referrer");
+  assert.match(page.body, /<meta name="referrer" content="no-referrer">/);
+  assert.match(page.body, /credentials: "same-origin", cache: "no-store", referrerPolicy: "no-referrer"/);
 });

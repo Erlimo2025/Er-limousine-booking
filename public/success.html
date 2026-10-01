@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
   <title>Reservation Confirmed | ER Limousine Service</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
@@ -41,7 +42,9 @@
       }
 
       try {
-        const response = await fetch("/api/booking/" + encodeURIComponent(id));
+        const response = await fetch("/api/booking/" + encodeURIComponent(id), {
+          credentials: "same-origin", cache: "no-store", referrerPolicy: "no-referrer"
+        });
         const booking = await response.json();
         if (!response.ok) throw new Error(booking.error || "Unable to load reservation.");
 

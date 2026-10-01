@@ -1301,6 +1301,60 @@ function adminNoStore(req, res, next) {
   next();
 }
 
+function customerPrivateResponse(req, res, next) {
+  res.set("Cache-Control", "no-store");
+  res.set("Referrer-Policy", "no-referrer");
+  next();
+}
+
+function customerAccessCookieName(id) {
+  return `${adminCookieSecure ? "__Secure-" : ""}er_booking_access_${id}`;
+}
+
+function customerAccessCookieOptions(id) {
+  return {httpOnly: true, secure: adminCookieSecure, sameSite: "strict", path: `/api/booking/${id}`};
+}
+
+function newCustomerAccess(body) {
+  const lastScheduled = body.tripType === "roundtrip"
+    ? parseServiceDateTime(body.returnDate, body.returnTime, "return")
+    : parseServiceDateTime(body.date, body.time, "pickup") +
+      (body.tripType === "hourly" ? Number(body.hours) * 60 * MINUTE : 0);
+  // Usable for at least 30 days, or through 7 days after the final scheduled leg.
+  return {tokenHash: checkoutHash(crypto.randomBytes(32).toString("base64url")),
+    expiresAt: Math.max(Date.now() + 30 * 24 * 60 * MINUTE, lastScheduled + 7 * 24 * 60 * MINUTE)};
+}
+
+function validCustomerAccessData(booking) {
+  const access = booking?.customerAccess;
+  return access && typeof access.tokenHash === "string" && /^[a-f0-9]{64}$/.test(access.tokenHash) &&
+    Number.isFinite(access.expiresAt) && access.expiresAt > Date.now();
+}
+
+function checkoutCustomerResult(url, id) {
+  const bookings = readBookings();
+  const booking = bookings.find(item => item.id === id);
+  // Never silently authorize legacy records lacking the new access metadata.
+  if (!validCustomerAccessData(booking)) return {url, bookingId: id};
+  const token = crypto.randomBytes(32).toString("base64url");
+  booking.customerAccess.tokenHash = checkoutHash(token);
+  writeBookings(bookings);
+  // Internal result only; the raw token goes into an HttpOnly cookie, never JSON.
+  return {url, bookingId: id, customerAccess: {token, expiresAt: booking.customerAccess.expiresAt}};
+}
+
+function hasCustomerAccess(req, booking) {
+  if (!validCustomerAccessData(booking)) return false;
+  const name = customerAccessCookieName(booking.id);
+  const matches = String(req.headers.cookie || "").split(";").map(value => value.trim())
+    .filter(value => value.startsWith(`${name}=`));
+  if (matches.length !== 1) return false;
+  const token = matches[0].slice(name.length + 1);
+  if (!/^[A-Za-z0-9_-]{43}$/.test(token)) return false;
+  return crypto.timingSafeEqual(Buffer.from(checkoutHash(token), "hex"),
+    Buffer.from(booking.customerAccess.tokenHash, "hex"));
+}
+
 function validAdminOrigin(req) {
   // Cookie authentication must not turn state-changing admin routes into CSRF targets.
   const origin = req.get("origin");
@@ -1443,8 +1497,9 @@ app.post(
 
 app.use("/api/address-suggestions", rateLimit("address", 120));
 app.use("/api/quote", rateLimit("quote", 30));
-app.use("/api/checkout", rateLimit("checkout", 15), rateLimit("checkout-long", 60, 30 * MINUTE));
-app.use("/api/booking", rateLimit("booking-status", 120));
+app.use("/api/checkout", customerPrivateResponse, rateLimit("checkout", 15), rateLimit("checkout-long", 60, 30 * MINUTE));
+app.use("/api/booking", customerPrivateResponse, rateLimit("booking-status", 120));
+app.use("/success.html", customerPrivateResponse);
 app.use("/api/bookings", adminNoStore, rateLimit("admin-requests", 120));
 app.use("/api/admin", adminNoStore, rateLimit("admin-requests", 120));
 app.use("/admin.html", adminNoStore);
@@ -1784,7 +1839,7 @@ async function createCheckout(body, ip, fingerprint) {
       throw Object.assign(new Error("Checkout is temporarily unavailable. Please try again."), {status: 503});
     }
     if (existing.status === "open" && existing.url) {
-      return {url: existing.url, bookingId: booking.id};
+      return checkoutCustomerResult(existing.url, booking.id);
     }
     if (existing.status !== "expired") {
       throw Object.assign(new Error("Checkout is already processing for this reservation."), {status: 409});
@@ -1796,6 +1851,7 @@ async function createCheckout(body, ip, fingerprint) {
     const bookings = readBookings();
     enforceBookingBudget(bookings, body, ip);
     booking = createBookingRecord(body, quote);
+    booking.customerAccess = newCustomerAccess(body);
     booking.checkoutFingerprint = fingerprint;
     booking.checkoutClientHash = checkoutHash(ip);
     bookings.unshift(booking);
@@ -1915,7 +1971,7 @@ async function createCheckout(body, ip, fingerprint) {
 
   saveCheckoutBooking(booking);
 
-  return {url: session.url, bookingId: booking.id};
+  return checkoutCustomerResult(session.url, booking.id);
 }
 
 app.post("/api/checkout", async (req, res) => {
@@ -1941,7 +1997,14 @@ app.post("/api/checkout", async (req, res) => {
       // All overlapping requests for the same action share one result.
       action.finally(() => checkoutActions.delete(fingerprint)).catch(() => {});
     }
-    res.json(await action);
+    const result = await action;
+    if (result.customerAccess) {
+      res.cookie(customerAccessCookieName(result.bookingId), result.customerAccess.token, {
+        ...customerAccessCookieOptions(result.bookingId),
+        maxAge: result.customerAccess.expiresAt - Date.now()
+      });
+    }
+    res.json({url: result.url, bookingId: result.bookingId});
   } catch (error) {
     if (error.status === 429) return tooManyRequests(res, 30 * 60);
     res.status(error.status || 400).json({error: error.message});
@@ -2090,47 +2153,23 @@ app.get(
             req.params.id
         );
 
-    if (!booking) {
-      return res
-        .status(404)
-        .json({
-          error:
-            "Booking not found."
-        });
+    if (!hasCustomerAccess(req, booking)) {
+      return res.status(401).json({error: "Reservation access unavailable."});
     }
-
+    const driverVisible = ["assigned", "driver_en_route", "passenger_on_board", "completed"].includes(booking.status);
     res.json({
-      id:
-        booking.id,
-
-      status:
-        booking.status,
-
-      paymentStatus:
-        booking.paymentStatus,
-
-      trip:
-        booking.trip,
-
-      quote:
-        booking.quote,
-
-      dispatch:
-        booking.status ===
-          "assigned" ||
-
-        booking.status ===
-          "driver_en_route" ||
-
-        booking.status ===
-          "passenger_on_board" ||
-
-        booking.status ===
-          "completed"
-
-          ? booking.dispatch
-
-          : null
+      id: booking.id,
+      status: booking.status,
+      paymentStatus: booking.paymentStatus,
+      trip: {
+        pickup: booking.trip.pickup, dropoff: booking.trip.dropoff,
+        date: booking.trip.date, time: booking.trip.time
+      },
+      quote: {vehicle: booking.quote.vehicle, total: booking.quote.total},
+      dispatch: driverVisible ? {
+        driver: booking.dispatch?.driver || "", driverPhone: booking.dispatch?.driverPhone || "",
+        vehicle: booking.dispatch?.vehicle || "", plate: booking.dispatch?.plate || ""
+      } : null
     });
   }
 );
