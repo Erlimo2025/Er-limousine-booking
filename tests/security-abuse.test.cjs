@@ -19,6 +19,8 @@ const booking = {
 };
 
 async function harness(t, env = {}, saved = "[]") {
+  const production = env.NODE_ENV === "production" || env.RENDER === "true";
+  if (production && env.TRUSTED_PROXY_CIDRS === undefined && env.RENDER !== "true") env = {...env, TRUSTED_PROXY_CIDRS: "loopback"};
   let app, data = saved, clock = Date.parse("2026-10-01T16:00:00Z");
   const testPricing = JSON.parse(JSON.stringify(pricing));
   const state = { creates: [], sessions: new Map(), googleCalls: 0, routes: [], timeout: false,
@@ -107,7 +109,7 @@ async function harness(t, env = {}, saved = "[]") {
     advance: ms => {clock += ms;},
     async request(route, body, headers = {}, method = body === undefined ? "GET" : "POST") {
       const response = await fetch(url + route, {
-        method, headers: {"content-type": "application/json", ...headers},
+        method, headers: {"content-type": "application/json", ...(production ? {"x-forwarded-proto": "https"} : {}), ...headers},
         body: body === undefined ? undefined : typeof body === "string" ? body : JSON.stringify(body)
       });
       const text = await response.text();
@@ -805,4 +807,44 @@ test("customer cookie and confirmation page prevent browser/script/referrer leak
   assert.equal(page.headers.get("referrer-policy"), "no-referrer");
   assert.match(page.body, /<meta name="referrer" content="no-referrer">/);
   assert.match(page.body, /credentials: "same-origin", cache: "no-store", referrerPolicy: "no-referrer"/);
+});
+
+
+test("application-wide browser security headers and exact confirmation script hash", async t => {
+  const h = await harness(t);
+  for (const route of ["/api/public-config", "/api/booking/unknown", "/"]) {
+    const r = await h.request(route);
+    const csp = r.headers.get("content-security-policy");
+    for (const directive of ["default-src 'self'", "script-src 'self'", "script-src-attr 'none'", "connect-src 'self'", "object-src 'none'", "base-uri 'none'", "frame-ancestors 'none'", "form-action 'self'"]) assert.ok(csp.includes(directive));
+    assert.ok(!csp.includes("unsafe-eval"));
+    assert.equal(r.headers.get("x-frame-options"), "DENY");
+    assert.equal(r.headers.get("x-content-type-options"), "nosniff");
+    assert.equal(r.headers.get("referrer-policy"), "no-referrer");
+    assert.equal(r.headers.get("permissions-policy"), "camera=(), microphone=(), geolocation=(), payment=(), usb=()");
+    assert.equal(r.headers.get("x-powered-by"), null);
+    assert.equal(r.headers.get("strict-transport-security"), null);
+    const script = fs.readFileSync(path.join(root,"public/success.html"),"utf8").match(/<script>([\s\S]*?)<\/script>/)[1].replace(/\r\n/g,"\n");
+    assert.ok(csp.includes("'sha256-" + crypto.createHash("sha256").update(script).digest("base64") + "'"));
+  }
+});
+
+test("production HTTPS uses only trusted proxy protocol and canonical redirects", async t => {
+  for (const env of [{NODE_ENV:"production", TRUSTED_PROXY_CIDRS:"loopback"}, {RENDER:"true"}]) {
+    const h=await harness(t,{...env,SITE_URL:"https://limousine.example.test"});
+    const secure=await h.request("/api/quote",booking);
+    assert.equal(secure.status,200);
+    assert.equal(secure.headers.get("strict-transport-security"),"max-age=31536000");
+    const response=await fetch(h.url+"/api/quote?test=1",{redirect:"manual",headers:{"x-forwarded-proto":"http",host:"attacker.example.test","x-forwarded-host":"attacker.example.test"}});
+    assert.equal(response.status,308);
+    assert.equal(response.headers.get("location"),"https://limousine.example.test/api/quote?test=1");
+    assert.equal(response.headers.get("strict-transport-security"),null);
+  }
+  const untrusted=await harness(t,{NODE_ENV:"production",TRUSTED_PROXY_CIDRS:"192.0.2.0/24",SITE_URL:"https://limousine.example.test"});
+  const spoof=await fetch(untrusted.url+"/",{redirect:"manual",headers:{"x-forwarded-proto":"https"}});
+  assert.equal(spoof.status,308);
+  const missing=await harness(t,{NODE_ENV:"production"});
+  const unavailable=await fetch(missing.url+"/",{redirect:"manual"});
+  assert.equal(unavailable.status,503);
+  const dev=await harness(t);
+  assert.equal((await dev.request("/api/quote",booking,{"x-forwarded-proto":"https"})).status,200);
 });

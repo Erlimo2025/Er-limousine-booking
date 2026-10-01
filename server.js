@@ -27,6 +27,49 @@ app.set("trust proxy", process.env.TRUSTED_PROXY_CIDRS
   ? process.env.TRUSTED_PROXY_CIDRS.split(",").map(value => value.trim()).filter(Boolean)
   : process.env.RENDER === "true" ? renderProxyRanges : false);
 
+
+// Browser resources are local; Google requests run on the server and Checkout is navigation.
+// The hash permits only the existing confirmation script (HTML line endings normalized by browsers).
+const productionHttps = process.env.NODE_ENV === "production" || process.env.RENDER === "true";
+const contentSecurityPolicy = [
+  "default-src 'self'",
+  "script-src 'self' 'sha256-knh3QyEQuoTnqEVTOqmmc3xn6M3YYA4iVj76wcUWmeE='",
+  "script-src-attr 'none'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data:",
+  "font-src 'self'",
+  "connect-src 'self'",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "frame-ancestors 'none'",
+  "form-action 'self'",
+  "frame-src 'none'"
+].join("; ");
+app.disable("x-powered-by");
+app.use((req, res, next) => {
+  res.set({
+    "Content-Security-Policy": contentSecurityPolicy,
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+  });
+  if (productionHttps && req.secure) {
+    res.set("Strict-Transport-Security", "max-age=31536000");
+  }
+  if (productionHttps && !req.secure) {
+    // Use the configured canonical site, never attacker-controlled Host/forwarded-host headers.
+    let canonical;
+    try { canonical = new URL(process.env.SITE_URL); } catch (_) {}
+    if (!canonical || !["http:", "https:"].includes(canonical.protocol) || canonical.username || canonical.password) {
+      return res.status(503).json({error: "Secure service unavailable."});
+    }
+    canonical.protocol = "https:";
+    return res.redirect(308, canonical.origin + req.originalUrl);
+  }
+  next();
+});
+
 /* Single-process controls for the current JSON-file deployment. Multiple instances
    need a shared atomic store for counters/locks as well as reservation storage. */
 const abuseCounters = new Map();
