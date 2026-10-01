@@ -5,10 +5,94 @@ const Stripe = require("stripe");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const { isIP } = require("net");
 const pricing = require("./pricing");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Trust only known proxy networks, never arbitrary forwarded headers or hop counts.
+// Render routes ingress through Cloudflare and private load balancers.
+// Override with the actual proxy CIDRs if the deployment topology changes.
+const renderProxyRanges = [
+  "loopback", "uniquelocal",
+  "173.245.48.0/20", "103.21.244.0/22", "103.22.200.0/22", "103.31.4.0/22",
+  "141.101.64.0/18", "108.162.192.0/18", "190.93.240.0/20", "188.114.96.0/20",
+  "197.234.240.0/22", "198.41.128.0/17", "162.158.0.0/15", "104.16.0.0/13",
+  "104.24.0.0/14", "172.64.0.0/13", "131.0.72.0/22",
+  "2400:cb00::/32", "2606:4700::/32", "2803:f800::/32", "2405:b500::/32",
+  "2405:8100::/32", "2a06:98c0::/29", "2c0f:f248::/32"
+];
+app.set("trust proxy", process.env.TRUSTED_PROXY_CIDRS
+  ? process.env.TRUSTED_PROXY_CIDRS.split(",").map(value => value.trim()).filter(Boolean)
+  : process.env.RENDER === "true" ? renderProxyRanges : false);
+
+/* Single-process controls for the current JSON-file deployment. Multiple instances
+   need a shared atomic store for counters/locks as well as reservation storage. */
+const abuseCounters = new Map();
+const checkoutActions = new Map();
+const MINUTE = 60 * 1000;
+
+function clientKey(req) {
+  const address = req.ip || req.socket?.remoteAddress || "unknown";
+  if (address.startsWith("::ffff:") && isIP(address.slice(7)) === 4) return address.slice(7);
+  if (isIP(address) === 6) {
+    // Canonicalize and group IPv6 /64 so rotating interface addresses cannot evade limits.
+    const canonical = new URL(`http://[${address}]/`).hostname.slice(1, -1);
+    const halves = canonical.split("::");
+    const left = halves[0] ? halves[0].split(":") : [];
+    const right = halves[1] ? halves[1].split(":") : [];
+    const groups = halves.length === 2
+      ? [...left, ...Array(8 - left.length - right.length).fill("0"), ...right] : left;
+    return groups.slice(0, 4).map(group => group.padStart(4, "0")).join(":") + "::/64";
+  }
+  return address;
+}
+
+function consumeLimit(scope, key, limit, windowMs) {
+  const now = Date.now();
+  const id = `${scope}:${key}`;
+  let entry = abuseCounters.get(id);
+  if (!entry || entry.resetAt <= now) {
+    // Bound memory without evicting active counters (which would bypass protection).
+    if (!entry && abuseCounters.size >= 20000) return Math.ceil(windowMs / 1000);
+    entry = { count: 0, resetAt: now + windowMs };
+    abuseCounters.set(id, entry);
+  }
+  if (entry.count >= limit) return Math.max(1, Math.ceil((entry.resetAt - now) / 1000));
+  entry.count++;
+  return 0;
+}
+
+const counterCleanup = setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of abuseCounters) if (entry.resetAt <= now) abuseCounters.delete(key);
+}, MINUTE);
+counterCleanup.unref();
+
+function tooManyRequests(res, retryAfter = 60) {
+  return res.set("Retry-After", String(retryAfter)).status(429)
+    .json({ error: "Too many requests. Please try again later." });
+}
+
+function rateLimit(scope, limit, windowMs = MINUTE) {
+  return (req, res, next) => {
+    const retryAfter = consumeLimit(scope, clientKey(req), limit, windowMs);
+    if (retryAfter) return tooManyRequests(res, retryAfter);
+    next();
+  };
+}
+
+// Timeout covers both the request and reading the response body.
+async function googleJson(url, options) {
+  try {
+    const response = await fetch(url, { ...options, signal: AbortSignal.timeout(8000) });
+    if (!response.ok) throw new Error("Google service unavailable");
+    return await response.json();
+  } catch (_) {
+    throw new Error("Address and route lookup is temporarily unavailable. Please try again.");
+  }
+}
 
 const SITE_URL =
   process.env.SITE_URL ||
@@ -291,12 +375,12 @@ async function getRouteEstimate(
 
   if (!key) {
     throw new Error(
-      "Google Maps API key is not configured."
+      "Address and route lookup is temporarily unavailable. Please try again."
     );
   }
 
-  const response =
-    await fetch(
+  const data =
+    await googleJson(
       "https://routes.googleapis.com/directions/v2:computeRoutes",
       {
         method: "POST",
@@ -328,18 +412,6 @@ async function getRouteEstimate(
         })
       }
     );
-
-  if (!response.ok) {
-    const detail =
-      await response.text();
-
-    throw new Error(
-      `Route lookup failed (${response.status}): ${detail.slice(0, 300)}`
-    );
-  }
-
-  const data =
-    await response.json();
 
   const route =
     data.routes &&
@@ -379,12 +451,12 @@ async function lookupPlace(query) {
 
   if (!key) {
     throw new Error(
-      "Google Maps API key is not configured."
+      "Address and route lookup is temporarily unavailable. Please try again."
     );
   }
 
-  const response =
-    await fetch(
+  const data =
+    await googleJson(
       "https://places.googleapis.com/v1/places:searchText",
       {
         method: "POST",
@@ -410,18 +482,6 @@ async function lookupPlace(query) {
         })
       }
     );
-
-  if (!response.ok) {
-    const detail =
-      await response.text();
-
-    throw new Error(
-      `Address verification failed (${response.status}): ${detail.slice(0, 250)}`
-    );
-  }
-
-  const data =
-    await response.json();
 
   return (
     Array.isArray(data.places) &&
@@ -1132,6 +1192,8 @@ function requireAdmin(
       : "";
 
   if (supplied !== configured) {
+    const retryAfter = consumeLimit("admin-failures", clientKey(req), 10, 15 * MINUTE);
+    if (retryAfter) return tooManyRequests(res, retryAfter);
     return res
       .status(401)
       .json({
@@ -1258,6 +1320,12 @@ app.post(
    EXPRESS
 ========================================= */
 
+app.use("/api/address-suggestions", rateLimit("address", 120));
+app.use("/api/quote", rateLimit("quote", 30));
+app.use("/api/checkout", rateLimit("checkout", 15), rateLimit("checkout-long", 60, 30 * MINUTE));
+app.use("/api/booking", rateLimit("booking-status", 120));
+app.use("/api/bookings", rateLimit("admin-requests", 120));
+
 app.use(
   express.json({
     limit: "50kb"
@@ -1345,14 +1413,14 @@ app.get(
           .status(503)
           .json({
             error:
-              "Google Maps API key is not configured.",
+              "Address and route lookup is temporarily unavailable. Please try again.",
 
             suggestions: []
           });
       }
 
-      const response =
-        await fetch(
+      const data =
+        await googleJson(
           "https://places.googleapis.com/v1/places:autocomplete",
           {
             method: "POST",
@@ -1391,29 +1459,6 @@ app.get(
           }
         );
 
-      if (!response.ok) {
-        const detail =
-          await response.text();
-
-        console.error(
-          "Google Places autocomplete error:",
-          response.status,
-          detail
-        );
-
-        return res
-          .status(502)
-          .json({
-            error:
-              "Address search is temporarily unavailable.",
-
-            suggestions: []
-          });
-      }
-
-      const data =
-        await response.json();
-
       const suggestions =
         Array.isArray(
           data.suggestions
@@ -1435,13 +1480,10 @@ app.get(
       });
 
     } catch (error) {
-      console.error(
-        "Address autocomplete error:",
-        error
-      );
+      // Do not log Google error payloads or credentials.
 
       return res
-        .status(500)
+        .status(502)
         .json({
           error:
             "Address search is temporarily unavailable.",
@@ -1485,164 +1527,254 @@ app.post(
    STRIPE CHECKOUT
 ========================================= */
 
-app.post(
-  "/api/checkout",
+function checkoutHash(value) {
+  return crypto.createHash("sha256").update(value).digest("hex");
+}
 
-  async (req, res) => {
-    try {
-      if (!stripe) {
-        return res
-          .status(503)
-          .json({
-            error:
-              "Stripe is not configured. Add STRIPE_SECRET_KEY before accepting payments."
-          });
-      }
+function checkoutFingerprint(body) {
+  // Only accepted booking fields matter. Arbitrary browser totals/nonce fields
+  // cannot bypass protection. Include the pricing revision.
+  const record = createBookingRecord(body, null);
+  record.customer.email = normalizeEmail(body.email);
+  record.customer.phone = normalizePhone(body.phone);
+  return checkoutHash(JSON.stringify({customer: record.customer, trip: record.trip, pricing}));
+}
 
-      /*
-        IMPORTANT:
-        The price is calculated again
-        on the server.
-
-        The browser cannot choose the
-        Stripe payment amount.
-      */
-
-      const quote =
-        await calculateQuote(
-          req.body
-        );
-
-      // Independently validate the final server quote before storing a booking
-      // or creating a Stripe session, even if quote calculation changes later.
-      validateCalculatedFare(req.body.vehicle, quote.total);
-      if (quote.vehicleKey !== req.body.vehicle) {
-        throw new Error("Calculated fare does not match the selected vehicle.");
-      }
-      const checkoutAmount = Math.round(quote.total * 100);
-      if (!Number.isSafeInteger(checkoutAmount) || checkoutAmount <= 0) {
-        throw new Error("Calculated Checkout amount is invalid.");
-      }
-
-      const booking =
-        createBookingRecord(
-          req.body,
-          quote
-        );
-
-      const bookings =
-        readBookings();
-
-      bookings.unshift(
-        booking
-      );
-
-      writeBookings(
-        bookings
-      );
-
-
-      let description =
-        `${booking.trip.pickup} → ${booking.trip.dropoff} | ${booking.trip.date} ${booking.trip.time}`;
-
-      if (quote.fixedOffer) {
-        description =
-          `${booking.trip.pickup} → ${booking.trip.dropoff} | EWR → Manhattan $150 Flat Rate`;
-      } else if (quote.promotion) {
-        description =
-          `${booking.trip.pickup} → ${booking.trip.dropoff} | ${quote.promotion.code} applied`;
-      }
-
-
-      const session =
-        await stripe
-          .checkout
-          .sessions
-          .create({
-            mode:
-              "payment",
-
-            customer_email:
-              booking
-                .customer
-                .email,
-
-            line_items: [
-              {
-                quantity: 1,
-
-                price_data: {
-                  currency:
-                    quote.currency,
-
-                  unit_amount:
-                    checkoutAmount,
-
-                  product_data: {
-                    name:
-                      quote.fixedOffer
-                        ? "ER Limousine Service — EWR to Manhattan Black SUV"
-                        : `ER Limousine Service — ${quote.vehicle}`,
-
-                    description
-                  }
-                }
-              }
-            ],
-
-            metadata: {
-              bookingId:
-                booking.id,
-
-              offerCode:
-                quote.fixedOffer
-                  ? quote.fixedOffer.code
-                  : "",
-
-              promoCode:
-                quote.promotion
-                  ? quote.promotion.code
-                  : "",
-
-              discount:
-                String(
-                  quote.discount || 0
-                )
-            },
-
-            success_url:
-              `${SITE_URL}/success.html?booking=${booking.id}&session_id={CHECKOUT_SESSION_ID}`,
-
-            cancel_url:
-              `${SITE_URL}/?cancelled=1`
-          });
-
-
-      booking.stripeSessionId =
-        session.id;
-
-      writeBookings(
-        bookings
-      );
-
-      res.json({
-        url:
-          session.url,
-
-        bookingId:
-          booking.id
-      });
-
-    } catch (error) {
-      res
-        .status(400)
-        .json({
-          error:
-            error.message
-        });
-    }
+function enforceBookingBudget(bookings, body, ip) {
+  const now = Date.now();
+  const email = normalizeEmail(body.email);
+  const phone = normalizePhone(body.phone);
+  const ipHash = checkoutHash(ip);
+  const unpaid = bookings.filter(item => item.paymentStatus !== "paid");
+  const byCustomer = unpaid.filter(item => normalizeEmail(item.customer?.email) === email ||
+    normalizePhone(item.customer?.phone) === phone);
+  const byIp = unpaid.filter(item => item.checkoutClientHash === ipHash);
+  const recentCount = (items, windowMs) => items.filter(item =>
+    now - Date.parse(item.createdAt) < windowMs).length;
+  if (recentCount(byCustomer, 30 * MINUTE) >= 6 || recentCount(byCustomer, 24 * 60 * MINUTE) >= 20 ||
+      recentCount(byIp, 30 * MINUTE) >= 12 || recentCount(byIp, 24 * 60 * MINUTE) >= 40) {
+    throw Object.assign(new Error("Too many requests. Please try again later."), {status: 429});
   }
-);
+}
+
+function saveCheckoutBooking(booking) {
+  // Re-read after async work to preserve other reservations/webhook updates.
+  const bookings = readBookings();
+  const stored = bookings.find(item => item.id === booking.id);
+  if (!stored) throw new Error("Checkout is temporarily unavailable. Please try again.");
+  Object.assign(stored, {
+    quote: booking.quote,
+    stripeSessionId: booking.stripeSessionId,
+    checkoutAttempt: booking.checkoutAttempt
+  });
+  writeBookings(bookings);
+}
+
+async function createCheckout(body, ip, fingerprint) {
+  if (!stripe) {
+    throw Object.assign(new Error("Stripe is not configured. Add STRIPE_SECRET_KEY before accepting payments."), {status: 503});
+  }
+
+  /*
+    IMPORTANT:
+    The price is calculated again
+    on the server.
+
+    The browser cannot choose the
+    Stripe payment amount.
+  */
+
+  let quote =
+    await calculateQuote(
+      body
+    );
+
+  // Independently validate the final server quote before storing a booking
+  // or creating a Stripe session, even if quote calculation changes later.
+  validateCalculatedFare(body.vehicle, quote.total);
+  if (quote.vehicleKey !== body.vehicle) {
+    throw new Error("Calculated fare does not match the selected vehicle.");
+  }
+  const checkoutAmount = Math.round(quote.total * 100);
+  if (!Number.isSafeInteger(checkoutAmount) || checkoutAmount <= 0) {
+    throw new Error("Calculated Checkout amount is invalid.");
+  }
+
+  let booking = readBookings().find(item =>
+    item.checkoutFingerprint === fingerprint && item.status !== "cancelled" &&
+    Date.now() - Date.parse(item.createdAt) < 24 * 60 * MINUTE);
+  if (booking?.paymentStatus === "paid") {
+    throw Object.assign(new Error("This reservation has already been paid."), {status: 409});
+  }
+  if (booking?.stripeSessionId) {
+    let existing;
+    try {
+      existing = await stripe.checkout.sessions.retrieve(booking.stripeSessionId);
+    } catch (_) {
+      throw Object.assign(new Error("Checkout is temporarily unavailable. Please try again."), {status: 503});
+    }
+    if (existing.status === "open" && existing.url) {
+      return {url: existing.url, bookingId: booking.id};
+    }
+    if (existing.status !== "expired") {
+      throw Object.assign(new Error("Checkout is already processing for this reservation."), {status: 409});
+    }
+    booking.stripeSessionId = null;
+    booking.checkoutAttempt = null;
+  }
+  if (!booking) {
+    const bookings = readBookings();
+    enforceBookingBudget(bookings, body, ip);
+    booking = createBookingRecord(body, quote);
+    booking.checkoutFingerprint = fingerprint;
+    booking.checkoutClientHash = checkoutHash(ip);
+    bookings.unshift(booking);
+    writeBookings(bookings);
+  }
+  // Persist the attempt before contacting Stripe. Network failures retry the same
+  // key/reservation, including after a process restart, rather than double-create.
+  if (!booking.checkoutAttempt || booking.checkoutAttempt.expiresAt <= Math.floor(Date.now() / 1000)) {
+    booking.checkoutAttempt = {
+      key: crypto.randomUUID(),
+      // Retain Stripe's normal 24-hour Checkout window.
+      expiresAt: Math.floor(Date.now() / 1000) + 24 * 60 * 60,
+      quote
+    };
+  }
+  // Retry with identical server quote and parameters used for this attempt.
+  quote = booking.checkoutAttempt.quote;
+  validateCalculatedFare(body.vehicle, quote.total);
+  if (quote.vehicleKey !== body.vehicle || !Number.isSafeInteger(Math.round(quote.total * 100)) ||
+      Math.round(quote.total * 100) <= 0) {
+    throw new Error("Calculated Checkout amount is invalid.");
+  }
+  booking.quote = quote;
+  saveCheckoutBooking(booking);
+
+  let description =
+    `${booking.trip.pickup} → ${booking.trip.dropoff} | ${booking.trip.date} ${booking.trip.time}`;
+
+  if (quote.fixedOffer) {
+    description =
+      `${booking.trip.pickup} → ${booking.trip.dropoff} | EWR → Manhattan $150 Flat Rate`;
+  } else if (quote.promotion) {
+    description =
+      `${booking.trip.pickup} → ${booking.trip.dropoff} | ${quote.promotion.code} applied`;
+  }
+
+
+  let session;
+  try {
+    session = await stripe
+      .checkout
+      .sessions
+      .create({
+        mode:
+          "payment",
+
+        expires_at: booking.checkoutAttempt.expiresAt,
+
+        customer_email:
+          booking
+            .customer
+            .email,
+
+        line_items: [
+          {
+            quantity: 1,
+
+            price_data: {
+              currency:
+                quote.currency,
+
+              unit_amount:
+                Math.round(quote.total * 100),
+
+              product_data: {
+                name:
+                  quote.fixedOffer
+                    ? "ER Limousine Service — EWR to Manhattan Black SUV"
+                    : `ER Limousine Service — ${quote.vehicle}`,
+
+                description
+              }
+            }
+          }
+        ],
+
+        metadata: {
+          bookingId:
+            booking.id,
+
+          offerCode:
+            quote.fixedOffer
+              ? quote.fixedOffer.code
+              : "",
+
+          promoCode:
+            quote.promotion
+              ? quote.promotion.code
+              : "",
+
+          discount:
+            String(
+              quote.discount || 0
+            )
+        },
+
+        success_url:
+          `${SITE_URL}/success.html?booking=${booking.id}&session_id={CHECKOUT_SESSION_ID}`,
+
+        cancel_url:
+          `${SITE_URL}/?cancelled=1`
+      }, {idempotencyKey: `er-checkout-${booking.id}-${booking.checkoutAttempt.key}`});
+  } catch (error) {
+    // Definitive failures did not create a session; ambiguous failures retain
+    // their idempotency key for a safe retry.
+    if (["StripeInvalidRequestError", "StripeCardError"].includes(error.type)) {
+      booking.checkoutAttempt = null;
+      saveCheckoutBooking(booking);
+    }
+    throw Object.assign(new Error("Checkout is temporarily unavailable. Please try again."), {status: 503});
+  }
+
+  booking.stripeSessionId =
+    session.id;
+
+  saveCheckoutBooking(booking);
+
+  return {url: session.url, bookingId: booking.id};
+}
+
+app.post("/api/checkout", async (req, res) => {
+  try {
+    validateBookingInput(req.body);
+    // Also throttle customer actions across changing source IPs. Normal retries
+    // have ample room; arbitrary extra fields cannot reset these counters.
+    for (const [kind, identity] of [
+      ["email", normalizeEmail(req.body.email)], ["phone", normalizePhone(req.body.phone)]
+    ]) {
+      if (!identity) continue;
+      const key = checkoutHash(identity);
+      const retryAfter = consumeLimit(`checkout-${kind}`, key, 30, 30 * MINUTE) ||
+        consumeLimit(`checkout-${kind}-daily`, key, 100, 24 * 60 * MINUTE);
+      if (retryAfter) return tooManyRequests(res, retryAfter);
+    }
+    const fingerprint = checkoutFingerprint(req.body);
+    let action = checkoutActions.get(fingerprint);
+    if (!action) {
+      if (checkoutActions.size >= 1000) return tooManyRequests(res);
+      action = createCheckout(req.body, clientKey(req), fingerprint);
+      checkoutActions.set(fingerprint, action);
+      // All overlapping requests for the same action share one result.
+      action.finally(() => checkoutActions.delete(fingerprint)).catch(() => {});
+    }
+    res.json(await action);
+  } catch (error) {
+    if (error.status === 429) return tooManyRequests(res, 30 * 60);
+    res.status(error.status || 400).json({error: error.message});
+  }
+});
 
 
 /* =========================================
