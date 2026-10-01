@@ -10,13 +10,14 @@ module.exports = {
   currency: "usd",
 
   vehicleRates: {
-    sedan: {
-      label: "Luxury Sedan",
-      baseFare: 20,
-      perMile: 3,
-      perMinute: 1,
-      minimumFare: 20,
-      maxPassengers: 3
+    escalade: {
+      label: "Cadillac Escalade",
+      baseFare: 30,
+      perMile: 4.5,
+      perMinute: 1.25,
+      minimumFare: 30,
+      maxPassengers: 6,
+      maxLuggage: 6
     },
 
     suv: {

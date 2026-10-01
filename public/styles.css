@@ -57,6 +57,60 @@ button {
    NAVIGATION
 ========================= */
 
+.top-bar {
+  background: var(--black);
+  color: var(--gold-light);
+  border-bottom: 1px solid rgba(215,169,79,.25);
+  font-size: .72rem;
+  font-weight: 700;
+}
+
+.top-bar-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  padding-top: 9px;
+  padding-bottom: 9px;
+}
+
+.top-phone:not([hidden]),
+.top-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.top-phone {
+  white-space: nowrap;
+}
+
+.top-bar-actions {
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+
+.account-login {
+  border: 1px solid var(--gold);
+  border-radius: 5px;
+  padding: 6px 12px;
+  background: transparent;
+  color: var(--gold-light);
+  font-size: inherit;
+  font-weight: inherit;
+}
+
+.account-login:disabled {
+  cursor: default;
+}
+
+.login-status {
+  display: block;
+  font-size: .6rem;
+  font-weight: 400;
+}
+
 .nav {
   position: sticky;
   top: 0;
@@ -690,7 +744,7 @@ textarea:focus {
   overflow: hidden;
 }
 
-.sedan-image {
+.escalade-image {
   background:
     radial-gradient(
       ellipse at 50% 75%,
@@ -704,7 +758,8 @@ textarea:focus {
     );
 }
 
-.vehicle-image.suburban-image {
+.vehicle-image.suburban-image,
+.vehicle-image.escalade-image {
   height: auto;
   aspect-ratio: 2 / 1;
   background:
@@ -720,7 +775,8 @@ textarea:focus {
     );
 }
 
-.suburban-image img {
+.suburban-image img,
+.escalade-image img {
   display: block;
   width: 100%;
   height: 100%;
@@ -748,12 +804,6 @@ textarea:focus {
   font-size: .68rem;
   font-weight: 800;
   letter-spacing: .08em;
-}
-
-.sedan-image .vehicle-placeholder {
-  width: 72%;
-  height: 90px;
-  border-radius: 55% 55% 16px 16px;
 }
 
 .fleet-content {

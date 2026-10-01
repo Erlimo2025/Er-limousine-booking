@@ -1260,7 +1260,9 @@ app.get(
             label:
               value.label,
             maxPassengers:
-              value.maxPassengers
+              value.maxPassengers,
+            maxLuggage:
+              value.maxLuggage
           })
         )
     });

@@ -16,6 +16,19 @@
 
 <body>
 
+<div class="top-bar">
+  <div class="wrap top-bar-inner">
+    <a id="topPhone" class="top-phone" hidden>
+      <span aria-hidden="true">☎</span>
+      <span id="topPhoneNumber"></span>
+    </a>
+    <div class="top-bar-actions">
+      <a href="#book">GUEST BOOKING</a>
+      <button type="button" class="account-login" disabled title="Secure customer account login is coming soon">ACCOUNT LOGIN <span class="login-status">Coming soon</span></button>
+    </div>
+  </div>
+</div>
+
 <nav class="nav">
   <div class="wrap nav-inner">
 
@@ -404,8 +417,8 @@
               name="vehicle"
               required>
 
-              <option value="sedan">
-                Luxury Sedan
+              <option value="escalade">
+                Cadillac Escalade
               </option>
 
               <option
@@ -739,14 +752,18 @@
     <div class="fleet-grid">
 
 
-      <!-- SEDAN -->
+      <!-- CADILLAC ESCALADE -->
       <article class="fleet-card">
 
-        <div class="vehicle-image sedan-image">
+        <div class="vehicle-image escalade-image">
 
-          <div class="vehicle-placeholder">
-            LUXURY SEDAN
-          </div>
+          <img
+            src="/cadillac-escalade.png"
+            alt="Black Cadillac Escalade"
+            width="1774"
+            height="887"
+            loading="lazy"
+          >
 
         </div>
 
@@ -754,18 +771,22 @@
         <div class="fleet-content">
 
           <h3>
-            Luxury Sedan
+            Luxury SUV
           </h3>
 
+          <p class="vehicle-subtitle">
+            Cadillac Escalade ESV
+          </p>
+
           <p class="passenger-count">
-            👤 1–3 Passengers
+            👤 Up to 6 passengers • Up to 6 bags
           </p>
 
 
           <div class="fleet-features">
 
             <span>
-              Comfort
+              Premium Comfort
             </span>
 
             <span>
@@ -782,8 +803,8 @@
           <a
             href="#book"
             class="fleet-button"
-            data-select-vehicle="sedan">
-            Book Luxury Sedan
+            data-select-vehicle="escalade">
+            Book Luxury SUV
           </a>
 
         </div>
@@ -815,15 +836,15 @@
         <div class="fleet-content">
 
           <h3>
-            Black SUV
+            Luxury SUV
           </h3>
 
           <p class="vehicle-subtitle">
-            2025 Chevrolet Suburban Premier
+            Chevrolet Suburban Premier
           </p>
 
           <p class="passenger-count">
-            👤 1–6 Passengers
+            👤 Up to 6 passengers • Up to 6 bags
           </p>
 
 
@@ -848,7 +869,7 @@
             href="#book"
             class="fleet-button"
             data-select-vehicle="suv">
-            Book Black SUV
+            Book Luxury SUV
           </a>
 
         </div>

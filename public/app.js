@@ -462,10 +462,7 @@ function resetPassengerOptions() {
   const tripType =
     tripTypeInput.value;
 
-  let maximum =
-    vehicle.value === "sedan"
-      ? 3
-      : 6;
+  let maximum = 6;
 
   if (tripType === "hourly") {
     maximum = 6;
@@ -1161,6 +1158,14 @@ async function loadPublicConfig() {
 
     const config =
       await response.json();
+
+    const topPhone = document.getElementById("topPhone");
+    const phoneNumber = String(config.companyPhone || "").trim();
+    if (topPhone && phoneNumber) {
+      document.getElementById("topPhoneNumber").textContent = phoneNumber;
+      topPhone.href = `tel:${phoneNumber.replace(/[^+\d]/g, "")}`;
+      topPhone.hidden = false;
+    }
 
     const contactBlock =
       document.getElementById(
