@@ -1196,41 +1196,52 @@ app.post(
     }
 
 
-    if (
-      event.type ===
-      "checkout.session.completed"
-    ) {
-      const session =
-        event.data.object;
+    const checkoutEvents = [
+      "checkout.session.completed",
+      "checkout.session.async_payment_succeeded",
+      "checkout.session.async_payment_failed"
+    ];
 
-      const bookingId =
-        session.metadata &&
-        session.metadata.bookingId;
+    if (checkoutEvents.includes(event.type)) {
+      const session = event.data?.object;
+      const bookingId = session?.metadata?.bookingId;
+      const bookings = readBookings();
+      const booking = typeof bookingId === "string"
+        ? bookings.find(item => item.id === bookingId)
+        : null;
 
-      if (bookingId) {
-        const bookings =
-          readBookings();
+      if (!booking || !booking.stripeSessionId || booking.stripeSessionId !== session?.id) {
+        return res.status(400).json({error: "Checkout session does not match a reservation."});
+      }
 
-        const booking =
-          bookings.find(
-            (item) =>
-              item.id === bookingId
-          );
+      const expectedTotal = booking.quote?.total;
+      const expectedAmount = Math.round(expectedTotal * 100);
+      const expectedCurrency = booking.quote?.currency;
+      if (
+        typeof expectedTotal !== "number" || !Number.isFinite(expectedTotal) || expectedTotal <= 0 ||
+        !Number.isSafeInteger(expectedAmount) || expectedAmount <= 0 ||
+        session.mode !== "payment" ||
+        !Number.isSafeInteger(session.amount_total) || session.amount_total !== expectedAmount ||
+        typeof expectedCurrency !== "string" || typeof session.currency !== "string" ||
+        session.currency.toLowerCase() !== expectedCurrency.toLowerCase()
+      ) {
+        return res.status(400).json({error: "Checkout payment does not match the reservation fare."});
+      }
 
-        if (booking) {
-          booking.paymentStatus =
-            "paid";
-
-          booking.status =
-            "confirmed";
-
-          booking.stripeSessionId =
-            session.id;
-
-          booking.paidAt =
-            new Date()
-              .toISOString();
-
+      // A completed Checkout session may still be awaiting payment.
+      // Repeated or out-of-order events must not reset paid/dispatch state.
+      if (booking.paymentStatus !== "paid") {
+        if (event.type !== "checkout.session.async_payment_failed" && session.payment_status === "paid") {
+          booking.paymentStatus = "paid";
+          if (booking.status === "awaiting_payment") booking.status = "confirmed";
+          booking.paidAt = new Date().toISOString();
+          writeBookings(bookings);
+        } else if (
+          event.type === "checkout.session.async_payment_failed" &&
+          session.payment_status === "unpaid" && booking.paymentStatus !== "failed"
+        ) {
+          booking.paymentStatus = "failed";
+          booking.paymentFailedAt = new Date().toISOString();
           writeBookings(bookings);
         }
       }
