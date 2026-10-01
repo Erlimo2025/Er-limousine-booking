@@ -32,6 +32,8 @@
 <nav class="nav">
   <div class="wrap nav-inner">
 
+    <button type="button" class="mobile-menu-toggle" aria-label="Open navigation menu" aria-expanded="false" aria-controls="mainNavigation">☰</button>
+
     <a class="brand" href="#home">
       <span class="brand-er">ER</span>
 
@@ -41,7 +43,7 @@
       </span>
     </a>
 
-    <div class="nav-links">
+    <div class="nav-links" id="mainNavigation">
       <a href="#home">Home</a>
       <a href="#book">Book a Ride</a>
       <a href="#fleet">Our Fleet</a>
@@ -69,6 +71,8 @@
 
       <!-- EWR TO MANHATTAN SPECIAL -->
       <div class="airport-special">
+
+        <img class="mobile-special-image" src="/suburban-premier-2025.png" alt="Chevrolet Suburban Premier" loading="lazy">
 
         <div class="airport-special-route">
           ✈ EWR → MANHATTAN
@@ -138,6 +142,11 @@
 
       <h2>Book Your Ride</h2>
 
+      <div class="mobile-booking-controls">
+        <button type="button" id="bookingBack" class="booking-back">← Back</button>
+        <p id="bookingStepLabel" aria-live="polite">Step 1 of 2 — Trip Details</p>
+      </div>
+
       <div class="trip-tabs">
 
         <button
@@ -188,6 +197,7 @@
         >
 
 
+        <div id="bookingTripStep" class="booking-step">
         <div class="field full">
 
           <label for="pickup">
@@ -454,6 +464,9 @@
 
 
         <!-- PASSENGER INFORMATION -->
+        </div>
+        <button type="button" id="bookingContinue" class="btn btn-primary mobile-booking-continue">CONTINUE →</button>
+        <div id="bookingCustomerStep" class="booking-step">
         <div class="customer-details">
 
           <h3>
@@ -608,6 +621,8 @@
           🔒 Safe & Secure Booking
           <span>•</span>
           Pay Online
+        </div>
+
         </div>
 
       </form>

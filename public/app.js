@@ -23,6 +23,91 @@ const hours = document.getElementById("hours");
 const vehicle = document.getElementById("vehicle");
 const passengers = document.getElementById("passengers");
 
+const mobileBooking = window.matchMedia("(max-width: 650px)");
+const bookingPanel = document.getElementById("book");
+const tripStep = document.getElementById("bookingTripStep");
+const customerStep = document.getElementById("bookingCustomerStep");
+const mobileSpecial = document.querySelector(".airport-special");
+const headerActions = document.querySelector(".top-bar-actions");
+const specialPosition = document.createComment("Original desktop special position");
+const actionsPosition = document.createComment("Original desktop account links position");
+mobileSpecial.before(specialPosition);
+headerActions.before(actionsPosition);
+const menuToggle = document.querySelector(".mobile-menu-toggle");
+const navigation = document.querySelector(".nav");
+const specialPrice = mobileSpecial.querySelector(".airport-special-price");
+const desktopSpecialPrice = specialPrice.textContent;
+const suburbanOption = vehicle.querySelector('option[value="suv"]');
+const desktopSuburbanLabel = suburbanOption.textContent;
+
+function arrangeMobileHomepage() {
+  if (mobileBooking.matches) {
+    suburbanOption.textContent = "Suburban Premier";
+    const vehicleLabel = document.createElement("span");
+    vehicleLabel.className = "special-vehicle-label";
+    vehicleLabel.textContent = "LUXURY SUV";
+    const priceLabel = document.createElement("span");
+    priceLabel.className = "special-price-value";
+    priceLabel.textContent = "$150 FLAT RATE";
+    specialPrice.replaceChildren(vehicleLabel, priceLabel);
+    bookingPanel.after(mobileSpecial);
+    document.querySelector(".nav-inner").append(headerActions);
+  } else {
+    suburbanOption.textContent = desktopSuburbanLabel;
+    specialPrice.textContent = desktopSpecialPrice;
+    specialPosition.after(mobileSpecial);
+    actionsPosition.after(headerActions);
+  }
+  navigation.classList.remove("mobile-menu-open");
+  menuToggle.setAttribute("aria-expanded", "false");
+}
+arrangeMobileHomepage();
+mobileBooking.addEventListener("change", arrangeMobileHomepage);
+menuToggle.addEventListener("click", () => {
+  const expanded = navigation.classList.toggle("mobile-menu-open");
+  menuToggle.setAttribute("aria-expanded", String(expanded));
+});
+document.getElementById("mainNavigation").addEventListener("click", event => {
+  if (event.target.closest("a")) {
+    navigation.classList.remove("mobile-menu-open");
+    menuToggle.setAttribute("aria-expanded", "false");
+  }
+});
+
+function showBookingStep(step, focus = false) {
+  bookingPanel.dataset.mobileStep = String(step);
+  document.getElementById("bookingStepLabel").textContent = step === 2
+    ? "Step 2 of 2 — Your Information"
+    : "Step 1 of 2 — Trip Details";
+  if (mobileBooking.matches && focus) {
+    bookingPanel.scrollIntoView({block: "start", behavior: "smooth"});
+    document.getElementById(step === 2 ? "firstName" : "pickup").focus({preventScroll: true});
+  }
+}
+
+function continueBooking() {
+  for (const input of tripStep.querySelectorAll("input, select")) {
+    if (!input.disabled && !input.checkValidity()) {
+      input.reportValidity();
+      return;
+    }
+  }
+  showBookingStep(2, true);
+}
+
+document.getElementById("bookingContinue").addEventListener("click", continueBooking);
+document.getElementById("bookingBack").addEventListener("click", () => showBookingStep(1, true));
+form.addEventListener("invalid", event => {
+  if (mobileBooking.matches) showBookingStep(tripStep.contains(event.target) ? 1 : 2);
+}, true);
+form.addEventListener("keydown", event => {
+  if (mobileBooking.matches && bookingPanel.dataset.mobileStep !== "2" && event.key === "Enter" && event.target.matches("input")) {
+    event.preventDefault();
+    continueBooking();
+  }
+});
+mobileBooking.addEventListener("change", () => showBookingStep(1));
+
 const flightField = document.getElementById("flightField");
 const flightNumber = document.getElementById("flightNumber");
 
@@ -36,6 +121,7 @@ const sumVehicle = document.getElementById("sumVehicle");
 const sumMiles = document.getElementById("sumMiles");
 const sumMinutes = document.getElementById("sumMinutes");
 const sumTotal = document.getElementById("sumTotal");
+const quoteArea = document.querySelector(".quote-area");
 
 const promoCode = document.getElementById("promoCode");
 const applyPromoBtn = document.getElementById("applyPromoBtn");
@@ -59,7 +145,7 @@ function updateHourlyRates() {
   if (tripTypeInput.value !== "hourly") return;
   const rate = hourlyVehicles[vehicle.value]?.hourlyRate;
   if (!Number.isFinite(rate)) return;
-  const label = vehicle.options[vehicle.selectedIndex].textContent.trim();
+  const label = vehicle.value === "suv" ? desktopSuburbanLabel.trim() : vehicle.options[vehicle.selectedIndex].textContent.trim();
   document.getElementById("hourlyRateInfo").textContent = `${label} • $${rate}/hour • 3-hour minimum`;
   Array.from(hours.options).forEach(option => {
     option.textContent = `${option.value} Hours — ${formatMoney(Number(option.value) * rate, "usd")}`;
@@ -265,6 +351,7 @@ function showPromoResult(data) {
 function resetQuote() {
 
   currentQuote = null;
+  quoteArea.classList.remove("has-completed-quote");
 
   payBtn.disabled = true;
 
@@ -273,7 +360,7 @@ function resetQuote() {
   sumTotal.textContent = "—";
 
   sumVehicle.textContent =
-    vehicle.options[
+    vehicle.value === "suv" ? desktopSuburbanLabel.trim() : vehicle.options[
       vehicle.selectedIndex
     ]?.textContent ||
     "Black SUV";
@@ -317,6 +404,8 @@ function clearSpecialOffer() {
 
 
 function activateEwrManhattanSpecial() {
+
+  showBookingStep(1);
 
   selectTripType("airport");
 
@@ -381,6 +470,8 @@ if (ewrManhattanSpecialBtn) {
 ========================================= */
 
 function selectTripType(type) {
+
+  showBookingStep(1);
 
   tripTypeInput.value = type;
 
@@ -738,7 +829,10 @@ function enableAddressAutocomplete(
    QUOTE
 ========================================= */
 
-async function requestQuote() {
+async function requestQuote(event) {
+
+  const showMobileSummary = event?.currentTarget === quoteBtn || quoteArea.classList.contains("has-completed-quote");
+  quoteArea.classList.remove("has-completed-quote");
 
   clearNotice();
 
@@ -847,6 +941,8 @@ async function requestQuote() {
       );
 
     showPromoResult(data);
+
+    if (showMobileSummary) quoteArea.classList.add("has-completed-quote");
 
     payBtn.disabled =
       false;
@@ -1133,6 +1229,7 @@ document
           vehicle.disabled = false;
           vehicle.value = selected;
           updateHourlyRates();
+          showBookingStep(1);
 
           resetPassengerOptions();
           resetQuote();
