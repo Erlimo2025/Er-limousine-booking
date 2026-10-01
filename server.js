@@ -306,58 +306,136 @@ function validateCalculatedFare(vehicle, total) {
   }
 }
 
+const SERVICE_TIME_ZONE = "America/New_York";
+const HOURLY_DURATIONS = [3, 3.5, 4, 4.5, 5, 5.5, 6, 7, 8];
+const serviceDateFormatter = new Intl.DateTimeFormat("en-US", {
+  timeZone: SERVICE_TIME_ZONE, year: "numeric", month: "2-digit", day: "2-digit",
+  hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23"
+});
+
+function bookingText(body, key, max, required = false, min = 1, multiline = false) {
+  const value = Object.hasOwn(body, key) ? body[key] : undefined;
+  if (value === undefined || value === null) {
+    if (required) throw new Error(`A valid ${key} is required.`);
+    body[key] = "";
+    return "";
+  }
+  if (typeof value !== "string") throw new Error(`Invalid ${key}.`);
+  const text = value.trim();
+  const controlCharacters = multiline ? /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u : /[\u0000-\u001f\u007f]/u;
+  if (text.length > max || controlCharacters.test(text) || (required && text.length < min)) {
+    throw new Error(`Invalid ${key}.`);
+  }
+  body[key] = text;
+  return text;
+}
+
+function serviceDateParts(timestamp) {
+  return Object.fromEntries(serviceDateFormatter.formatToParts(new Date(timestamp))
+    .filter(part => part.type !== "literal").map(part => [part.type, Number(part.value)]));
+}
+
+function parseServiceDateTime(date, time, label) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) {
+    throw new Error(`Invalid ${label} date or time.`);
+  }
+  const [year, month, day] = date.split("-").map(Number);
+  const [hour, minute] = time.split(":").map(Number);
+  const wallTime = Date.UTC(year, month - 1, day, hour, minute);
+  const calendar = new Date(wallTime);
+  if (year < 1000 || calendar.getUTCFullYear() !== year || calendar.getUTCMonth() !== month - 1 ||
+      calendar.getUTCDate() !== day) throw new Error(`Invalid ${label} date or time.`);
+
+  // Derive NY offsets around the requested date, independent of the host TZ.
+  // Comparing local components rejects nonexistent spring-forward times.
+  const candidates = new Set();
+  for (const delta of [-86400000, 0, 86400000]) {
+    const sample = wallTime + delta;
+    const parts = serviceDateParts(sample);
+    const offset = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second) - sample;
+    const instant = wallTime - offset;
+    const actual = serviceDateParts(instant);
+    if (actual.year === year && actual.month === month && actual.day === day &&
+        actual.hour === hour && actual.minute === minute) candidates.add(instant);
+  }
+  if (!candidates.size) throw new Error(`Invalid ${label} date or time in New York.`);
+  // A repeated fall-back time refers to its first occurrence, consistently.
+  return Math.min(...candidates);
+}
+
 function validateBookingInput(body) {
   if (!body || typeof body !== "object" || Array.isArray(body) || !Object.hasOwn(body, "vehicle")) {
     throw new Error("A valid vehicle is required.");
   }
   const rate = getConfiguredVehicleRate(body.vehicle);
-  const required = [
-    "pickup",
-    "dropoff",
-    "date",
-    "time",
-    "vehicle",
-    "firstName",
-    "lastName",
-    "email",
-    "phone"
-  ];
-
-  const missing =
-    required.filter(
-      (key) =>
-        !sanitizeText(body[key])
-    );
-
-  if (missing.length) {
-    throw new Error(
-      `Missing required fields: ${missing.join(", ")}`
-    );
+  if (!Object.hasOwn(body, "tripType") || typeof body.tripType !== "string" ||
+      !["oneway", "roundtrip", "airport", "hourly"].includes(body.tripType)) {
+    throw new Error("A valid trip type is required.");
   }
 
-  const passengers =
-    Number(body.passengers || 1);
+  for (const key of ["pickup", "dropoff"]) {
+    const address = bookingText(body, key, 200, true, 3);
+    if (!/[\p{L}\p{N}]/u.test(address) || /[<>]/u.test(address)) throw new Error(`Invalid ${key}.`);
+  }
+  bookingText(body, "date", 10, true);
+  bookingText(body, "time", 5, true);
+  const pickupAt = parseServiceDateTime(body.date, body.time, "pickup");
+  if (pickupAt <= Date.now()) throw new Error("Pickup must be scheduled in the future (New York time).");
 
-  if (
-    !Number.isFinite(passengers) ||
-    passengers < 1
-  ) {
-    throw new Error(
-      "Passenger count is invalid."
-    );
+  bookingText(body, "returnDate", 10, body.tripType === "roundtrip");
+  bookingText(body, "returnTime", 5, body.tripType === "roundtrip");
+  if (body.tripType === "roundtrip") {
+    const returnAt = parseServiceDateTime(body.returnDate, body.returnTime, "return");
+    if (returnAt <= pickupAt) throw new Error("Return must be later than pickup (New York time).");
   }
 
-  const maxPassengers =
-    rate.maxPassengers;
+  if (!Object.hasOwn(body, "passengers") ||
+      !["string", "number"].includes(typeof body.passengers) ||
+      (typeof body.passengers === "string" && !/^[1-9]\d*$/.test(body.passengers.trim()))) {
+    throw new Error("Passenger count must be a whole number.");
+  }
+  const passengers = Number(body.passengers);
+  if (!Number.isSafeInteger(passengers) || passengers < 1 || passengers > rate.maxPassengers) {
+    throw new Error(`Passenger count must be between 1 and ${rate.maxPassengers}.`);
+  }
+  body.passengers = passengers;
 
-  if (passengers > maxPassengers) {
-    throw new Error(
-      `${
-        rate.label
-      } supports up to ${
-        maxPassengers
-      } passengers.`
-    );
+  if (body.tripType === "hourly") {
+    if (!Object.hasOwn(body, "hours") || !["string", "number"].includes(typeof body.hours) ||
+        (typeof body.hours === "string" && !/^(?:3|3\.5|4|4\.5|5|5\.5|6|7|8)$/.test(body.hours.trim())) ||
+        !HOURLY_DURATIONS.includes(Number(body.hours))) {
+      throw new Error("Choose a valid hourly duration (3-hour minimum).");
+    }
+    body.hours = Number(body.hours);
+  }
+
+  for (const key of ["firstName", "lastName"]) {
+    const name = bookingText(body, key, 80, true);
+    if (!/\p{L}/u.test(name) || /[<>]/u.test(name)) throw new Error(`Invalid ${key}.`);
+  }
+  const email = bookingText(body, "email", 160, true);
+  const emailParts = email.split("@");
+  const local = emailParts[0];
+  const domain = emailParts[1];
+  if (emailParts.length !== 2 || local.length > 64 || !/^[^\s@<>(),;:"]+$/u.test(local) ||
+      local.startsWith(".") || local.endsWith(".") || local.includes("..") ||
+      !domain || !domain.includes(".") || domain.split(".").some(label =>
+        !/^[\p{L}\p{N}](?:[\p{L}\p{N}-]{0,61}[\p{L}\p{N}])?$/u.test(label))) {
+    throw new Error("Invalid email address.");
+  }
+  const phone = bookingText(body, "phone", 60, true);
+  const phoneMatch = phone.match(/^(\+?[\d\s().-]+?)(?:\s*(?:x|ext\.?|#)\s*\d{1,6})?$/i);
+  if (!phoneMatch || !/^[0-9]{7,17}$/.test(phoneMatch[1].replace(/\D/g, ""))) {
+    throw new Error("Invalid phone number.");
+  }
+  // Flight number remains optional, as the existing airport form specifies.
+  const flight = bookingText(body, "flightNumber", 40);
+  if (flight && !/^[A-Za-z0-9][A-Za-z0-9 -]*$/.test(flight)) throw new Error("Invalid flight number.");
+  bookingText(body, "notes", 700, false, 1, true);
+  bookingText(body, "promoCode", 30);
+  const offerCode = bookingText(body, "offerCode", 50);
+  if (offerCode && !["oneway", "airport"].includes(body.tripType)) {
+    throw new Error("The EWR special is only available for a single One Way or Airport journey.");
   }
 }
 
@@ -368,7 +446,8 @@ function validateBookingInput(body) {
 
 async function getRouteEstimate(
   origin,
-  destination
+  destination,
+  departureTime
 ) {
   const key =
     process.env.GOOGLE_MAPS_API_KEY;
@@ -404,6 +483,8 @@ async function getRouteEstimate(
           destination: {
             address: destination
           },
+
+          ...(departureTime ? { departureTime } : {}),
 
           travelMode: "DRIVE",
 
@@ -777,6 +858,123 @@ function isLateNight(time) {
    PRICE CALCULATION
 ========================================= */
 
+function calculateLegFare(rate, route, pickup, dropoff, time, hours) {
+  if (hours === undefined && (!route || !Number.isFinite(route.miles) || route.miles < 0 ||
+      !Number.isFinite(route.minutes) || route.minutes < 0)) {
+    throw new Error("Route estimate is temporarily unavailable. Please try again.");
+  }
+  let fare = hours !== undefined ? hours * rate.hourlyRate :
+    rate.baseFare +
+    route.miles *
+      rate.perMile +
+    route.minutes *
+      rate.perMinute +
+    pricing.tollAllowance;
+
+  const surcharges = [];
+
+
+  if (
+    isAirportTrip(
+      pickup,
+      dropoff
+    ) &&
+    pricing.airportSurcharge > 0
+  ) {
+    fare +=
+      pricing.airportSurcharge;
+
+    surcharges.push({
+      label:
+        "Airport service",
+
+      amount:
+        pricing.airportSurcharge
+    });
+  }
+
+
+  if (
+    isLateNight(time) &&
+    pricing.lateNightSurcharge > 0
+  ) {
+    fare +=
+      pricing.lateNightSurcharge;
+
+    surcharges.push({
+      label:
+        "Late-night service",
+
+      amount:
+        pricing.lateNightSurcharge
+    });
+  }
+
+
+  fare =
+    Math.max(
+      fare,
+      rate.minimumFare
+    );
+
+  fare =
+    money(fare);
+
+
+  return {fare, surcharges};
+}
+
+function calculateFareTotals(fare, promotion) {
+  const discount = promotion ? money(fare * promotion.percentOff / 100) : 0;
+  const discountedFare = money(Math.max(0, fare - discount));
+  const gratuity = money(discountedFare * pricing.gratuityPercent / 100);
+  return {discount, discountedFare, gratuity,
+    originalTotal: money(fare + fare * pricing.gratuityPercent / 100),
+    total: money(discountedFare + gratuity)};
+}
+
+function roundTripLeg(body, rate, route, isReturn) {
+  const pickup = isReturn ? body.dropoff : body.pickup;
+  const dropoff = isReturn ? body.pickup : body.dropoff;
+  const date = isReturn ? body.returnDate : body.date;
+  const time = isReturn ? body.returnTime : body.time;
+  const calculated = calculateLegFare(rate, route, pickup, dropoff, time);
+  validateCalculatedFare(body.vehicle, calculated.fare);
+  return {pickup, dropoff, date, time, vehicleKey: body.vehicle,
+    miles: route.miles, minutes: route.minutes, fare: calculated.fare, surcharges: calculated.surcharges};
+}
+
+function validateCheckoutQuote(body, quote) {
+  validateCalculatedFare(body.vehicle, quote.total);
+  if (quote.vehicleKey !== body.vehicle || !Number.isSafeInteger(Math.round(quote.total * 100)) ||
+      Math.round(quote.total * 100) <= 0) throw new Error("Calculated Checkout amount is invalid.");
+  if (body.tripType !== "roundtrip") return;
+  const rate = getConfiguredVehicleRate(body.vehicle);
+  const detail = quote.roundTrip;
+  if (!detail || quote.fixedOffer) throw new Error("Invalid Round Trip fare.");
+  for (const [key, isReturn] of [["outbound", false], ["return", true]]) {
+    const leg = detail[key];
+    if (!leg) throw new Error("Invalid Round Trip fare.");
+    const expected = roundTripLeg(body, rate, {miles: leg.miles, minutes: leg.minutes}, isReturn);
+    for (const field of ["pickup", "dropoff", "date", "time", "vehicleKey", "fare"]) {
+      if (leg[field] !== expected[field]) throw new Error("Invalid Round Trip fare.");
+    }
+    validateCalculatedFare(body.vehicle, leg.fare);
+  }
+  const combined = money(detail.outbound.fare + detail.return.fare);
+  validateCalculatedFare(body.vehicle, combined);
+  if (detail.subtotal !== combined || quote.baseTotal !== combined) throw new Error("Invalid Round Trip total.");
+  const promotion = getPromotion(body);
+  if ((quote.promotion?.code || null) !== (promotion?.code || null) ||
+      (quote.promotion?.percentOff || 0) !== (promotion?.percentOff || 0)) {
+    throw new Error("Invalid Round Trip promotion.");
+  }
+  const totals = calculateFareTotals(combined, promotion);
+  for (const [key, value] of Object.entries(totals)) {
+    if (quote[key] !== value) throw new Error("Invalid Round Trip total.");
+  }
+}
+
 async function calculateQuote(body) {
   validateBookingInput(body);
 
@@ -784,8 +982,9 @@ async function calculateQuote(body) {
     getConfiguredVehicleRate(body.vehicle);
 
   const isHourly = body.tripType === "hourly";
+  const isRoundTrip = body.tripType === "roundtrip";
   const bookedHours = Number(body.hours);
-  if (isHourly && ![3, 3.5, 4, 4.5, 5, 5.5, 6, 7, 8].includes(bookedHours)) {
+  if (isHourly && !HOURLY_DURATIONS.includes(bookedHours)) {
     throw new Error("Choose a valid hourly duration (3-hour minimum).");
   }
   if (isHourly && sanitizeText(body.offerCode)) {
@@ -795,8 +994,11 @@ async function calculateQuote(body) {
   const route = isHourly ? null :
     await getRouteEstimate(
       body.pickup,
-      body.dropoff
+      body.dropoff,
+      isRoundTrip ? new Date(parseServiceDateTime(body.date, body.time, "pickup")).toISOString() : undefined
     );
+  const returnRoute = isRoundTrip ? await getRouteEstimate(body.dropoff, body.pickup,
+    new Date(parseServiceDateTime(body.returnDate, body.returnTime, "return")).toISOString()) : null;
 
   /*
     Verify fixed offer before
@@ -855,62 +1057,13 @@ async function calculateQuote(body) {
     NORMAL TRIP PRICING
   */
 
-  let fare = isHourly ? bookedHours * rate.hourlyRate :
-    rate.baseFare +
-    route.miles *
-      rate.perMile +
-    route.minutes *
-      rate.perMinute +
-    pricing.tollAllowance;
-
-  const surcharges = [];
-
-
-  if (
-    isAirportTrip(
-      body.pickup,
-      body.dropoff
-    ) &&
-    pricing.airportSurcharge > 0
-  ) {
-    fare +=
-      pricing.airportSurcharge;
-
-    surcharges.push({
-      label:
-        "Airport service",
-
-      amount:
-        pricing.airportSurcharge
-    });
-  }
-
-
-  if (
-    isLateNight(body.time) &&
-    pricing.lateNightSurcharge > 0
-  ) {
-    fare +=
-      pricing.lateNightSurcharge;
-
-    surcharges.push({
-      label:
-        "Late-night service",
-
-      amount:
-        pricing.lateNightSurcharge
-    });
-  }
-
-
-  fare =
-    Math.max(
-      fare,
-      rate.minimumFare
-    );
-
-  fare =
-    money(fare);
+  const outbound = isRoundTrip ? roundTripLeg(body, rate, route, false) : null;
+  const returned = isRoundTrip ? roundTripLeg(body, rate, returnRoute, true) : null;
+  const single = isRoundTrip ? null : calculateLegFare(rate, route, body.pickup, body.dropoff,
+    body.time, isHourly ? bookedHours : undefined);
+  const fare = isRoundTrip ? money(outbound.fare + returned.fare) : single.fare;
+  const surcharges = isRoundTrip ? [...outbound.surcharges, ...returned.surcharges] : single.surcharges;
+  const roundTrip = isRoundTrip ? {outbound, return: returned, subtotal: fare} : undefined;
 
 
   /*
@@ -920,53 +1073,7 @@ async function calculateQuote(body) {
   const promotion =
     getPromotion(body);
 
-  let discount = 0;
-
-  if (promotion) {
-    discount =
-      money(
-        fare *
-        (
-          promotion.percentOff /
-          100
-        )
-      );
-  }
-
-  const discountedFare =
-    money(
-      Math.max(
-        0,
-        fare - discount
-      )
-    );
-
-  const gratuity =
-    money(
-      discountedFare *
-      (
-        pricing.gratuityPercent /
-        100
-      )
-    );
-
-  const originalTotal =
-    money(
-      fare +
-      (
-        fare *
-        (
-          pricing.gratuityPercent /
-          100
-        )
-      )
-    );
-
-  const total =
-    money(
-      discountedFare +
-      gratuity
-    );
+  const {discount, discountedFare, gratuity, originalTotal, total} = calculateFareTotals(fare, promotion);
 
   validateCalculatedFare(body.vehicle, total);
 
@@ -978,12 +1085,14 @@ async function calculateQuote(body) {
       body.vehicle,
 
     miles:
-      isHourly ? null : money(route.miles),
+      isHourly ? null : money(route.miles + (returnRoute?.miles || 0)),
 
     minutes:
       isHourly ? null : Math.round(
-        route.minutes
+        route.minutes + (returnRoute?.minutes || 0)
       ),
+
+    roundTrip,
 
     hourlyRate: isHourly ? rate.hourlyRate : undefined,
     hours: isHourly ? bookedHours : undefined,
@@ -1537,7 +1646,8 @@ function checkoutFingerprint(body) {
   const record = createBookingRecord(body, null);
   record.customer.email = normalizeEmail(body.email);
   record.customer.phone = normalizePhone(body.phone);
-  return checkoutHash(JSON.stringify({customer: record.customer, trip: record.trip, pricing}));
+  return checkoutHash(JSON.stringify({customer: record.customer, trip: record.trip, pricing,
+    ...(body.tripType === "roundtrip" ? {roundTripPricingVersion: 1} : {})}));
 }
 
 function enforceBookingBudget(bookings, body, ip) {
@@ -1591,7 +1701,7 @@ async function createCheckout(body, ip, fingerprint) {
 
   // Independently validate the final server quote before storing a booking
   // or creating a Stripe session, even if quote calculation changes later.
-  validateCalculatedFare(body.vehicle, quote.total);
+  validateCheckoutQuote(body, quote);
   if (quote.vehicleKey !== body.vehicle) {
     throw new Error("Calculated fare does not match the selected vehicle.");
   }
@@ -1600,6 +1710,8 @@ async function createCheckout(body, ip, fingerprint) {
     throw new Error("Calculated Checkout amount is invalid.");
   }
 
+  // Google work may have taken long enough for a near-term pickup to pass.
+  validateBookingInput(body);
   let booking = readBookings().find(item =>
     item.checkoutFingerprint === fingerprint && item.status !== "cancelled" &&
     Date.now() - Date.parse(item.createdAt) < 24 * 60 * MINUTE);
@@ -1607,6 +1719,7 @@ async function createCheckout(body, ip, fingerprint) {
     throw Object.assign(new Error("This reservation has already been paid."), {status: 409});
   }
   if (booking?.stripeSessionId) {
+    validateCheckoutQuote(body, booking.quote);
     let existing;
     try {
       existing = await stripe.checkout.sessions.retrieve(booking.stripeSessionId);
@@ -1643,7 +1756,7 @@ async function createCheckout(body, ip, fingerprint) {
   }
   // Retry with identical server quote and parameters used for this attempt.
   quote = booking.checkoutAttempt.quote;
-  validateCalculatedFare(body.vehicle, quote.total);
+  validateCheckoutQuote(body, quote);
   if (quote.vehicleKey !== body.vehicle || !Number.isSafeInteger(Math.round(quote.total * 100)) ||
       Math.round(quote.total * 100) <= 0) {
     throw new Error("Calculated Checkout amount is invalid.");
@@ -1663,6 +1776,8 @@ async function createCheckout(body, ip, fingerprint) {
   }
 
 
+  // Recheck after asynchronous Google/Stripe lookups before payment creation.
+  validateBookingInput(body);
   let session;
   try {
     session = await stripe

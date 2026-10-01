@@ -18,8 +18,9 @@ const booking = {
 };
 
 async function harness(t, env = {}, saved = "[]") {
-  let app, data = saved, clock = Date.now();
-  const state = { creates: [], sessions: new Map(), googleCalls: 0, timeout: false,
+  let app, data = saved, clock = Date.parse("2026-10-01T16:00:00Z");
+  const testPricing = JSON.parse(JSON.stringify(pricing));
+  const state = { creates: [], sessions: new Map(), googleCalls: 0, routes: [], timeout: false,
     googleError: false, fail: null, retrieveError: false, createDelay: 0, timeoutMs: null };
   const signatureSdk = new Stripe("sk_test_not_a_real_key");
   class MockStripe {
@@ -66,10 +67,16 @@ async function harness(t, env = {}, saved = "[]") {
     }},
     fetch: async (url, options) => {
       state.googleCalls++;
+      if (state.onGoogle) state.onGoogle();
       if (state.timeout) return new Promise((resolve, reject) =>
         options.signal.addEventListener("abort", () => reject(new Error("mock secret detail"))));
       return {ok: !state.googleError, json: async () => {
-        if (url.includes("computeRoutes")) return {routes: [{distanceMeters: 16093.44, duration: "1200s"}]};
+        if (url.includes("computeRoutes")) {
+          const route = JSON.parse(options.body);
+          state.routes.push(route);
+          if (state.routeResult) return {routes: [state.routeResult(route)]};
+          return {routes: [{distanceMeters: 16093.44, duration: "1200s"}]};
+        }
         if (url.includes("autocomplete")) return {suggestions: [{placePrediction: {text: {text: "Mock address"}}}]};
         return {places: [JSON.parse(options.body).textQuery === "EWR"
           ? {location: {latitude: 40.6895, longitude: -74.1745}}
@@ -80,7 +87,7 @@ async function harness(t, env = {}, saved = "[]") {
       if (name === "dotenv") return {config() {}};
       if (name === "express") return express;
       if (name === "stripe") return MockStripe;
-      if (name === "./pricing") return pricing;
+      if (name === "./pricing") return testPricing;
       if (name === "fs") return {existsSync: () => true, readFileSync: () => data,
         writeFileSync: (file, contents) => {data = contents;}};
       return require(name);
@@ -327,4 +334,227 @@ test("Checkout pricing and webhook signature/payment security remain intact", as
   for (const vehicle of ["constructor", "toString", "__proto__", "sedan", "", null, {}, []]) {
     assert.equal((await h.request("/api/checkout", {...booking, vehicle})).status, 400);
   }
+});
+
+test("valid trip types, return information, hourly rules and approved prices", async t => {
+  const h = await harness(t);
+  const cases = [
+    [{...booking, vehicle: "suv"}, 80],
+    [booking, 100],
+    [{...booking, tripType: "airport", flightNumber: "UA 1234"}, 100],
+    [{...booking, tripType: "airport", flightNumber: ""}, 100],
+    [{...booking, tripType: "roundtrip", returnDate: "2026-11-10", returnTime: "14:00"}, 200],
+    [{...booking, tripType: "hourly", hours: "3"}, 450],
+    [{...booking, vehicle: "suv", tripType: "hourly", hours: 3}, 390],
+    [{...booking, vehicle: "suv", tripType: "airport", offerCode: "EWR_MANHATTAN_SUV", promoCode: "FIRST15"}, 150],
+    [{...booking, vehicle: "suv", tripType: "oneway", offerCode: "EWR_MANHATTAN_SUV"}, 150],
+    [{...booking, promoCode: "FIRST15"}, 85]
+  ];
+  for (const [body, total] of cases) {
+    const quote = await h.request("/api/quote", body);
+    assert.equal(quote.status, 200); assert.equal(quote.body.total, total);
+    assert.equal((await h.request("/api/checkout", {...body, total: 0})).status, 200);
+    assert.equal(h.state.creates.at(-1).params.line_items[0].price_data.unit_amount, total * 100);
+    h.advance(31 * 60000);
+  }
+  // Both directions use the same approved vehicle pricing independently.
+  for (const hours of [3, 3.5, 4, 4.5, 5, 5.5, 6, 7, 8]) {
+    const result = await h.request("/api/quote", {...booking, tripType: "hourly", hours});
+    assert.equal(result.status, 200); assert.equal(result.body.total, hours * 150);
+  }
+});
+
+test("invalid trips/customer inputs fail both quote and checkout before Google, storage or Stripe", async t => {
+  const h = await harness(t);
+  const cases = [
+    {date: "2026-09-30"}, {date: "2026-10-01", time: "11:59"},
+    {date: "2026-10-01", time: "12:00"}, {date: "2026-02-30"},
+    {date: "2027-02-29"}, {date: "2026-13-01"}, {date: "2026-11-31"},
+    {date: "2026-11-00"}, {date: "2026-11-1"}, {date: "11/10/2026"},
+    {date: "2027-03-14", time: "02:30"}, {time: "24:00"}, {time: "12:60"},
+    {time: "12:30:00"}, {time: "9:00"}, {time: "NaN"},
+    ...["unknown", "Round Trip", "oneway ", "constructor", "", null, [], {}, 1, true, undefined]
+      .map(tripType => ({tripType})),
+    ...[0, -1, 1.5, 7, "0", "1.5", "1e0", "NaN", "Infinity", NaN, Infinity, [], {}, true, null, undefined]
+      .map(passengers => ({passengers})),
+    {tripType: "roundtrip"}, {tripType: "roundtrip", returnDate: "2026-11-10"},
+    {tripType: "roundtrip", returnTime: "14:00"},
+    {tripType: "roundtrip", returnDate: "2026-11-09", returnTime: "14:00"},
+    {tripType: "roundtrip", returnDate: "2026-11-10", returnTime: "12:00"},
+    {tripType: "roundtrip", returnDate: "2026-11-10", returnTime: "11:59"},
+    {tripType: "roundtrip", returnDate: "2026-11-31", returnTime: "14:00"},
+    {tripType: "roundtrip", returnDate: "2026-11-10", returnTime: "24:00"},
+    {tripType: "roundtrip", returnDate: "2026-11-10", returnTime: "14:00", vehicle: "suv", offerCode: "EWR_MANHATTAN_SUV"},
+    {tripType: "hourly", hours: 3, vehicle: "suv", offerCode: "EWR_MANHATTAN_SUV"},
+    ...[0, -3, 2, 3.1, 6.5, 9, "3e0", "0x3", "NaN", "Infinity", NaN, Infinity, [], {}, true, null, undefined]
+      .map(hours => ({tripType: "hourly", hours})),
+    ...["", "123", "<script>", "a".repeat(81), {}, [], 123, null]
+      .map(firstName => ({firstName})),
+    {lastName: ""}, {lastName: "123"}, {lastName: {}},
+    ...["", "invalid", "a@@example.test", "a@example..test", ".a@example.test", "a b@example.test", {}, [], 1]
+      .map(email => ({email})),
+    ...["", "abc", "123456", "1".repeat(18), "++12015550199", {}, [], 1]
+      .map(phone => ({phone})),
+    ...["", "!!", "!!!", "<script>", "a".repeat(201), {}, [], 123]
+      .map(pickup => ({pickup})),
+    {dropoff: ""}, {dropoff: {}}, {flightNumber: "<UA123>"},
+    {flightNumber: "a".repeat(41)}, {flightNumber: {}}, {notes: {}}, {notes: "a".repeat(701)},
+    {promoCode: {}}, {offerCode: []}, {firstName: "Test\u0000Name"}
+  ];
+  for (const change of cases) {
+    const body = {...booking, ...change};
+    const label = JSON.stringify(change);
+    assert.equal((await h.request("/api/quote", body)).status, 400, `quote ${label}`);
+    assert.equal((await h.request("/api/checkout", body)).status, 400, `checkout ${label}`);
+    h.advance(61000);
+  }
+  assert.equal(h.state.googleCalls, 0);
+  assert.equal(h.state.creates.length, 0);
+  assert.equal(h.records().length, 0);
+});
+
+test("international names/phone formats are accepted and persisted input is trimmed", async t => {
+  const h = await harness(t);
+  const body = {...booking, firstName: "  李  ", lastName: "  O’Neill-García  ",
+    email: " customer+ride@example.test ", phone: " +44 (20) 7946-0958 ext. 123 ",
+    pickup: " EWR ", dropoff: " Manhattan ", flightNumber: " UA 1234 ",
+    date: " 2026-11-10 ", time: " 12:00 ", passengers: "6", notes: "  Bags\nPlease meet us  "};
+  assert.equal((await h.request("/api/checkout", body)).status, 200);
+  const record = h.records()[0];
+  assert.equal(record.customer.firstName, "李"); assert.equal(record.customer.lastName, "O’Neill-García");
+  assert.equal(record.customer.email, "customer+ride@example.test");
+  assert.equal(record.trip.pickup, "EWR"); assert.equal(record.trip.flightNumber, "UA 1234");
+  for (const phone of ["(973) 732-7020", "+1 973 732 7020", "0044 20 7946 0958", "+81-3-1234-5678"]) {
+    assert.equal((await h.request("/api/quote", {...booking, phone})).status, 200);
+  }
+});
+
+test("New York timezone, valid leap dates and DST conversion are deterministic", async t => {
+  const h = await harness(t);
+  for (const [date, time, expected] of [
+    ["2026-11-10", "12:00", "2026-11-10T17:00:00Z"],
+    ["2027-07-10", "12:00", "2027-07-10T16:00:00Z"],
+    ["2028-02-29", "12:00", "2028-02-29T17:00:00Z"],
+    ["2026-11-01", "01:30", "2026-11-01T05:30:00Z"]
+  ]) {
+    h.context.testDate = date; h.context.testTime = time;
+    assert.equal(vm.runInContext('parseServiceDateTime(testDate, testTime, "pickup")', h.context), Date.parse(expected));
+    assert.equal((await h.request("/api/quote", {...booking, date, time})).status, 200);
+  }
+  const boundary = await h.request("/api/quote", {...booking, date: "2026-10-01", time: "12:01"});
+  assert.equal(boundary.status, 200);
+  h.advance(61000);
+  assert.equal((await h.request("/api/checkout", {...booking, date: "2026-10-01", time: "12:01"})).status, 400);
+  assert.equal(h.state.creates.length, 0);
+});
+
+test("unsafe calculated Checkout amounts still fail with the stronger trip validation", async t => {
+  const h = await harness(t);
+  for (const total of [0, -1, NaN, Infinity, -Infinity, 0.001, Number.MAX_VALUE]) {
+    h.context.badAmount = total;
+    vm.runInContext('calculateQuote = async body => ({vehicleKey: body.vehicle, total: badAmount, currency: "usd"})', h.context);
+    assert.equal((await h.request("/api/checkout", booking)).status, 400);
+  }
+  assert.equal(h.state.creates.length, 0); assert.equal(h.records().length, 0);
+});
+
+test("pickup that passes during route lookup is rejected before reservation/payment creation", async t => {
+  const h = await harness(t);
+  h.state.onGoogle = () => h.advance(61000);
+  assert.equal((await h.request("/api/checkout", {...booking, date: "2026-10-01", time: "12:01"})).status, 400);
+  assert.equal(h.state.creates.length, 0); assert.equal(h.records().length, 0);
+});
+
+test("Round Trip requests both directions at selected NY times and prices unequal legs", async t => {
+  const h = await harness(t);
+  h.state.routeResult = route => route.origin.address === "EWR"
+    ? {distanceMeters: 10 * 1609.344, duration: "1200s"}
+    : {distanceMeters: 20 * 1609.344, duration: "1800s"};
+  const body = {...booking, tripType: "roundtrip", returnDate: "2026-11-11", returnTime: "14:00"};
+  const result = await h.request("/api/quote", body);
+  assert.equal(result.status, 200);
+  assert.equal(result.body.roundTrip.outbound.fare, 100);
+  assert.equal(result.body.roundTrip.return.fare, 157.5);
+  assert.equal(result.body.roundTrip.subtotal, 257.5);
+  assert.equal(result.body.total, 257.5);
+  assert.equal(result.body.miles, 30); assert.equal(result.body.minutes, 50);
+  assert.deepEqual(h.state.routes.map(route => [route.origin.address, route.destination.address, route.departureTime]),
+    [["EWR", "Manhattan", "2026-11-10T17:00:00.000Z"],
+      ["Manhattan", "EWR", "2026-11-11T19:00:00.000Z"]]);
+  assert.equal(result.body.roundTrip.outbound.vehicleKey, "escalade");
+  assert.equal(result.body.roundTrip.return.vehicleKey, "escalade");
+  const checkout = await h.request("/api/checkout", {...body, total: 1, outboundFare: 0, returnFare: 0});
+  assert.equal(checkout.status, 200);
+  assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount, 25750);
+  assert.equal(h.state.routes.length, 4);
+  const suv = await h.request("/api/quote", {...body, vehicle: "suv"});
+  assert.equal(suv.body.roundTrip.outbound.fare, 80);
+  assert.equal(suv.body.roundTrip.return.fare, 130);
+  assert.equal(suv.body.total, 210);
+});
+
+test("Round Trip FIRST15 discounts combined eligible fare once and remains first-ride-only", async t => {
+  const h = await harness(t);
+  h.state.routeResult = route => route.origin.address === "EWR"
+    ? {distanceMeters: 10 * 1609.344, duration: "1200s"}
+    : {distanceMeters: 20 * 1609.344, duration: "1800s"};
+  const body = {...booking, tripType: "roundtrip", returnDate: "2026-11-11", returnTime: "14:00", promoCode: "FIRST15"};
+  const result = await h.request("/api/quote", body);
+  assert.equal(result.body.baseTotal, 257.5);
+  assert.equal(result.body.discount, 38.63);
+  assert.equal(result.body.total, 218.87);
+  assert.equal(result.body.roundTrip.outbound.fare, 100);
+  assert.equal(result.body.roundTrip.return.fare, 157.5);
+  assert.equal((await h.request("/api/checkout", body)).status, 200);
+  assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount, 21887);
+  const previous = await harness(t, {}, JSON.stringify([{id: "prior", paymentStatus: "paid",
+    customer: {email: booking.email, phone: booking.phone}}]));
+  assert.equal((await previous.request("/api/quote", body)).status, 400);
+  assert.equal((await previous.request("/api/checkout", body)).status, 400);
+  assert.equal(previous.state.creates.length, 0);
+});
+
+test("per-leg minimums, tolls and surcharges use each leg's own time", async t => {
+  const h = await harness(t);
+  vm.runInContext('pricing.airportSurcharge = 10; pricing.lateNightSurcharge = 25; pricing.tollAllowance = 5;', h.context);
+  h.state.routeResult = route => route.origin.address === "EWR"
+    ? {distanceMeters: 10 * 1609.344, duration: "1200s"}
+    : {distanceMeters: 20 * 1609.344, duration: "1800s"};
+  const result = await h.request("/api/quote", {...booking, tripType: "roundtrip",
+    returnDate: "2026-11-11", returnTime: "23:30"});
+  assert.equal(result.body.roundTrip.outbound.fare, 115);
+  assert.equal(result.body.roundTrip.return.fare, 197.5);
+  assert.equal(result.body.total, 312.5);
+  h.state.routeResult = () => ({distanceMeters: 0, duration: "0s"});
+  vm.runInContext('pricing.airportSurcharge = 0; pricing.lateNightSurcharge = 0; pricing.tollAllowance = 0;', h.context);
+  const minimum = await h.request("/api/quote", {...booking, vehicle: "suv", tripType: "roundtrip",
+    returnDate: "2026-11-11", returnTime: "14:00"});
+  assert.equal(minimum.body.roundTrip.outbound.fare, 20);
+  assert.equal(minimum.body.roundTrip.return.fare, 20);
+  assert.equal(minimum.body.total, 40);
+});
+
+test("independent checkout checks reject corrupted Round Trip fares/promo/total before Stripe", async t => {
+  const h = await harness(t);
+  const body = {...booking, tripType: "roundtrip", returnDate: "2026-11-11", returnTime: "14:00", promoCode: "FIRST15"};
+  const valid = (await h.request("/api/quote", body)).body;
+  for (const mutate of [
+    quote => {quote.roundTrip.outbound.fare = 0;},
+    quote => {quote.roundTrip.return.fare = 1;},
+    quote => {quote.roundTrip.return.vehicleKey = "suv";},
+    quote => {quote.roundTrip.return.time = "15:00";},
+    quote => {quote.roundTrip.subtotal = 1;},
+    quote => {quote.baseTotal = 1;},
+    quote => {quote.discount = 0;},
+    quote => {quote.promotion.percentOff = 50;},
+    quote => {quote.total = 1;},
+    quote => {quote.fixedOffer = {price: 150};},
+    quote => {delete quote.roundTrip;}
+  ]) {
+    const corrupt = JSON.parse(JSON.stringify(valid)); mutate(corrupt);
+    h.context.corruptQuote = corrupt;
+    vm.runInContext('calculateQuote = async () => corruptQuote', h.context);
+    assert.equal((await h.request("/api/checkout", body)).status, 400);
+  }
+  assert.equal(h.state.creates.length, 0); assert.equal(h.records().length, 0);
 });

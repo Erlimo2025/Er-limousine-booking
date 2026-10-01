@@ -125,6 +125,9 @@ const sumVehicle = document.getElementById("sumVehicle");
 const sumMiles = document.getElementById("sumMiles");
 const sumMinutes = document.getElementById("sumMinutes");
 const sumTotal = document.getElementById("sumTotal");
+const sumMilesLabel = document.getElementById("sumMilesLabel");
+const sumMinutesLabel = document.getElementById("sumMinutesLabel");
+const sumTotalLabel = document.getElementById("sumTotalLabel");
 const quoteArea = document.querySelector(".quote-area");
 
 const promoCode = document.getElementById("promoCode");
@@ -362,6 +365,9 @@ function resetQuote() {
   sumMiles.textContent = "—";
   sumMinutes.textContent = "—";
   sumTotal.textContent = "—";
+  sumMilesLabel.textContent = "Distance";
+  sumMinutesLabel.textContent = "Estimated Drive Time";
+  sumTotalLabel.textContent = "Total";
 
   sumVehicle.textContent =
     vehicle.value === "suv" ? desktopSuburbanLabel.trim() : vehicle.options[
@@ -943,6 +949,15 @@ async function requestQuote(event) {
         data.total,
         data.currency
       );
+
+    // Reuse the same four summary cells; only Round Trip quote content changes.
+    sumMilesLabel.textContent = data.roundTrip ? "Outbound fare" : "Distance";
+    sumMinutesLabel.textContent = data.roundTrip ? "Return fare" : "Estimated Drive Time";
+    sumTotalLabel.textContent = data.roundTrip ? "Round Trip total" : "Total";
+    if (data.roundTrip) {
+      sumMiles.textContent = formatMoney(data.roundTrip.outbound.fare, data.currency);
+      sumMinutes.textContent = formatMoney(data.roundTrip.return.fare, data.currency);
+    }
 
     showPromoResult(data);
 
