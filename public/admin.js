@@ -3,7 +3,43 @@ const loadBtn = document.getElementById("loadBtn");
 const bookingsEl = document.getElementById("bookings");
 const notice = document.getElementById("notice");
 
-tokenInput.value = localStorage.getItem("er_admin_token") || "";
+const loginField = document.getElementById("adminLoginField");
+const logoutBtn = document.getElementById("logoutBtn");
+let authenticated = false;
+let authGeneration = 0;
+
+// Delete credentials left by the former implementation; never read/store them.
+for (const store of ["localStorage", "sessionStorage"]) {
+  try { window[store].removeItem("er_admin_token"); } catch (_) { /* Storage may be disabled. */ }
+}
+tokenInput.value = "";
+
+function setLoggedIn(value) {
+  authenticated = value;
+  tokenInput.value = "";
+  loginField.classList.toggle("hidden-field", value);
+  logoutBtn.classList.toggle("hidden-field", !value);
+  loadBtn.textContent = value ? "Load bookings" : "Admin login";
+  if (!value) {
+    authGeneration++;
+    bookingsEl.innerHTML = "";
+  }
+}
+
+async function adminFetch(url, options = {}) {
+  const response = await fetch(url, {
+    ...options,
+    credentials: "same-origin",
+    cache: "no-store",
+    headers: {"Content-Type": "application/json", ...options.headers}
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    if (response.status === 401 || response.status === 403) setLoggedIn(false);
+    throw new Error(data.error || "Request failed. Please try again.");
+  }
+  return data;
+}
 
 function esc(value) {
   return String(value || "")
@@ -14,31 +50,19 @@ function esc(value) {
     .replaceAll("'", "&#039;");
 }
 
-function authHeaders() {
-  return {
-    "Content-Type": "application/json",
-    "Authorization": `Bearer ${tokenInput.value.trim()}`
-  };
-}
-
 function showNotice(message, type = "error") {
   notice.className = `notice ${type}`;
   notice.textContent = message;
 }
 
 async function loadBookings() {
-  const token = tokenInput.value.trim();
-  if (!token) return showNotice("Enter your admin token.");
-
-  localStorage.setItem("er_admin_token", token);
+  if (!authenticated) return;
+  const generation = authGeneration;
   loadBtn.disabled = true;
-  loadBtn.textContent = "Loading…";
-
+  loadBtn.textContent = "Loading...";
   try {
-    const response = await fetch("/api/bookings", { headers: authHeaders() });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || "Unable to load bookings.");
-
+    const data = await adminFetch("/api/bookings");
+    if (!authenticated || generation !== authGeneration) return;
     notice.className = "notice";
     bookingsEl.innerHTML = data.length
       ? data.map(renderBooking).join("")
@@ -47,7 +71,57 @@ async function loadBookings() {
     showNotice(err.message);
   } finally {
     loadBtn.disabled = false;
-    loadBtn.textContent = "Load bookings";
+    loadBtn.textContent = authenticated ? "Load bookings" : "Admin login";
+  }
+}
+
+async function loginAndLoad() {
+  if (authenticated) return loadBookings();
+  if (!tokenInput.value.trim()) return showNotice("Enter your admin credential.");
+  loadBtn.disabled = true;
+  // Credential exists only in the initial request; clear the password field immediately.
+  const payload = JSON.stringify({token: tokenInput.value.trim()});
+  tokenInput.value = "";
+  try {
+    await adminFetch("/api/admin/login", {method: "POST", body: payload});
+    setLoggedIn(true);
+    await loadBookings();
+  } catch (err) {
+    setLoggedIn(false);
+    showNotice(err.message);
+  } finally {
+    loadBtn.disabled = false;
+  }
+}
+
+async function restoreSession() {
+  setLoggedIn(false);
+  loadBtn.disabled = true;
+  try {
+    await adminFetch("/api/admin/session");
+    setLoggedIn(true);
+    await loadBookings();
+  } catch (_) {
+    setLoggedIn(false);
+  } finally {
+    loadBtn.disabled = false;
+  }
+}
+
+async function logout() {
+  loadBtn.disabled = true;
+  logoutBtn.disabled = true;
+  authGeneration++;
+  bookingsEl.innerHTML = "";
+  try {
+    await adminFetch("/api/admin/logout", {method: "POST", body: "{}"});
+    setLoggedIn(false);
+    showNotice("Signed out.", "success");
+  } catch (err) {
+    showNotice(err.message);
+  } finally {
+    loadBtn.disabled = false;
+    logoutBtn.disabled = false;
   }
 }
 
@@ -106,13 +180,10 @@ bookingsEl.addEventListener("click", async (event) => {
   };
 
   try {
-    const response = await fetch("/api/bookings/" + encodeURIComponent(id), {
+    const data = await adminFetch("/api/bookings/" + encodeURIComponent(id), {
       method: "PATCH",
-      headers: authHeaders(),
       body: JSON.stringify(payload)
     });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || "Unable to save.");
     showNotice("Dispatch updated.", "success");
     await loadBookings();
   } catch (err) {
@@ -123,4 +194,12 @@ bookingsEl.addEventListener("click", async (event) => {
   }
 });
 
-loadBtn.addEventListener("click", loadBookings);
+loadBtn.addEventListener("click", loginAndLoad);
+logoutBtn.addEventListener("click", logout);
+window.addEventListener("pagehide", () => {
+  tokenInput.value = "";
+  authGeneration++;
+  bookingsEl.innerHTML = "";
+});
+window.addEventListener("pageshow", event => { if (event.persisted) restoreSession(); });
+restoreSession();

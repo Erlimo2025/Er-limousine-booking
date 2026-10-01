@@ -31,7 +31,13 @@ app.set("trust proxy", process.env.TRUSTED_PROXY_CIDRS
    need a shared atomic store for counters/locks as well as reservation storage. */
 const abuseCounters = new Map();
 const checkoutActions = new Map();
+const adminSessions = new Map();
 const MINUTE = 60 * 1000;
+const ADMIN_SESSION_ABSOLUTE_MS = 8 * 60 * MINUTE;
+const ADMIN_SESSION_IDLE_MS = 30 * MINUTE;
+const adminCookieSecure = process.env.NODE_ENV === "production" || process.env.RENDER === "true";
+const adminCookieName = adminCookieSecure ? "__Host-er_admin_session" : "er_admin_session";
+const adminCookieOptions = {httpOnly: true, secure: adminCookieSecure, sameSite: "strict", path: "/"};
 
 function clientKey(req) {
   const address = req.ip || req.socket?.remoteAddress || "unknown";
@@ -67,6 +73,9 @@ function consumeLimit(scope, key, limit, windowMs) {
 const counterCleanup = setInterval(() => {
   const now = Date.now();
   for (const [key, entry] of abuseCounters) if (entry.resetAt <= now) abuseCounters.delete(key);
+  for (const [key, session] of adminSessions) {
+    if (session.expiresAt <= now || session.lastSeen + ADMIN_SESSION_IDLE_MS <= now) adminSessions.delete(key);
+  }
 }, MINUTE);
 counterCleanup.unref();
 
@@ -1274,43 +1283,46 @@ function createBookingRecord(
    ADMIN SECURITY
 ========================================= */
 
-function requireAdmin(
-  req,
-  res,
-  next
-) {
-  const configured =
-    process.env.ADMIN_TOKEN;
+function adminSessionKey(req) {
+  const cookies = String(req.headers.cookie || "").split(";").map(value => value.trim());
+  const matches = cookies.filter(value => value.startsWith(`${adminCookieName}=`));
+  if (matches.length !== 1) return null;
+  const id = matches[0].slice(adminCookieName.length + 1);
+  if (!/^[A-Za-z0-9_-]{43}$/.test(id)) return null;
+  return crypto.createHash("sha256").update(id).digest("hex");
+}
 
-  if (!configured) {
-    return res
-      .status(503)
-      .json({
-        error:
-          "ADMIN_TOKEN is not configured."
-      });
+function clearAdminCookie(res) {
+  res.clearCookie(adminCookieName, adminCookieOptions);
+}
+
+function adminNoStore(req, res, next) {
+  res.set("Cache-Control", "no-store");
+  next();
+}
+
+function validAdminOrigin(req) {
+  // Cookie authentication must not turn state-changing admin routes into CSRF targets.
+  const origin = req.get("origin");
+  const site = req.get("sec-fetch-site");
+  if (site && !["same-origin", "none"].includes(site)) return false;
+  return !origin || origin === new URL(SITE_URL).origin;
+}
+
+function requireAdmin(req, res, next) {
+  res.set("Cache-Control", "no-store");
+  if (!["GET", "HEAD"].includes(req.method) && !validAdminOrigin(req)) {
+    return res.status(403).json({error: "Unauthorized"});
   }
-
-  const auth =
-    req.get("authorization") ||
-    "";
-
-  const supplied =
-    auth.startsWith("Bearer ")
-      ? auth.slice(7)
-      : "";
-
-  if (supplied !== configured) {
-    const retryAfter = consumeLimit("admin-failures", clientKey(req), 10, 15 * MINUTE);
-    if (retryAfter) return tooManyRequests(res, retryAfter);
-    return res
-      .status(401)
-      .json({
-        error:
-          "Unauthorized"
-      });
+  const key = adminSessionKey(req);
+  const session = key && adminSessions.get(key);
+  const now = Date.now();
+  if (!session || session.expiresAt <= now || session.lastSeen + ADMIN_SESSION_IDLE_MS <= now) {
+    if (key) adminSessions.delete(key);
+    clearAdminCookie(res);
+    return res.status(401).json({error: "Unauthorized"});
   }
-
+  session.lastSeen = now;
   next();
 }
 
@@ -1433,7 +1445,9 @@ app.use("/api/address-suggestions", rateLimit("address", 120));
 app.use("/api/quote", rateLimit("quote", 30));
 app.use("/api/checkout", rateLimit("checkout", 15), rateLimit("checkout-long", 60, 30 * MINUTE));
 app.use("/api/booking", rateLimit("booking-status", 120));
-app.use("/api/bookings", rateLimit("admin-requests", 120));
+app.use("/api/bookings", adminNoStore, rateLimit("admin-requests", 120));
+app.use("/api/admin", adminNoStore, rateLimit("admin-requests", 120));
+app.use("/admin.html", adminNoStore);
 
 app.use(
   express.json({
@@ -1449,6 +1463,49 @@ app.use(
     )
   )
 );
+
+
+/* Admin session credentials are accepted only at login, never on normal APIs. */
+app.post("/api/admin/login", (req, res) => {
+  if (!validAdminOrigin(req) || !req.is("application/json")) {
+    return res.status(403).json({error: "Unauthorized"});
+  }
+  const configured = process.env.ADMIN_TOKEN;
+  if (!configured) return res.status(503).json({error: "Authentication unavailable."});
+  const supplied = req.body && !Array.isArray(req.body) && Object.hasOwn(req.body, "token") &&
+    typeof req.body.token === "string" ? req.body.token : "";
+  // Equal-size digests make credential comparison independent of guessed prefixes.
+  const matches = supplied.length > 0 && crypto.timingSafeEqual(
+    crypto.createHash("sha256").update(supplied).digest(),
+    crypto.createHash("sha256").update(configured).digest());
+  if (!matches) {
+    const retryAfter = consumeLimit("admin-failures", clientKey(req), 10, 15 * MINUTE);
+    if (retryAfter) return tooManyRequests(res, retryAfter);
+    return res.status(401).json({error: "Unauthorized"});
+  }
+  const previous = adminSessionKey(req);
+  if (previous) adminSessions.delete(previous);
+  if (adminSessions.size >= 2000) return res.status(503).json({error: "Authentication unavailable."});
+  const id = crypto.randomBytes(32).toString("base64url");
+  const now = Date.now();
+  adminSessions.set(crypto.createHash("sha256").update(id).digest("hex"), {
+    expiresAt: now + ADMIN_SESSION_ABSOLUTE_MS, lastSeen: now
+  });
+  res.cookie(adminCookieName, id, {...adminCookieOptions, maxAge: ADMIN_SESSION_ABSOLUTE_MS});
+  res.json({authenticated: true});
+});
+
+app.get("/api/admin/session", requireAdmin, (req, res) => res.json({authenticated: true}));
+
+app.post("/api/admin/logout", (req, res) => {
+  if (!validAdminOrigin(req) || !req.is("application/json")) {
+    return res.status(403).json({error: "Unauthorized"});
+  }
+  const key = adminSessionKey(req);
+  if (key) adminSessions.delete(key);
+  clearAdminCookie(res);
+  res.json({authenticated: false});
+});
 
 
 /* =========================================

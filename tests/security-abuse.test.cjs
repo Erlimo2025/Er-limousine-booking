@@ -100,7 +100,7 @@ async function harness(t, env = {}, saved = "[]") {
   t.after(() => new Promise(resolve => {server.closeAllConnections(); server.close(resolve);}));
   const url = `http://127.0.0.1:${server.address().port}`;
   return {
-    state, app, context, signatureSdk,
+    state, app, context, signatureSdk, url,
     get data() { return data; },
     records: () => JSON.parse(data),
     advance: ms => {clock += ms;},
@@ -139,7 +139,10 @@ test("approved prices, promotions, suggestions and correct admin access", async 
   assert.equal((await h.request("/api/quote", {...booking, offerCode: "EWR_MANHATTAN_SUV"})).status, 400);
   assert.deepEqual((await h.request("/api/address-suggestions?q=Newark")).body.suggestions, ["Mock address"]);
   assert.equal(h.state.timeoutMs, 8000);
-  assert.equal((await h.request("/api/bookings", undefined, {authorization: "Bearer local-test-token"})).status, 200);
+  const login = await h.request("/api/admin/login", {token: "local-test-token"});
+  assert.equal(login.status, 200);
+  assert.equal((await h.request("/api/bookings", undefined,
+    {cookie: login.headers.get("set-cookie").split(";")[0]})).status, 200);
 });
 
 test("request limits return generic 429, recover, and do not throttle webhook", async t => {
@@ -246,13 +249,112 @@ test("pending reservation spam is limited by customer and client; retries do not
 
 test("invalid admin tokens throttle without blocking the correct token; cooldown resets", async t => {
   const h = await harness(t);
-  for (let i = 0; i < 10; i++) assert.equal((await h.request("/api/bookings", undefined,
-    {authorization: `Bearer invalid${i}`})).status, 401);
-  assert.equal((await h.request("/api/bookings")).status, 429);
-  assert.equal((await h.request("/api/bookings", undefined, {authorization: "Bearer local-test-token"})).status, 200);
-  assert.equal((await h.request("/api/bookings/not-found", {}, {authorization: "Bearer invalid"}, "PATCH")).status, 429);
+  for (let i = 0; i < 10; i++) assert.equal((await h.request("/api/admin/login",
+    {token: `invalid${i}`})).status, 401);
+  assert.equal((await h.request("/api/admin/login", {})).status, 429);
+  const login = await h.request("/api/admin/login", {token: "local-test-token"});
+  assert.equal(login.status, 200);
+  assert.equal((await h.request("/api/bookings", undefined,
+    {cookie: login.headers.get("set-cookie").split(";")[0]})).status, 200);
+  assert.equal((await h.request("/api/admin/login", {token: "invalid"})).status, 429);
   h.advance(15 * 60000 + 1);
-  assert.equal((await h.request("/api/bookings")).status, 401);
+  assert.equal((await h.request("/api/admin/login", {token: "invalid"})).status, 401);
+});
+
+test("admin sessions authorize all protected APIs and bearer credentials no longer work", async t => {
+  const h = await harness(t, {}, JSON.stringify([{id: "mock-reservation", dispatch: {},
+    customer: {firstName: "Test", lastName: "Customer"}, trip: {}, quote: {total: 100}}]));
+  for (const headers of [{}, {cookie: "er_admin_session=invalid"},
+    {cookie: `er_admin_session=${"a".repeat(43)}`}, {authorization: "Bearer local-test-token"}]) {
+    const denied = await h.request("/api/bookings", undefined, headers);
+    assert.equal(denied.status, 401); assert.equal(denied.body.error, "Unauthorized");
+    assert.equal(denied.headers.get("cache-control"), "no-store");
+    assert.equal((await h.request("/api/bookings/mock-reservation", {status: "confirmed"}, headers, "PATCH")).status, 401);
+  }
+  const login = await h.request("/api/admin/login", {token: "local-test-token"});
+  assert.deepEqual(login.body, {authenticated: true});
+  const cookie = login.headers.get("set-cookie").split(";")[0];
+  const loaded = await h.request("/api/bookings", undefined, {cookie});
+  assert.equal(loaded.status, 200); assert.equal(loaded.headers.get("cache-control"), "no-store");
+  assert.equal((await h.request("/api/bookings/mock-reservation", {status: "confirmed"}, {cookie}, "PATCH")).status, 200);
+  assert.equal((await h.request("/api/admin/session", undefined, {cookie})).status, 200);
+  assert.equal((await h.request("/api/bookings", undefined, {cookie: `${cookie}; ${cookie}`})).status, 401);
+});
+
+test("production admin cookies are secure, HttpOnly, strict, scoped and expiring", async t => {
+  for (const env of [{NODE_ENV: "production"}, {RENDER: "true"}]) {
+    const h = await harness(t, env);
+    const login = await h.request("/api/admin/login", {token: "local-test-token"});
+    assert.equal(login.status, 200);
+    const cookie = login.headers.get("set-cookie");
+    assert.match(cookie, /^__Host-er_admin_session=[A-Za-z0-9_-]{43};/);
+    for (const flag of [/HttpOnly/, /; Secure/, /SameSite=Strict/, /Path=\//, /Max-Age=28800/, /Expires=/])
+      assert.match(cookie, flag);
+    assert.doesNotMatch(cookie, /Domain=/);
+    assert.deepEqual(login.body, {authenticated: true});
+    assert.equal(login.headers.get("cache-control"), "no-store");
+  }
+});
+
+test("admin absolute and idle expiration are enforced server-side", async t => {
+  const idle = await harness(t);
+  const login = await idle.request("/api/admin/login", {token: "local-test-token"});
+  const cookie = login.headers.get("set-cookie").split(";")[0];
+  idle.advance(29 * 60000);
+  assert.equal((await idle.request("/api/bookings", undefined, {cookie})).status, 200);
+  idle.advance(29 * 60000);
+  assert.equal((await idle.request("/api/bookings", undefined, {cookie})).status, 200);
+  idle.advance(30 * 60000);
+  assert.equal((await idle.request("/api/bookings", undefined, {cookie})).status, 401);
+  const absolute = await harness(t);
+  const absoluteLogin = await absolute.request("/api/admin/login", {token: "local-test-token"});
+  const absoluteCookie = absoluteLogin.headers.get("set-cookie").split(";")[0];
+  for (let i = 0; i < 16; i++) {
+    absolute.advance(29 * 60000);
+    assert.equal((await absolute.request("/api/admin/session", undefined, {cookie: absoluteCookie})).status, 200);
+  }
+  absolute.advance(16 * 60000);
+  assert.equal((await absolute.request("/api/admin/session", undefined, {cookie: absoluteCookie})).status, 401);
+  const restarted = await harness(t);
+  assert.equal((await restarted.request("/api/admin/session", undefined, {cookie})).status, 401);
+});
+
+test("logout revokes current session, clears cookie and rejects replay", async t => {
+  const h = await harness(t);
+  const login = await h.request("/api/admin/login", {token: "local-test-token"});
+  const cookie = login.headers.get("set-cookie").split(";")[0];
+  const logout = await h.request("/api/admin/logout", {}, {cookie});
+  assert.equal(logout.status, 200); assert.deepEqual(logout.body, {authenticated: false});
+  assert.match(logout.headers.get("set-cookie"), /er_admin_session=;/);
+  assert.match(logout.headers.get("set-cookie"), /Expires=Thu, 01 Jan 1970/);
+  assert.equal((await h.request("/api/bookings", undefined, {cookie})).status, 401);
+  assert.equal((await h.request("/api/admin/session", undefined, {cookie})).status, 401);
+  const next = await h.request("/api/admin/login", {token: "local-test-token"});
+  const nextCookie = next.headers.get("set-cookie").split(";")[0];
+  assert.notEqual(nextCookie, cookie);
+  const rotated = await h.request("/api/admin/login", {token: "local-test-token"}, {cookie: nextCookie});
+  assert.equal((await h.request("/api/bookings", undefined, {cookie: nextCookie})).status, 401);
+  assert.equal((await h.request("/api/bookings", undefined,
+    {cookie: rotated.headers.get("set-cookie").split(";")[0]})).status, 200);
+  const restarted = await harness(t);
+  assert.equal((await restarted.request("/api/bookings", undefined,
+    {cookie: rotated.headers.get("set-cookie").split(";")[0]})).status, 401);
+});
+
+test("cookie-authenticated admin writes reject cross-origin requests; legacy storage is cleanup-only", async t => {
+  const h = await harness(t);
+  assert.equal((await h.request("/api/admin/login", {token: "local-test-token"}, {origin: "https://other.example.test"})).status, 403);
+  assert.equal((await h.request("/api/admin/login", {token: "local-test-token"}, {"sec-fetch-site": "same-site"})).status, 403);
+  const login = await h.request("/api/admin/login", {token: "local-test-token"}, {origin: "http://localhost:3000"});
+  assert.equal(login.status, 200);
+  const cookie = login.headers.get("set-cookie").split(";")[0];
+  assert.equal((await h.request("/api/bookings/not-found", {}, {cookie, origin: "https://other.example.test"}, "PATCH")).status, 403);
+  assert.equal((await h.request("/api/admin/logout", {}, {cookie, origin: "https://other.example.test"})).status, 403);
+  assert.equal((await h.request("/api/admin/session", undefined, {cookie})).status, 200);
+  const javascript = fs.readFileSync(path.join(root, "public/admin.js"), "utf8");
+  assert.doesNotMatch(javascript, /(?:localStorage|sessionStorage)\s*\.\s*(?:getItem|setItem)/);
+  assert.doesNotMatch(javascript, /Bearer|authorization|document\.cookie/i);
+  assert.match(javascript, /removeItem\("er_admin_token"\)/);
 });
 
 test("customer request limits survive changing IPs; persisted daily booking budgets work", async t => {

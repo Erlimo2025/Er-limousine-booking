@@ -19,18 +19,19 @@
       <div class="section-head">
         <div class="eyebrow">Private dashboard</div>
         <h2>Bookings & dispatch</h2>
-        <p>Enter your admin token to view reservations, assign chauffeurs and update trip status.</p>
+        <p>Sign in to view reservations, assign chauffeurs and update trip status.</p>
       </div>
 
       <div class="booking-card" style="margin-bottom:18px">
         <div class="form-grid">
-          <div class="field full">
-            <label>Admin token</label>
-            <input id="token" type="password" placeholder="ADMIN_TOKEN from your .env file">
+          <div class="field full" id="adminLoginField">
+            <label for="token">Admin credential</label>
+            <input id="token" type="password" autocomplete="off" placeholder="Enter admin credential">
           </div>
         </div>
         <div class="hero-actions">
-          <button class="btn btn-primary" id="loadBtn">Load bookings</button>
+          <button class="btn btn-primary" id="loadBtn">Admin login</button>
+          <button class="btn btn-secondary hidden-field" id="logoutBtn" type="button">Admin logout</button>
         </div>
         <div id="notice" class="notice"></div>
       </div>
