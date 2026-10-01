@@ -1,0 +1,32 @@
+# Dependencies and local package-manager caches
+node_modules/
+.pnpm-store/
+.npm/
+
+# Private local environment files; the blank template is safe to track
+.env
+.env.*
+!.env.example
+
+# Runtime reservation/customer data (including local backups)
+/data/
+/data-*/
+/backups/
+
+# Logs, test/build output, and temporary/editor files
+*.log
+logs/
+*.tmp
+*.temp
+*.bak
+*.swp
+*~
+coverage/
+.nyc_output/
+playwright-report/
+test-results/
+dist/
+build/
+.DS_Store
+Thumbs.db
+Desktop.ini

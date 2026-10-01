@@ -27,12 +27,14 @@ Create:
 
 ## 2. Local setup
 
-Install Node.js 20 or newer.
+Install Node.js 20 or newer and pnpm 11.25.0.
+
+Use the committed `pnpm-lock.yaml` for reproducible installs; keep secrets in an ignored `.env` file and reservation data in the ignored `data/` directory.
 
 Then:
 
 ```bash
-npm install
+pnpm install --frozen-lockfile
 cp .env.example .env
 ```
 
@@ -41,7 +43,7 @@ Edit `.env` and add your real keys.
 Start the site:
 
 ```bash
-npm start
+pnpm start
 ```
 
 Open:
