@@ -11,6 +11,102 @@ const pricing = require("./pricing");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Diagnostic fields come from closed allowlists, never exception/request payloads.
+const diagnosticOperations=new Set(['request','quote','checkout','address','webhook','reservation','admin']);
+const diagnosticCategories=new Set(['request_rejected','validation_error','unexpected_error','provider_error','storage_unavailable','invalid_signature','configuration_unavailable','response_interrupted']);
+const diagnosticProviders=new Set(['google','stripe','postgresql']);
+function requestOperation(req) {
+  const route=req.route?.path;
+  if(route==='/api/quote')return 'quote';
+  if(route==='/api/checkout')return 'checkout';
+  if(route==='/api/address-suggestions')return 'address';
+  if(route==='/api/stripe-webhook')return 'webhook';
+  if(route==='/api/booking/:id')return 'reservation';
+  if(typeof route==='string' && (route.startsWith('/api/admin/') || route.startsWith('/api/bookings')))return 'admin';
+  return 'request';
+}
+function logDiagnostic(req,status,category='request_rejected',provider) {
+  if(req.diagnosticLogged)return;
+  req.diagnosticLogged=true;
+  const entry={timestamp:new Date().toISOString(),referenceId:req.referenceId,
+    operation:requestOperation(req),category:diagnosticCategories.has(category)?category:'unexpected_error',
+    status:Number.isInteger(status)&&status>=400&&status<=599?status:500};
+  if(!diagnosticOperations.has(entry.operation))entry.operation='request';
+  if(diagnosticProviders.has(provider))entry.provider=provider;
+  console.error(JSON.stringify(entry));
+}
+app.use((req,res,next)=>{
+  req.referenceId=crypto.randomUUID();
+  res.set('X-Request-ID',req.referenceId);
+  const json=res.json;
+  res.json=function(body) {
+    if(res.statusCode>=400 && body && typeof body==='object' && typeof body.error==='string') {
+      body={...body,referenceId:req.referenceId};
+      logDiagnostic(req,res.statusCode,req.diagnosticCategory,req.diagnosticProvider);
+    }
+    return json.call(this,body);
+  };
+  next();
+});
+
+// Explicit customer-safe message allowlist. HTTP status alone never grants trust.
+const customerErrorMessages=new Map();
+for(const message of [
+  'Unknown vehicle type.','A valid vehicle is required.','A valid trip type is required.',
+  'Pickup must be scheduled in the future (New York time).','Return must be later than pickup (New York time).',
+  'Passenger count must be a whole number.','Passenger count must be between 1 and 6.',
+  'Choose a valid hourly duration (3-hour minimum).','Invalid email address.','Invalid phone number.','Invalid flight number.',
+  'Promo code is invalid or inactive.','FIRST15 is only available for your first ride.',
+  'This special offer is not available.','Unknown special offer.',
+  'The EWR special is only available for a single One Way or Airport journey.',
+  'The $150 EWR → Manhattan special is for Black SUV only.',
+  'We could not verify the pickup or destination for this special.',
+  'The $150 special requires pickup at Newark Liberty International Airport (EWR).',
+  'The $150 EWR Airport Special is available only for trips to Manhattan. Please use Get Quote for this destination.',
+  'The EWR → Manhattan special cannot be used for hourly bookings.','No drivable route was found.','Invalid status.',
+  'Too many requests. Please try again later.'
+])customerErrorMessages.set(message,{message,status:400});
+for(const key of ['pickup','dropoff','date','time','returnDate','returnTime','firstName','lastName','email','phone','flightNumber','notes','promoCode','offerCode']) {
+  for(const message of [`A valid ${key} is required.`,`Invalid ${key}.`])customerErrorMessages.set(message,{message,status:400});
+}
+for(const label of ['pickup','return'])for(const ending of ['date or time.','date or time in New York.']) {
+  const message=`Invalid ${label} ${ending}`;customerErrorMessages.set(message,{message,status:400});
+}
+for(const message of ['This reservation has already been paid.','Checkout is already processing for this reservation.',
+ 'Checkout is already processing. Please try again.','A first-ride Checkout is already pending. Please complete or retry that booking.',
+ 'A first-ride Checkout is already pending.'])customerErrorMessages.set(message,{message,status:409});
+customerErrorMessages.set('Too many requests. Please try again later.',{message:'Too many requests. Please try again later.',status:429});
+function sendSafeError(req,res,error,fallbackStatus=500) {
+  if(res.headersSent) {
+    logDiagnostic(req,500,'response_interrupted');
+    res.destroy();
+    return;
+  }
+  const trusted=customerErrorMessages.get(error?.message);
+  const storage=error?.storageFailure===true;
+  const parser=['entity.parse.failed','entity.too.large','encoding.unsupported','request.aborted','request.size.invalid'].includes(error?.type);
+  const status=storage?503:trusted?trusted.status:parser?(error.type==='entity.too.large'?413:error.type==='encoding.unsupported'?415:400):
+    [400,403,409,413,415,422,500,502,503].includes(error?.status)?error.status:fallbackStatus;
+  let message=trusted?.message;
+  let category=trusted?'validation_error':'unexpected_error',provider;
+  if(storage){message='Reservation service temporarily unavailable. Please try again.';category='storage_unavailable';provider='postgresql';}
+  else if(parser){message='Invalid request.';category='request_rejected';}
+  else if(['Address and route lookup is temporarily unavailable. Please try again.','Route estimate is temporarily unavailable. Please try again.'].includes(error?.message)) {
+    message='Address and route lookup is temporarily unavailable. Please try again.';category='provider_error';provider='google';
+  }
+  else if(error?.message==='Stripe is not configured. Add STRIPE_SECRET_KEY before accepting payments.') {
+    message='Checkout is temporarily unavailable. Please try again.';category='configuration_unavailable';provider='stripe';
+  }
+  else if(error?.message==='Checkout is temporarily unavailable. Please try again.') {
+    message='Checkout is temporarily unavailable. Please try again.';category='provider_error';provider='stripe';
+  }
+  if(!message)message=requestOperation(req)==='quote'?'Quote is temporarily unavailable. Please try again.':
+    requestOperation(req)==='checkout'?'Checkout is temporarily unavailable. Please try again.':'Service temporarily unavailable. Please try again.';
+  req.diagnosticCategory=category;req.diagnosticProvider=provider;
+  return res.status(status).json({error:trusted?message:`${message} Reference: ${req.referenceId}`});
+}
+
+
 // Trust only known proxy networks, never arbitrary forwarded headers or hop counts.
 // Render routes ingress through Cloudflare and private load balancers.
 // Override with the actual proxy CIDRs if the deployment topology changes.
@@ -153,15 +249,15 @@ const SITE_URL =
 // PostgreSQL is the only runtime reservation store, including development.
 let reservationStore;
 try { reservationStore = createStore(process.env); }
-catch (_) { console.error("Reservation storage configuration unavailable."); process.exitCode = 1; throw new StorageError(); }
-const storageReady = reservationStore.migrate();
+catch (_) { console.error("Reservation storage configuration unavailable."); process.exitCode = 1; }
+const storageReady = reservationStore ? reservationStore.migrate() : Promise.reject(new StorageError());
 // Attach immediately so an unavailable database never creates an unhandled rejection.
 storageReady.catch(() => { console.error("Reservation storage initialization unavailable."); });
 const readBookings = () => reservationStore.list();
 const route = handler => async (req, res, next) => {
   try { await storageReady; await handler(req,res,next); }
   catch (error) {
-    if(error.storageFailure) return res.status(503).json({error:"Reservation service temporarily unavailable. Please try again."});
+    if(error.storageFailure) return sendSafeError(req,res,error,503);
     next(error);
   }
 };
@@ -1395,11 +1491,8 @@ app.post(
       !process.env
         .STRIPE_WEBHOOK_SECRET
     ) {
-      return res
-        .status(503)
-        .send(
-          "Stripe webhook is not configured."
-        );
+      req.diagnosticCategory='configuration_unavailable';req.diagnosticProvider='stripe';
+      return res.status(503).json({error:`Service temporarily unavailable. Please try again. Reference: ${req.referenceId}`});
     }
 
     let event;
@@ -1420,11 +1513,8 @@ app.post(
           );
 
     } catch (error) {
-      return res
-        .status(400)
-        .send(
-          `Webhook error: ${error.message}`
-        );
+      req.diagnosticCategory='invalid_signature';req.diagnosticProvider='stripe';
+      return res.status(400).json({error:`Webhook request rejected. Reference: ${req.referenceId}`});
     }
 
 
@@ -1437,7 +1527,7 @@ app.post(
     if (checkoutEvents.includes(event.type)) {
       const session = event.data?.object;
       const bookingId = session?.metadata?.bookingId;
-      if (typeof bookingId !== "string") return res.status(400).json({error:"Checkout session does not match a reservation."});
+      if (typeof bookingId !== "string") return res.status(400).json({error:`Webhook request rejected. Reference: ${req.referenceId}`});
       const changed = await reservationStore.update(bookingId, async booking => {
 
       if (!booking || !booking.stripeSessionId || booking.stripeSessionId !== session?.id) {
@@ -1474,7 +1564,7 @@ app.post(
         }
       }
       });
-      if (!changed) return res.status(400).json({error:"Checkout session does not match a reservation."});
+      if (!changed) return res.status(400).json({error:`Webhook request rejected. Reference: ${req.referenceId}`});
     }
 
     res.json({
@@ -1627,7 +1717,7 @@ app.get(
           .status(503)
           .json({
             error:
-              "Address and route lookup is temporarily unavailable. Please try again.",
+              `Address and route lookup is temporarily unavailable. Please try again. Reference: ${req.referenceId}`,
 
             suggestions: []
           });
@@ -1695,12 +1785,13 @@ app.get(
 
     } catch (error) {
       // Do not log Google error payloads or credentials.
+      req.diagnosticCategory='provider_error';req.diagnosticProvider='google';
 
       return res
         .status(502)
         .json({
           error:
-            "Address search is temporarily unavailable.",
+            `Address search is temporarily unavailable. Reference: ${req.referenceId}`,
 
           suggestions: []
         });
@@ -1726,12 +1817,7 @@ app.post(
       res.json(quote);
 
     } catch (error) {
-      res
-        .status(error.storageFailure ? 503 : 400)
-        .json({
-          error:
-            error.storageFailure ? "Reservation service temporarily unavailable. Please try again." : error.message
-        });
+      sendSafeError(req,res,error,400);
     }
   }
 );
@@ -2014,7 +2100,7 @@ app.post("/api/checkout", async (req, res) => {
     res.json({url: result.url, bookingId: result.bookingId});
   } catch (error) {
     if (error.status === 429) return tooManyRequests(res, 30 * 60);
-    res.status(error.status || 400).json({error: error.storageFailure ? "Reservation service temporarily unavailable. Please try again." : error.message});
+    sendSafeError(req,res,error,400);
   }
 });
 
@@ -2155,8 +2241,7 @@ app.get(
 ========================================= */
 
 app.use((error,req,res,next)=> {
-  if(res.headersSent)return next(error);
-  res.status(error.status || 500).json({error:error.storageFailure ? "Reservation service temporarily unavailable. Please try again." : error.status === 400 ? error.message : "Service temporarily unavailable. Please try again."});
+  sendSafeError(req,res,error);
 });
 
 storageReady.then(() => {
@@ -2166,9 +2251,9 @@ app.listen(
     // Initialization is explicit and PostgreSQL-only; no JSON fallback.
 
     console.log(
-      `ER Limousine Service running at ${SITE_URL}`
+      "ER Limousine Service started."
     );
   }
 );
 
-}).catch(async()=> { process.exitCode=1; try {await reservationStore.close();}catch(_){} });
+}).catch(async()=> { process.exitCode=1; try {await reservationStore?.close();}catch(_){} });

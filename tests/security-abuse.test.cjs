@@ -25,6 +25,7 @@ async function harness(t, env = {}, saved = "[]", injectedStore) {
   const testPricing = JSON.parse(JSON.stringify(pricing));
   const state = { creates: [], sessions: new Map(), googleCalls: 0, routes: [], timeout: false,
     googleError: false, fail: null, retrieveError: false, createDelay: 0, timeoutMs: null };
+  state.logs=[];
   const storageFailures = {};
   const {memoryStore} = require("./helpers/memory-storage.cjs");
   const testStore = injectedStore || memoryStore(JSON.parse(saved), undefined, storageFailures);
@@ -53,7 +54,7 @@ async function harness(t, env = {}, saved = "[]", injectedStore) {
   }
   const express = Object.assign(() => {
     app = realExpress();
-    app.listen = () => {};
+    app.listen = (port,callback) => {state.listenCalls=(state.listenCalls||0)+1;callback();};
     return app;
   }, realExpress);
   class TestDate extends Date {
@@ -61,7 +62,7 @@ async function harness(t, env = {}, saved = "[]", injectedStore) {
     static now() { return clock; }
   }
   const context = {
-    __dirname: root, console, URL, Buffer, Date: TestDate,
+    __dirname: root, console:{log:(...args)=>state.logs.push(args.join(' ')),error:(...args)=>state.logs.push(args.join(' '))}, URL, Buffer, Date: TestDate,
     process: {env: {GOOGLE_MAPS_API_KEY: "mock-google-key", STRIPE_SECRET_KEY: "mock",
       STRIPE_WEBHOOK_SECRET: "whsec_local_mock", ADMIN_TOKEN: "local-test-token", ...env}},
     setInterval: () => ({unref() {}}),
@@ -77,6 +78,7 @@ async function harness(t, env = {}, saved = "[]", injectedStore) {
       if (state.timeout) return new Promise((resolve, reject) =>
         options.signal.addEventListener("abort", () => reject(new Error("mock secret detail"))));
       return {ok: !state.googleError, json: async () => {
+        if(state.googleBody!==undefined)return state.googleBody;
         if (url.includes("computeRoutes")) {
           const route = JSON.parse(options.body);
           state.routes.push(route);
@@ -94,7 +96,7 @@ async function harness(t, env = {}, saved = "[]", injectedStore) {
       if (name === "express") return express;
       if (name === "stripe") return MockStripe;
       if (name === "./pricing") return testPricing;
-      if (name === "./storage/postgres") return {createStore: () => testStore, StorageError: require("../storage/postgres").StorageError};
+      if (name === "./storage/postgres") return {createStore: () => {if(injectedStore instanceof Error)throw injectedStore;return testStore;}, StorageError: require("../storage/postgres").StorageError};
       return require(name);
     }
   };
@@ -687,14 +689,16 @@ test("customer reservation requires a booking-specific token; IDs, wrong or malf
     {authorization: `Bearer ${token}`}]) {
     const result = await h.request(route, undefined, headers);
     assert.equal(result.status, 401);
-    assert.deepEqual(result.body, {error: "Reservation access unavailable."});
+    assert.equal(result.body.error, "Reservation access unavailable.");
+    assert.equal(result.body.referenceId, result.headers.get("x-request-id"));
     assert.equal(result.headers.get("cache-control"), "no-store");
     assert.equal(result.headers.get("referrer-policy"), "no-referrer");
   }
   assert.equal((await h.request(`${route}?token=${token}`)).status, 401);
   const unknown = await h.request("/api/booking/unknown", undefined, {cookie});
   assert.equal(unknown.status, 401);
-  assert.deepEqual(unknown.body, {error: "Reservation access unavailable."});
+  assert.equal(unknown.body.error, "Reservation access unavailable.");
+  assert.equal(unknown.body.referenceId, unknown.headers.get("x-request-id"));
   const other = await h.request("/api/checkout", {...booking, notes: "second reservation"});
   const otherCookie = other.headers.get("set-cookie").split(";")[0];
   const otherToken = otherCookie.slice(otherCookie.indexOf("=") + 1);
@@ -866,4 +870,127 @@ test("storage failures are generic 503 and never interpreted as first-ride eligi
     assert.match(checkout.body.error,/temporarily unavailable/);
     assert.equal(h.records().length,0);
   }
+});
+
+
+const referenceUuid=/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
+const leakMarker='SYNTHETIC_PRIVATE_SECRET_PII_PATH_STACK';
+function verifySafeFailure(h,response) {
+  assert.ok(response.status>=400);
+  assert.match(response.body.referenceId,referenceUuid);
+  assert.equal(response.body.referenceId,response.headers.get('x-request-id'));
+  assert.doesNotMatch(JSON.stringify(response.body),new RegExp(leakMarker+'|STRIPE_SECRET_KEY|DATABASE_URL|ADMIN_TOKEN|No signatures|Unexpected token|SyntaxError|TypeError|\\n.*at '));
+  const log=h.state.logs.map(line=>{try{return JSON.parse(line);}catch(_){return null;}}).find(item=>item?.referenceId===response.body.referenceId);
+  assert.ok(log);assert.equal(log.status,response.status);
+  assert.ok(Object.keys(log).every(key=>['timestamp','referenceId','operation','category','status','provider'].includes(key)));
+  assert.doesNotMatch(h.state.logs.join('\n'),new RegExp(leakMarker+'|STRIPE_SECRET_KEY|DATABASE_URL|ADMIN_TOKEN|mock-google-key|whsec_local_mock|local-test-token|test@example.test|2015550199|checkout.example.test|\\bat \\w+'));
+  return log;
+}
+
+test('Finding 11: unexpected quote/Checkout errors and forged statuses never expose exception details',async t=>{
+  for(const route of ['/api/quote','/api/checkout'])for(const status of [undefined,400,503]) {
+    const h=await harness(t);h.context.privateMarker=leakMarker;h.context.forgedStatus=status;
+    vm.runInContext('calculateQuote=async()=>{throw Object.assign(new Error(privateMarker),{status:forgedStatus});}',h.context);
+    const response=await h.request(route,booking,{'x-request-id':leakMarker});
+    const log=verifySafeFailure(h,response);assert.equal(log.category,'unexpected_error');
+    assert.notEqual(response.body.referenceId,leakMarker);assert.match(response.body.error,/Reference:/);
+    assert.equal(h.state.creates.length,0);
+  }
+});
+
+test('Finding 11: malformed JSON and oversized bodies never echo parser/request details',async t=>{
+  const h=await harness(t);
+  for(const body of ['{"'+leakMarker+'":BAD_JSON}',JSON.stringify({notes:leakMarker+'x'.repeat(60000)})]) {
+    const response=await h.request('/api/quote',body);
+    assert.ok([400,413].includes(response.status));verifySafeFailure(h,response);
+    assert.match(response.body.error,/Invalid request/);
+  }
+});
+
+test('Finding 11: invalid/missing webhook signatures and missing configuration are generic',async t=>{
+  const h=await harness(t);
+  verifySafeFailure(h,await h.webhook({marker:leakMarker},undefined,true));
+  verifySafeFailure(h,await h.request('/api/stripe-webhook',{marker:leakMarker}));
+  const missing=await harness(t,{STRIPE_WEBHOOK_SECRET:''});
+  const rejected=await missing.request('/api/stripe-webhook',{});assert.equal(rejected.status,503);verifySafeFailure(missing,rejected);
+  const noStripe=await harness(t,{STRIPE_SECRET_KEY:''});
+  const checkout=await noStripe.request('/api/checkout',booking);assert.equal(checkout.status,503);
+  assert.equal(verifySafeFailure(noStripe,checkout).category,'configuration_unavailable');
+});
+
+test('Finding 11: Google errors/malformed responses and Stripe failures remain safe and correlated',async t=>{
+  for(const path of ['/api/address-suggestions?q=mock','/api/quote']) {
+    const h=await harness(t);h.state.onGoogle=()=>{throw new Error(leakMarker);};
+    verifySafeFailure(h,await h.request(path,path.startsWith('/api/quote')?booking:undefined));
+    h.state.onGoogle=null;h.state.googleBody=null;
+    verifySafeFailure(h,await h.request(path,path.startsWith('/api/quote')?booking:undefined));
+  }
+  const h=await harness(t);h.state.fail=new Error(leakMarker);
+  assert.equal(verifySafeFailure(h,await h.request('/api/checkout',booking)).provider,'stripe');
+});
+
+test('Finding 11: pricing/configuration invariants are hidden but trusted booking messages remain useful',async t=>{
+  for(const expression of ['pricing.vehicleRates.escalade=null','pricing.promotions.FIRST15.percentOff=0']) {
+    const h=await harness(t);vm.runInContext(expression,h.context);
+    const response=await h.request('/api/quote',{...booking,promoCode:'FIRST15'});verifySafeFailure(h,response);
+    assert.doesNotMatch(response.body.error,/configured|Calculated|Round Trip|pricing/i);
+  }
+  const invariant=await harness(t);
+  const body={...booking,tripType:'roundtrip',returnDate:'2026-11-11',returnTime:'14:00'};
+  invariant.context.corruptedQuote=(await invariant.request('/api/quote',body)).body;
+  vm.runInContext('corruptedQuote.roundTrip.subtotal=1;calculateQuote=async()=>corruptedQuote;',invariant.context);
+  const rejected=await invariant.request('/api/checkout',body);verifySafeFailure(invariant,rejected);
+  assert.doesNotMatch(rejected.body.error,/Round Trip|subtotal|invariant/);
+  const h=await harness(t);
+  for(const [body,pattern] of [[{...booking,tripType:'invalid'},/valid trip type/],[{...booking,passengers:7},/between 1 and 6/],
+    [{...booking,vehicle:'suv',offerCode:'EWR_MANHATTAN_SUV',tripType:'roundtrip'},/returnDate/]]) {
+    const response=await h.request('/api/quote',body);verifySafeFailure(h,response);assert.match(response.body.error,pattern);
+  }
+});
+
+test('Finding 11: storage errors and reference IDs cannot bypass reservation or admin authentication',async t=>{
+  const h=await harness(t);h.storageFailures.read=true;
+  const failed=await h.request('/api/quote',{...booking,promoCode:'FIRST15'});
+  assert.equal(failed.status,503);assert.equal(verifySafeFailure(h,failed).provider,'postgresql');
+  h.storageFailures.read=false;
+  const result=await h.request('/api/checkout',booking);
+  const referenceId=result.headers.get('x-request-id');assert.match(referenceId,referenceUuid);
+  const denied=await h.request('/api/booking/'+result.body.bookingId,undefined,{'x-request-id':referenceId,authorization:'Bearer '+referenceId});
+  assert.equal(denied.status,401);verifySafeFailure(h,denied);
+  assert.notEqual(denied.body.referenceId,referenceId);
+  assert.equal((await h.request('/api/bookings',undefined,{authorization:'Bearer '+referenceId})).status,401);
+});
+
+test('Finding 11: headers-sent errors destroy the response without forwarding raw exceptions',async t=>{
+  const h=await harness(t),handler=h.app._router.stack.at(-1).handle;
+  let destroyed=false,nextCalled=false;
+  const req={referenceId:crypto.randomUUID(),route:{path:'/api/quote'}};
+  const res={headersSent:true,destroy:()=>{destroyed=true;},status:()=>{throw new Error('second response');}};
+  handler(Object.assign(new Error(leakMarker),{status:400}),req,res,()=>{nextCalled=true;});
+  assert.equal(destroyed,true);assert.equal(nextCalled,false);
+  const log=JSON.parse(h.state.logs.at(-1));assert.equal(log.referenceId,req.referenceId);assert.equal(log.category,'response_interrupted');
+  assert.doesNotMatch(h.state.logs.join('\n'),new RegExp(leakMarker));
+  assert.equal((await h.request('/api/quote',booking)).status,200);
+});
+
+test('Finding 11: startup logging is fixed and storage startup failures fail closed without raw stacks',async t=>{
+  const h=await harness(t,{SITE_URL:'https://'+leakMarker+'@synthetic.example.test'});
+  assert.equal(h.state.listenCalls,1);assert.ok(h.state.logs.includes('ER Limousine Service started.'));
+  assert.doesNotMatch(h.state.logs.join('\n'),new RegExp(leakMarker));
+  const missing=await harness(t,{},'[]',new Error(leakMarker));
+  assert.equal(missing.context.process.exitCode,1);assert.equal(missing.state.listenCalls,undefined);
+  assert.doesNotMatch(missing.state.logs.join('\n'),new RegExp(leakMarker+'|\\n.*at '));
+  const failedStore={migrate:async()=>{throw new Error(leakMarker);},close:async()=>{}};
+  const unavailable=await harness(t,{},'[]',failedStore);
+  assert.equal(unavailable.context.process.exitCode,1);assert.equal(unavailable.state.listenCalls,undefined);
+  assert.doesNotMatch(unavailable.state.logs.join('\n'),new RegExp(leakMarker+'|\\n.*at '));
+});
+
+test('Finding 11: PostgreSQL errors with forged HTTP status stay private at the API boundary',async t=>{
+  const {createStore}=require('../storage/postgres');
+  const client={query:async()=>({rows:[],rowCount:0}),release:()=>{}};
+  const storage=createStore({}, {connect:async()=>client,query:async()=>{throw Object.assign(new Error(leakMarker),{status:400});}});
+  const h=await harness(t,{},'[]',storage);
+  verifySafeFailure(h,await h.request('/api/quote',booking));
+  verifySafeFailure(h,await h.request('/api/booking/11111111-1111-4111-8111-111111111111'));
 });
