@@ -2,7 +2,7 @@ require("dotenv").config();
 
 const express = require("express");
 const Stripe = require("stripe");
-const fs = require("fs");
+const {createStore, StorageError} = require("./storage/postgres");
 const path = require("path");
 const crypto = require("crypto");
 const { isIP } = require("net");
@@ -150,11 +150,21 @@ const SITE_URL =
   process.env.SITE_URL ||
   `http://localhost:${PORT}`;
 
-const DATA_FILE = path.join(
-  __dirname,
-  "data",
-  "bookings.json"
-);
+// PostgreSQL is the only runtime reservation store, including development.
+let reservationStore;
+try { reservationStore = createStore(process.env); }
+catch (_) { console.error("Reservation storage configuration unavailable."); process.exitCode = 1; throw new StorageError(); }
+const storageReady = reservationStore.migrate();
+// Attach immediately so an unavailable database never creates an unhandled rejection.
+storageReady.catch(() => { console.error("Reservation storage initialization unavailable."); });
+const readBookings = () => reservationStore.list();
+const route = handler => async (req, res, next) => {
+  try { await storageReady; await handler(req,res,next); }
+  catch (error) {
+    if(error.storageFailure) return res.status(503).json({error:"Reservation service temporarily unavailable. Please try again."});
+    next(error);
+  }
+};
 
 const stripe = process.env.STRIPE_SECRET_KEY
   ? new Stripe(process.env.STRIPE_SECRET_KEY)
@@ -164,41 +174,6 @@ const stripe = process.env.STRIPE_SECRET_KEY
 /* =========================================
    BOOKING DATA
 ========================================= */
-
-function ensureDataFile() {
-  const dir = path.dirname(DATA_FILE);
-
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-
-  if (!fs.existsSync(DATA_FILE)) {
-    fs.writeFileSync(DATA_FILE, "[]", "utf8");
-  }
-}
-
-function readBookings() {
-  ensureDataFile();
-
-  try {
-    return JSON.parse(
-      fs.readFileSync(DATA_FILE, "utf8")
-    );
-  } catch (_) {
-    return [];
-  }
-}
-
-function writeBookings(bookings) {
-  ensureDataFile();
-
-  fs.writeFileSync(
-    DATA_FILE,
-    JSON.stringify(bookings, null, 2),
-    "utf8"
-  );
-}
-
 
 /* =========================================
    HELPERS
@@ -235,7 +210,7 @@ function normalizePhone(value) {
    FIRST-RIDE CHECK
 ========================================= */
 
-function hasPreviousPaidRide(email, phone) {
+async function hasPreviousPaidRide(email, phone) {
   const customerEmail =
     normalizeEmail(email);
 
@@ -246,29 +221,7 @@ function hasPreviousPaidRide(email, phone) {
     return false;
   }
 
-  return readBookings().some((booking) => {
-    if (booking.paymentStatus !== "paid") {
-      return false;
-    }
-
-    const oldEmail =
-      normalizeEmail(booking.customer?.email);
-
-    const oldPhone =
-      normalizePhone(booking.customer?.phone);
-
-    const sameEmail =
-      customerEmail &&
-      oldEmail &&
-      customerEmail === oldEmail;
-
-    const samePhone =
-      customerPhone &&
-      oldPhone &&
-      customerPhone === oldPhone;
-
-    return Boolean(sameEmail || samePhone);
-  });
+  return reservationStore.hasPaidRide(customerEmail, customerPhone);
 }
 
 
@@ -276,7 +229,7 @@ function hasPreviousPaidRide(email, phone) {
    PROMOTION
 ========================================= */
 
-function getPromotion(body) {
+async function getPromotion(body) {
   const code =
     normalizePromoCode(body.promoCode);
 
@@ -299,7 +252,7 @@ function getPromotion(body) {
 
   if (
     promotion.firstRideOnly &&
-    hasPreviousPaidRide(
+    await hasPreviousPaidRide(
       body.email,
       body.phone
     )
@@ -996,7 +949,7 @@ function roundTripLeg(body, rate, route, isReturn) {
     miles: route.miles, minutes: route.minutes, fare: calculated.fare, surcharges: calculated.surcharges};
 }
 
-function validateCheckoutQuote(body, quote) {
+async function validateCheckoutQuote(body, quote) {
   validateCalculatedFare(body.vehicle, quote.total);
   if (quote.vehicleKey !== body.vehicle || !Number.isSafeInteger(Math.round(quote.total * 100)) ||
       Math.round(quote.total * 100) <= 0) throw new Error("Calculated Checkout amount is invalid.");
@@ -1016,7 +969,7 @@ function validateCheckoutQuote(body, quote) {
   const combined = money(detail.outbound.fare + detail.return.fare);
   validateCalculatedFare(body.vehicle, combined);
   if (detail.subtotal !== combined || quote.baseTotal !== combined) throw new Error("Invalid Round Trip total.");
-  const promotion = getPromotion(body);
+  const promotion = await getPromotion(body);
   if ((quote.promotion?.code || null) !== (promotion?.code || null) ||
       (quote.promotion?.percentOff || 0) !== (promotion?.percentOff || 0)) {
     throw new Error("Invalid Round Trip promotion.");
@@ -1029,6 +982,8 @@ function validateCheckoutQuote(body, quote) {
 
 async function calculateQuote(body) {
   validateBookingInput(body);
+  await storageReady;
+  await readBookings();
 
   const rate =
     getConfiguredVehicleRate(body.vehicle);
@@ -1123,7 +1078,7 @@ async function calculateQuote(body) {
   */
 
   const promotion =
-    getPromotion(body);
+    await getPromotion(body);
 
   const {discount, discountedFare, gratuity, originalTotal, total} = calculateFareTotals(fare, promotion);
 
@@ -1374,16 +1329,13 @@ function validCustomerAccessData(booking) {
     Number.isFinite(access.expiresAt) && access.expiresAt > Date.now();
 }
 
-function checkoutCustomerResult(url, id) {
-  const bookings = readBookings();
-  const booking = bookings.find(item => item.id === id);
-  // Never silently authorize legacy records lacking the new access metadata.
-  if (!validCustomerAccessData(booking)) return {url, bookingId: id};
-  const token = crypto.randomBytes(32).toString("base64url");
-  booking.customerAccess.tokenHash = checkoutHash(token);
-  writeBookings(bookings);
-  // Internal result only; the raw token goes into an HttpOnly cookie, never JSON.
-  return {url, bookingId: id, customerAccess: {token, expiresAt: booking.customerAccess.expiresAt}};
+async function checkoutCustomerResult(url, id) {
+  return reservationStore.update(id, booking => {
+    if (!validCustomerAccessData(booking)) return {url, bookingId:id};
+    const token=crypto.randomBytes(32).toString("base64url");
+    booking.customerAccess.tokenHash=checkoutHash(token);
+    return {url,bookingId:id,customerAccess:{token,expiresAt:booking.customerAccess.expiresAt}};
+  });
 }
 
 function hasCustomerAccess(req, booking) {
@@ -1437,7 +1389,7 @@ app.post(
       "application/json"
   }),
 
-  async (req, res) => {
+  route(async (req, res) => {
     if (
       !stripe ||
       !process.env
@@ -1485,13 +1437,11 @@ app.post(
     if (checkoutEvents.includes(event.type)) {
       const session = event.data?.object;
       const bookingId = session?.metadata?.bookingId;
-      const bookings = readBookings();
-      const booking = typeof bookingId === "string"
-        ? bookings.find(item => item.id === bookingId)
-        : null;
+      if (typeof bookingId !== "string") return res.status(400).json({error:"Checkout session does not match a reservation."});
+      const changed = await reservationStore.update(bookingId, async booking => {
 
       if (!booking || !booking.stripeSessionId || booking.stripeSessionId !== session?.id) {
-        return res.status(400).json({error: "Checkout session does not match a reservation."});
+        throw Object.assign(new Error("Checkout session does not match a reservation."),{status:400});
       }
 
       const expectedTotal = booking.quote?.total;
@@ -1505,7 +1455,7 @@ app.post(
         typeof expectedCurrency !== "string" || typeof session.currency !== "string" ||
         session.currency.toLowerCase() !== expectedCurrency.toLowerCase()
       ) {
-        return res.status(400).json({error: "Checkout payment does not match the reservation fare."});
+        throw Object.assign(new Error("Checkout payment does not match the reservation fare."),{status:400});
       }
 
       // A completed Checkout session may still be awaiting payment.
@@ -1515,22 +1465,22 @@ app.post(
           booking.paymentStatus = "paid";
           if (booking.status === "awaiting_payment") booking.status = "confirmed";
           booking.paidAt = new Date().toISOString();
-          writeBookings(bookings);
         } else if (
           event.type === "checkout.session.async_payment_failed" &&
           session.payment_status === "unpaid" && booking.paymentStatus !== "failed"
         ) {
           booking.paymentStatus = "failed";
           booking.paymentFailedAt = new Date().toISOString();
-          writeBookings(bookings);
         }
       }
+      });
+      if (!changed) return res.status(400).json({error:"Checkout session does not match a reservation."});
     }
 
     res.json({
       received: true
     });
-  }
+  })
 );
 
 
@@ -1777,10 +1727,10 @@ app.post(
 
     } catch (error) {
       res
-        .status(400)
+        .status(error.storageFailure ? 503 : 400)
         .json({
           error:
-            error.message
+            error.storageFailure ? "Reservation service temporarily unavailable. Please try again." : error.message
         });
     }
   }
@@ -1822,17 +1772,11 @@ function enforceBookingBudget(bookings, body, ip) {
   }
 }
 
-function saveCheckoutBooking(booking) {
-  // Re-read after async work to preserve other reservations/webhook updates.
-  const bookings = readBookings();
-  const stored = bookings.find(item => item.id === booking.id);
-  if (!stored) throw new Error("Checkout is temporarily unavailable. Please try again.");
-  Object.assign(stored, {
-    quote: booking.quote,
-    stripeSessionId: booking.stripeSessionId,
-    checkoutAttempt: booking.checkoutAttempt
+async function saveCheckoutBooking(booking) {
+  const result=await reservationStore.update(booking.id, stored => {
+    Object.assign(stored,{quote:booking.quote,stripeSessionId:booking.stripeSessionId,checkoutAttempt:booking.checkoutAttempt});
   });
-  writeBookings(bookings);
+  if(!result)throw new StorageError();
 }
 
 async function createCheckout(body, ip, fingerprint) {
@@ -1856,7 +1800,7 @@ async function createCheckout(body, ip, fingerprint) {
 
   // Independently validate the final server quote before storing a booking
   // or creating a Stripe session, even if quote calculation changes later.
-  validateCheckoutQuote(body, quote);
+  await validateCheckoutQuote(body, quote);
   if (quote.vehicleKey !== body.vehicle) {
     throw new Error("Calculated fare does not match the selected vehicle.");
   }
@@ -1867,14 +1811,15 @@ async function createCheckout(body, ip, fingerprint) {
 
   // Google work may have taken long enough for a near-term pickup to pass.
   validateBookingInput(body);
-  let booking = readBookings().find(item =>
+  let booking = (await readBookings()).find(item =>
     item.checkoutFingerprint === fingerprint && item.status !== "cancelled" &&
-    Date.now() - Date.parse(item.createdAt) < 24 * 60 * MINUTE);
+    (Date.now() - Date.parse(item.createdAt) < 24 * 60 * MINUTE ||
+      item.checkoutAttempt?.quote.promotion?.code==='FIRST15'));
   if (booking?.paymentStatus === "paid") {
     throw Object.assign(new Error("This reservation has already been paid."), {status: 409});
   }
   if (booking?.stripeSessionId) {
-    validateCheckoutQuote(body, booking.quote);
+    await validateCheckoutQuote(body, booking.quote);
     let existing;
     try {
       existing = await stripe.checkout.sessions.retrieve(booking.stripeSessionId);
@@ -1887,22 +1832,22 @@ async function createCheckout(body, ip, fingerprint) {
     if (existing.status !== "expired") {
       throw Object.assign(new Error("Checkout is already processing for this reservation."), {status: 409});
     }
+    if(booking.quote.promotion?.code==='FIRST15' && existing.payment_status!=='unpaid')throw Object.assign(new Error("Checkout is already processing for this reservation."),{status:409});
     booking.stripeSessionId = null;
     booking.checkoutAttempt = null;
   }
   if (!booking) {
-    const bookings = readBookings();
-    enforceBookingBudget(bookings, body, ip);
     booking = createBookingRecord(body, quote);
     booking.customerAccess = newCustomerAccess(body);
     booking.checkoutFingerprint = fingerprint;
     booking.checkoutClientHash = checkoutHash(ip);
-    bookings.unshift(booking);
-    writeBookings(bookings);
+    await reservationStore.createWithBudget(booking, bookings => enforceBookingBudget(bookings, body, ip));
   }
+  const resumingFirstRideAttempt=!!booking.checkoutAttempt;
   // Persist the attempt before contacting Stripe. Network failures retry the same
   // key/reservation, including after a process restart, rather than double-create.
-  if (!booking.checkoutAttempt || booking.checkoutAttempt.expiresAt <= Math.floor(Date.now() / 1000)) {
+  if (!booking.checkoutAttempt || (booking.checkoutAttempt.expiresAt <= Math.floor(Date.now() / 1000) &&
+      booking.checkoutAttempt.quote.promotion?.code !== 'FIRST15')) {
     booking.checkoutAttempt = {
       key: crypto.randomUUID(),
       // Retain Stripe's normal 24-hour Checkout window.
@@ -1912,13 +1857,24 @@ async function createCheckout(body, ip, fingerprint) {
   }
   // Retry with identical server quote and parameters used for this attempt.
   quote = booking.checkoutAttempt.quote;
-  validateCheckoutQuote(body, quote);
+  await validateCheckoutQuote(body, quote);
   if (quote.vehicleKey !== body.vehicle || !Number.isSafeInteger(Math.round(quote.total * 100)) ||
       Math.round(quote.total * 100) <= 0) {
     throw new Error("Calculated Checkout amount is invalid.");
   }
   booking.quote = quote;
-  saveCheckoutBooking(booking);
+  await saveCheckoutBooking(booking);
+  if(quote.promotion?.code==='FIRST15') {
+    // Release only an exact Stripe-confirmed expired, unpaid session, never a local timeout.
+    for(const pending of await reservationStore.firstRideConflicts(booking)) {
+      if(!pending.stripeSessionId)continue;
+      let previous;
+      try {previous=await stripe.checkout.sessions.retrieve(pending.stripeSessionId);}
+      catch(_) {throw Object.assign(new Error("Checkout is temporarily unavailable. Please try again."),{status:503});}
+      if(previous?.id===pending.stripeSessionId && previous.status==='expired' && previous.payment_status==='unpaid')await reservationStore.releaseExpiredFirstRide(pending.id,pending.stripeSessionId);
+    }
+    await reservationStore.claimFirstRide(booking);
+  }
 
   let description =
     `${booking.trip.pickup} → ${booking.trip.dropoff} | ${booking.trip.date} ${booking.trip.time}`;
@@ -1933,7 +1889,15 @@ async function createCheckout(body, ip, fingerprint) {
 
 
   // Recheck after asynchronous Google/Stripe lookups before payment creation.
-  validateBookingInput(body);
+  try {validateBookingInput(body);} catch(error) {
+    // No Stripe call has been made in this action. Clear only a newly prepared,
+    // unclaimed attempt; a previous ambiguous attempt must remain reconcilable.
+    if(quote.promotion?.code==='FIRST15' && !booking.stripeSessionId && !resumingFirstRideAttempt) {
+      booking.checkoutAttempt=null;
+      await saveCheckoutBooking(booking);
+    }
+    throw error;
+  }
   let session;
   try {
     session = await stripe
@@ -2004,7 +1968,7 @@ async function createCheckout(body, ip, fingerprint) {
     // their idempotency key for a safe retry.
     if (["StripeInvalidRequestError", "StripeCardError"].includes(error.type)) {
       booking.checkoutAttempt = null;
-      saveCheckoutBooking(booking);
+      await saveCheckoutBooking(booking);
     }
     throw Object.assign(new Error("Checkout is temporarily unavailable. Please try again."), {status: 503});
   }
@@ -2012,7 +1976,7 @@ async function createCheckout(body, ip, fingerprint) {
   booking.stripeSessionId =
     session.id;
 
-  saveCheckoutBooking(booking);
+  await saveCheckoutBooking(booking);
 
   return checkoutCustomerResult(session.url, booking.id);
 }
@@ -2035,7 +1999,7 @@ app.post("/api/checkout", async (req, res) => {
     let action = checkoutActions.get(fingerprint);
     if (!action) {
       if (checkoutActions.size >= 1000) return tooManyRequests(res);
-      action = createCheckout(req.body, clientKey(req), fingerprint);
+      action = storageReady.then(() => reservationStore.withActionLock(fingerprint, () => createCheckout(req.body, clientKey(req), fingerprint)));
       checkoutActions.set(fingerprint, action);
       // All overlapping requests for the same action share one result.
       action.finally(() => checkoutActions.delete(fingerprint)).catch(() => {});
@@ -2050,7 +2014,7 @@ app.post("/api/checkout", async (req, res) => {
     res.json({url: result.url, bookingId: result.bookingId});
   } catch (error) {
     if (error.status === 429) return tooManyRequests(res, 30 * 60);
-    res.status(error.status || 400).json({error: error.message});
+    res.status(error.status || 400).json({error: error.storageFailure ? "Reservation service temporarily unavailable. Please try again." : error.message});
   }
 });
 
@@ -2064,11 +2028,9 @@ app.get(
 
   requireAdmin,
 
-  (req, res) => {
-    res.json(
-      readBookings()
-    );
-  }
+  route(async (req, res) => {
+    res.json(await readBookings());
+  })
 );
 
 
@@ -2081,7 +2043,7 @@ app.patch(
 
   requireAdmin,
 
-  (req, res) => {
+  route(async (req, res) => {
     const allowedStatuses = [
       "awaiting_payment",
       "confirmed",
@@ -2092,37 +2054,14 @@ app.patch(
       "cancelled"
     ];
 
-    const bookings =
-      readBookings();
-
-    const booking =
-      bookings.find(
-        (item) =>
-          item.id ===
-          req.params.id
-      );
-
-    if (!booking) {
-      return res
-        .status(404)
-        .json({
-          error:
-            "Booking not found."
-        });
-    }
-
+    const booking = await reservationStore.update(req.params.id, async booking => {
     if (req.body.status) {
       if (
         !allowedStatuses.includes(
           req.body.status
         )
       ) {
-        return res
-          .status(400)
-          .json({
-            error:
-              "Invalid status."
-          });
+        throw Object.assign(new Error("Invalid status."),{status:400});
       }
 
       booking.status =
@@ -2169,14 +2108,13 @@ app.patch(
       new Date()
         .toISOString();
 
-    writeBookings(
-      bookings
-    );
+    });
+    if (!booking) return res.status(404).json({error:"Booking not found."});
 
     res.json(
       booking
     );
-  }
+  })
 );
 
 
@@ -2187,14 +2125,8 @@ app.patch(
 app.get(
   "/api/booking/:id",
 
-  (req, res) => {
-    const booking =
-      readBookings()
-        .find(
-          (item) =>
-            item.id ===
-            req.params.id
-        );
+  route(async (req, res) => {
+    const booking=await reservationStore.get(req.params.id);
 
     if (!hasCustomerAccess(req, booking)) {
       return res.status(401).json({error: "Reservation access unavailable."});
@@ -2214,7 +2146,7 @@ app.get(
         vehicle: booking.dispatch?.vehicle || "", plate: booking.dispatch?.plate || ""
       } : null
     });
-  }
+  })
 );
 
 
@@ -2222,13 +2154,21 @@ app.get(
    START SERVER
 ========================================= */
 
+app.use((error,req,res,next)=> {
+  if(res.headersSent)return next(error);
+  res.status(error.status || 500).json({error:error.storageFailure ? "Reservation service temporarily unavailable. Please try again." : error.status === 400 ? error.message : "Service temporarily unavailable. Please try again."});
+});
+
+storageReady.then(() => {
 app.listen(
   PORT,
   () => {
-    ensureDataFile();
+    // Initialization is explicit and PostgreSQL-only; no JSON fallback.
 
     console.log(
       `ER Limousine Service running at ${SITE_URL}`
     );
   }
 );
+
+}).catch(async()=> { process.exitCode=1; try {await reservationStore.close();}catch(_){} });

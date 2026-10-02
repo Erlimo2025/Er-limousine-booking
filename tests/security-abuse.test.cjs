@@ -18,13 +18,16 @@ const booking = {
   firstName: "Test", lastName: "Customer", email: "test@example.test", phone: "2015550199"
 };
 
-async function harness(t, env = {}, saved = "[]") {
+async function harness(t, env = {}, saved = "[]", injectedStore) {
   const production = env.NODE_ENV === "production" || env.RENDER === "true";
   if (production && env.TRUSTED_PROXY_CIDRS === undefined && env.RENDER !== "true") env = {...env, TRUSTED_PROXY_CIDRS: "loopback"};
   let app, data = saved, clock = Date.parse("2026-10-01T16:00:00Z");
   const testPricing = JSON.parse(JSON.stringify(pricing));
   const state = { creates: [], sessions: new Map(), googleCalls: 0, routes: [], timeout: false,
     googleError: false, fail: null, retrieveError: false, createDelay: 0, timeoutMs: null };
+  const storageFailures = {};
+  const {memoryStore} = require("./helpers/memory-storage.cjs");
+  const testStore = injectedStore || memoryStore(JSON.parse(saved), undefined, storageFailures);
   const signatureSdk = new Stripe("sk_test_not_a_real_key");
   class MockStripe {
     constructor() {
@@ -37,7 +40,7 @@ async function harness(t, env = {}, saved = "[]") {
           const previous = [...state.sessions.values()].find(item => item.key === options.idempotencyKey);
           if (previous) return previous;
           const session = {id: `cs_mock_${state.sessions.size}`, url: "https://checkout.example.test/mock",
-            status: "open", key: options.idempotencyKey};
+            status: "open", payment_status: "unpaid", key: options.idempotencyKey};
           state.sessions.set(session.id, session);
           return session;
         },
@@ -91,8 +94,7 @@ async function harness(t, env = {}, saved = "[]") {
       if (name === "express") return express;
       if (name === "stripe") return MockStripe;
       if (name === "./pricing") return testPricing;
-      if (name === "fs") return {existsSync: () => true, readFileSync: () => data,
-        writeFileSync: (file, contents) => {data = contents;}};
+      if (name === "./storage/postgres") return {createStore: () => testStore, StorageError: require("../storage/postgres").StorageError};
       return require(name);
     }
   };
@@ -103,9 +105,9 @@ async function harness(t, env = {}, saved = "[]") {
   t.after(() => new Promise(resolve => {server.closeAllConnections(); server.close(resolve);}));
   const url = `http://127.0.0.1:${server.address().port}`;
   return {
-    state, app, context, signatureSdk, url,
-    get data() { return data; },
-    records: () => JSON.parse(data),
+    state, app, context, signatureSdk, url, testStore, storageFailures,
+    get data() { return JSON.stringify(testStore.shared.records); },
+    records: () => JSON.parse(JSON.stringify(testStore.shared.records)),
     advance: ms => {clock += ms;},
     async request(route, body, headers = {}, method = body === undefined ? "GET" : "POST") {
       const response = await fetch(url + route, {
@@ -735,7 +737,7 @@ test("reservation response whitelists fields and preserves driver visibility rul
   for (const status of ["awaiting_payment", "confirmed", ...visible, "cancelled"]) {
     record.status = status;
     h.context.fixtureRecords = [record];
-    vm.runInContext("writeBookings(fixtureRecords)", h.context);
+    h.testStore.fixtures(h.context.fixtureRecords);
     const result = await h.request(`/api/booking/${record.id}`, undefined, {cookie});
     assert.equal(result.status, 200);
     assert.deepEqual(Object.keys(result.body).sort(), ["dispatch", "id", "paymentStatus", "quote", "status", "trip"]);
@@ -760,7 +762,7 @@ test("legacy records deny access and do not get credentials through duplicate ch
   const cookie = checkout.headers.get("set-cookie").split(";")[0];
   const record = h.records()[0];
   delete record.customerAccess;
-  h.context.fixtureRecords = [record]; vm.runInContext("writeBookings(fixtureRecords)", h.context);
+  h.context.fixtureRecords = [record]; h.testStore.fixtures(h.context.fixtureRecords);
   assert.equal((await h.request(`/api/booking/${record.id}`, undefined, {cookie})).status, 401);
   const retried = await h.request("/api/checkout", booking);
   assert.equal(retried.status, 200);
@@ -768,7 +770,7 @@ test("legacy records deny access and do not get credentials through duplicate ch
   assert.equal(Object.hasOwn(h.records()[0], "customerAccess"), false);
   for (const customerAccess of [{}, {tokenHash: "bad", expiresAt: Date.now()},
     {tokenHash: "a".repeat(64), expiresAt: "invalid"}, {tokenHash: "a".repeat(64), expiresAt: null}]) {
-    h.context.fixtureRecords = [{...record, customerAccess}]; vm.runInContext("writeBookings(fixtureRecords)", h.context);
+    h.context.fixtureRecords = [{...record, customerAccess}]; h.testStore.fixtures(h.context.fixtureRecords);
     assert.equal((await h.request(`/api/booking/${record.id}`, undefined, {cookie})).status, 401);
   }
 });
@@ -847,4 +849,21 @@ test("production HTTPS uses only trusted proxy protocol and canonical redirects"
   assert.equal(unavailable.status,503);
   const dev=await harness(t);
   assert.equal((await dev.request("/api/quote",booking,{"x-forwarded-proto":"https"})).status,200);
+});
+
+
+test("storage failures are generic 503 and never interpreted as first-ride eligibility", async t => {
+  for(const failure of ['read','write']) {
+    const h=await harness(t);h.storageFailures[failure]=true;
+    if(failure==='read') {
+      assert.equal((await h.request('/api/quote',{...booking,promoCode:'FIRST15'})).status,503);
+      assert.equal((await h.request('/api/booking/unknown')).status,503);
+      const login=await h.request('/api/admin/login',{token:'local-test-token'});
+      assert.equal((await h.request('/api/bookings',undefined,{cookie:login.headers.get('set-cookie').split(';')[0]})).status,503);
+    }
+    const checkout=await h.request('/api/checkout',booking);
+    assert.equal(checkout.status,503);assert.equal(h.state.creates.length,0);
+    assert.match(checkout.body.error,/temporarily unavailable/);
+    assert.equal(h.records().length,0);
+  }
 });

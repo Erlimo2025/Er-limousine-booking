@@ -14,7 +14,7 @@ It includes:
 - Private dispatch dashboard
 - Driver / vehicle assignment
 - Trip status updates
-- Simple local JSON booking storage
+- Transactional PostgreSQL reservation storage
 
 ## 1. What you need before going live
 
@@ -24,6 +24,10 @@ Create:
 2. A **Google Cloud** project with the **Routes API** enabled
 3. A web host that can run Node.js 20+ (for example Render, Railway, Fly.io, or a VPS)
 4. Your domain pointed to that host
+
+## Reservation storage
+
+The server now requires PostgreSQL and a privately configured `DATABASE_URL`, including local development. There is no JSON fallback. See [storage deployment, legacy import, retention and backups](docs/reservation-storage.md) before deploying or starting the updated server.
 
 ## 2. Local setup
 

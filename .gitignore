@@ -30,3 +30,17 @@ build/
 .DS_Store
 Thumbs.db
 Desktop.ini
+
+# Private database exports, dumps, and local database clusters
+*.sql.gz
+*.dump
+*.pgdump
+/database-exports/
+/database-backups/
+/pgdata/
+*.sql
+!/migrations/*.sql
+*.backup
+*.dump.gz
+*.pgdump.gz
+/exports/

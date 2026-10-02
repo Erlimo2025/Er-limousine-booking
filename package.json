@@ -5,7 +5,9 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
+    "dev": "node --watch server.js",
+    "test": "node --test tests/*.test.cjs",
+    "db:import": "node scripts/import-reservations.cjs"
   },
   "engines": {
     "node": ">=20"
@@ -13,6 +15,7 @@
   "dependencies": {
     "dotenv": "^16.4.5",
     "express": "^4.21.1",
+    "pg": "^8.23.1",
     "stripe": "^17.4.0"
   },
   "packageManager": "pnpm@11.25.0"
