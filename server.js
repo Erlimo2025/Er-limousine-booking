@@ -1409,13 +1409,13 @@ function customerAccessCookieOptions(id) {
   return {httpOnly: true, secure: adminCookieSecure, sameSite: "strict", path: `/api/booking/${id}`};
 }
 
-function newCustomerAccess(body) {
+function newCustomerAccess(body, token = crypto.randomBytes(32).toString("base64url")) {
   const lastScheduled = body.tripType === "roundtrip"
     ? parseServiceDateTime(body.returnDate, body.returnTime, "return")
     : parseServiceDateTime(body.date, body.time, "pickup") +
       (body.tripType === "hourly" ? Number(body.hours) * 60 * MINUTE : 0);
   // Usable for at least 30 days, or through 7 days after the final scheduled leg.
-  return {tokenHash: checkoutHash(crypto.randomBytes(32).toString("base64url")),
+  return {tokenHash: checkoutHash(token),
     expiresAt: Math.max(Date.now() + 30 * 24 * 60 * MINUTE, lastScheduled + 7 * 24 * 60 * MINUTE)};
 }
 
@@ -1425,25 +1425,39 @@ function validCustomerAccessData(booking) {
     Number.isFinite(access.expiresAt) && access.expiresAt > Date.now();
 }
 
-async function checkoutCustomerResult(url, id) {
-  return reservationStore.update(id, booking => {
-    if (!validCustomerAccessData(booking)) return {url, bookingId:id};
-    const token=crypto.randomBytes(32).toString("base64url");
-    booking.customerAccess.tokenHash=checkoutHash(token);
-    return {url,bookingId:id,customerAccess:{token,expiresAt:booking.customerAccess.expiresAt}};
+function checkoutCustomerResult(url, id) {
+  return {url, bookingId:id};
+}
+
+function checkoutAccessCookieName(id) {
+  return `${adminCookieSecure ? "__Secure-" : ""}er_checkout_access_${id}`;
+}
+
+function issueCustomerAccessCookies(res, booking, token) {
+  const maxAge=booking.customerAccess.expiresAt-Date.now();
+  res.cookie(customerAccessCookieName(booking.id),token,{...customerAccessCookieOptions(booking.id),maxAge});
+  // Separate restricted paths: the status credential is not broadened to all APIs.
+  res.cookie(checkoutAccessCookieName(booking.id),token,{
+    httpOnly:true,secure:adminCookieSecure,sameSite:"strict",path:"/api/checkout",maxAge
   });
 }
 
-function hasCustomerAccess(req, booking) {
+function hasCustomerAccess(req, booking, checkout = false) {
   if (!validCustomerAccessData(booking)) return false;
-  const name = customerAccessCookieName(booking.id);
-  const matches = String(req.headers.cookie || "").split(";").map(value => value.trim())
-    .filter(value => value.startsWith(`${name}=`));
-  if (matches.length !== 1) return false;
-  const token = matches[0].slice(name.length + 1);
-  if (!/^[A-Za-z0-9_-]{43}$/.test(token)) return false;
-  return crypto.timingSafeEqual(Buffer.from(checkoutHash(token), "hex"),
-    Buffer.from(booking.customerAccess.tokenHash, "hex"));
+  const names=checkout ? [checkoutAccessCookieName(booking.id),customerAccessCookieName(booking.id)]
+    : [customerAccessCookieName(booking.id)];
+  const cookies=String(req.headers.cookie || "").split(";").map(value=>value.trim());
+  let supplied=false;
+  for(const name of names) {
+    const matches=cookies.filter(value=>value.startsWith(`${name}=`));
+    if(!matches.length)continue;
+    if(matches.length!==1)return false;
+    const token=matches[0].slice(name.length+1);
+    if(!/^[A-Za-z0-9_-]{43}$/.test(token) ||
+      !crypto.timingSafeEqual(Buffer.from(checkoutHash(token),"hex"),Buffer.from(booking.customerAccess.tokenHash,"hex")))return false;
+    supplied=true;
+  }
+  return supplied;
 }
 
 function validAdminOrigin(req) {
@@ -1865,9 +1879,19 @@ async function saveCheckoutBooking(booking) {
   if(!result)throw new StorageError();
 }
 
-async function createCheckout(body, ip, fingerprint) {
+async function createCheckout(body, ip, fingerprint, req, res) {
   if (!stripe) {
     throw Object.assign(new Error("Stripe is not configured. Add STRIPE_SECRET_KEY before accepting payments."), {status: 503});
+  }
+
+  let booking = (await readBookings()).find(item =>
+    item.checkoutFingerprint === fingerprint && item.status !== "cancelled" &&
+    (Date.now() - Date.parse(item.createdAt) < 24 * 60 * MINUTE ||
+      item.checkoutAttempt?.quote.promotion?.code==='FIRST15'));
+  // Matching booking data is only a lookup key, never an ownership credential.
+  // This check runs under the database action lock, before provider calls or mutations.
+  if (booking && !hasCustomerAccess(req,booking,true)) {
+    throw Object.assign(new Error("Checkout is temporarily unavailable. Please try again."),{status:503});
   }
 
   /*
@@ -1897,10 +1921,6 @@ async function createCheckout(body, ip, fingerprint) {
 
   // Google work may have taken long enough for a near-term pickup to pass.
   validateBookingInput(body);
-  let booking = (await readBookings()).find(item =>
-    item.checkoutFingerprint === fingerprint && item.status !== "cancelled" &&
-    (Date.now() - Date.parse(item.createdAt) < 24 * 60 * MINUTE ||
-      item.checkoutAttempt?.quote.promotion?.code==='FIRST15'));
   if (booking?.paymentStatus === "paid") {
     throw Object.assign(new Error("This reservation has already been paid."), {status: 409});
   }
@@ -1924,10 +1944,13 @@ async function createCheckout(body, ip, fingerprint) {
   }
   if (!booking) {
     booking = createBookingRecord(body, quote);
-    booking.customerAccess = newCustomerAccess(body);
+    const token=crypto.randomBytes(32).toString("base64url");
+    booking.customerAccess = newCustomerAccess(body,token);
     booking.checkoutFingerprint = fingerprint;
     booking.checkoutClientHash = checkoutHash(ip);
     await reservationStore.createWithBudget(booking, bookings => enforceBookingBudget(bookings, body, ip));
+    // Also delivered on a safe error response, allowing ownership-proven ambiguous retries.
+    issueCustomerAccessCookies(res,booking,token);
   }
   const resumingFirstRideAttempt=!!booking.checkoutAttempt;
   // Persist the attempt before contacting Stripe. Network failures retry the same
@@ -2082,24 +2105,21 @@ app.post("/api/checkout", async (req, res) => {
       if (retryAfter) return tooManyRequests(res, retryAfter);
     }
     const fingerprint = checkoutFingerprint(req.body);
-    let action = checkoutActions.get(fingerprint);
-    if (!action) {
-      if (checkoutActions.size >= 1000) return tooManyRequests(res);
-      action = storageReady.then(() => reservationStore.withActionLock(fingerprint, () => createCheckout(req.body, clientKey(req), fingerprint)));
-      checkoutActions.set(fingerprint, action);
-      // All overlapping requests for the same action share one result.
-      action.finally(() => checkoutActions.delete(fingerprint)).catch(() => {});
-    }
-    const result = await action;
-    if (result.customerAccess) {
-      res.cookie(customerAccessCookieName(result.bookingId), result.customerAccess.token, {
-        ...customerAccessCookieOptions(result.bookingId),
-        maxAge: result.customerAccess.expiresAt - Date.now()
-      });
-    }
+    // Do not share authenticated results with overlapping anonymous requests.
+    if (checkoutActions.size >= 1000) return tooManyRequests(res);
+    const actionKey=crypto.randomUUID();
+    checkoutActions.set(actionKey,true);
+    let result;
+    try {
+      result=await storageReady.then(() => reservationStore.withActionLock(fingerprint,
+        () => createCheckout(req.body,clientKey(req),fingerprint,req,res)));
+    } finally {checkoutActions.delete(actionKey);}
     res.json({url: result.url, bookingId: result.bookingId});
   } catch (error) {
     if (error.status === 429) return tooManyRequests(res, 30 * 60);
+    if(error.message === "Checkout is already processing. Please try again.") {
+      error=Object.assign(new Error("Checkout is temporarily unavailable. Please try again."),{status:503});
+    }
     sendSafeError(req,res,error,400);
   }
 });

@@ -106,16 +106,22 @@ async function harness(t, env = {}, saved = "[]", injectedStore) {
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
   t.after(() => new Promise(resolve => {server.closeAllConnections(); server.close(resolve);}));
   const url = `http://127.0.0.1:${server.address().port}`;
+  const checkoutJar=new Map();
   return {
     state, app, context, signatureSdk, url, testStore, storageFailures,
+    checkoutCookies: () => [...checkoutJar.values()].join("; "),
     get data() { return JSON.stringify(testStore.shared.records); },
     records: () => JSON.parse(JSON.stringify(testStore.shared.records)),
     advance: ms => {clock += ms;},
     async request(route, body, headers = {}, method = body === undefined ? "GET" : "POST") {
       const response = await fetch(url + route, {
-        method, headers: {"content-type": "application/json", ...(production ? {"x-forwarded-proto": "https"} : {}), ...headers},
+        method, headers: {"content-type": "application/json", ...(route === "/api/checkout" ? {cookie:[...checkoutJar.values()].join("; ")} : {}), ...(production ? {"x-forwarded-proto": "https"} : {}), ...headers},
         body: body === undefined ? undefined : typeof body === "string" ? body : JSON.stringify(body)
       });
+      for(const cookie of response.headers.getSetCookie()) {
+        const pair=cookie.split(";")[0],name=pair.split("=")[0];
+        if(name.includes("er_checkout_access_"))checkoutJar.set(name,pair);
+      }
       const text = await response.text();
       let result; try {result = JSON.parse(text);} catch (_) {result = text;}
       return {status: response.status, body: result, headers: response.headers};
@@ -201,8 +207,8 @@ test("Google timeout and provider errors return generic responses with no leaked
 test("concurrent/sequential duplicate Checkout reuses session and reservation; expiry permits retry", async t => {
   const h = await harness(t); h.state.createDelay = 20;
   const results = await Promise.all(Array.from({length: 5}, () => h.request("/api/checkout", booking)));
-  assert.ok(results.every(result => result.status === 200));
-  assert.equal(new Set(results.map(result => result.body.bookingId)).size, 1);
+  assert.equal(results.filter(result=>result.status===200).length,1);
+  assert.ok(results.filter(result=>result.status!==200).every(result=>result.status===503));
   assert.equal(h.state.creates.length, 1); assert.equal(h.records().length, 1);
   await h.request("/api/checkout", {...booking, total: 0, nonce: "ignored"});
   assert.equal(h.state.creates.length, 1);
@@ -228,7 +234,7 @@ test("ambiguous Stripe failure retries same key, including restart; definitive f
   const failure = await harness(t); failure.state.fail = new Error("mock network timeout");
   await failure.request("/api/checkout", booking);
   const restarted = await harness(t, {}, failure.data);
-  await restarted.request("/api/checkout", booking);
+  await restarted.request("/api/checkout", booking,{cookie:failure.checkoutCookies()});
   assert.equal(restarted.state.creates[0].options.idempotencyKey, failure.state.creates[0].options.idempotencyKey);
   assert.equal(restarted.records().length, 1);
   const rejected = await harness(t);
@@ -769,7 +775,7 @@ test("legacy records deny access and do not get credentials through duplicate ch
   h.context.fixtureRecords = [record]; h.testStore.fixtures(h.context.fixtureRecords);
   assert.equal((await h.request(`/api/booking/${record.id}`, undefined, {cookie})).status, 401);
   const retried = await h.request("/api/checkout", booking);
-  assert.equal(retried.status, 200);
+  assert.equal(retried.status, 503);
   assert.equal(retried.headers.get("set-cookie"), null);
   assert.equal(Object.hasOwn(h.records()[0], "customerAccess"), false);
   for (const customerAccess of [{}, {tokenHash: "bad", expiresAt: Date.now()},
@@ -779,22 +785,17 @@ test("legacy records deny access and do not get credentials through duplicate ch
   }
 });
 
-test("customer access survives restart; concurrent checkout shares token and normal retries rotate it", async t => {
-  const h = await harness(t); h.state.createDelay = 20;
-  const results = await Promise.all(Array.from({length: 5}, () => h.request("/api/checkout", booking)));
-  const cookies = results.map(result => result.headers.get("set-cookie").split(";")[0]);
-  assert.equal(new Set(cookies).size, 1);
-  assert.equal(h.state.creates.length, 1); assert.equal(h.records().length, 1);
-  const route = `/api/booking/${results[0].body.bookingId}`;
-  assert.equal((await h.request(route, undefined, {cookie: cookies[0]})).status, 200);
-  const restarted = await harness(t, {}, h.data);
-  assert.equal((await restarted.request(route, undefined, {cookie: cookies[0]})).status, 200);
-  const retry = await h.request("/api/checkout", booking);
-  const nextCookie = retry.headers.get("set-cookie").split(";")[0];
-  assert.notEqual(nextCookie, cookies[0]);
-  assert.equal((await h.request(route, undefined, {cookie: cookies[0]})).status, 401);
-  assert.equal((await h.request(route, undefined, {cookie: nextCookie})).status, 200);
-  assert.equal(h.state.creates.length, 1);
+test("customer access survives restart; authenticated retries preserve the original credential", async t => {
+  const h=await harness(t), first=await h.request("/api/checkout",booking);
+  const cookie=first.headers.getSetCookie()[0].split(";")[0];
+  const route=`/api/booking/${first.body.bookingId}`;
+  const restarted=await harness(t,{},h.data);
+  assert.equal((await restarted.request(route,undefined,{cookie})).status,200);
+  restarted.state.sessions=h.state.sessions;
+  const retry=await restarted.request("/api/checkout",booking,{cookie:h.checkoutCookies()});
+  assert.equal(retry.status,200);assert.equal(retry.headers.get("set-cookie"),null);
+  assert.equal((await restarted.request(route,undefined,{cookie})).status,200);
+  assert.equal(restarted.state.creates.length,0);
 });
 
 test("customer cookie and confirmation page prevent browser/script/referrer leakage", async t => {
@@ -993,4 +994,110 @@ test('Finding 11: PostgreSQL errors with forged HTTP status stay private at the 
   const h=await harness(t,{},'[]',storage);
   verifySafeFailure(h,await h.request('/api/quote',booking));
   verifySafeFailure(h,await h.request('/api/booking/11111111-1111-4111-8111-111111111111'));
+});
+
+
+test("New audit 1: exact-data replay without ownership cannot disclose or replace access",async t=>{
+  const h=await harness(t),first=await h.request('/api/checkout',booking);
+  const id=first.body.bookingId,cookie=first.headers.getSetCookie()[0].split(';')[0];
+  const before=h.records()[0],name=h.checkoutCookies().split('=')[0];
+  for(const supplied of ['',`${name}=${'A'.repeat(43)}`,`${name}=malformed`,
+    `${h.checkoutCookies()}; ${h.checkoutCookies()}`]) {
+    const result=await h.request('/api/checkout',{...booking,bookingId:id},{cookie:supplied,'x-request-id':'attacker-id'});
+    assert.equal(result.status,503);assert.equal(result.headers.get('set-cookie'),null);
+    assert.deepEqual(Object.keys(result.body).sort(),['error','referenceId']);
+    assert.match(result.body.referenceId,/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/);
+    assert.equal(result.headers.get('x-request-id'),result.body.referenceId);
+    assert.doesNotMatch(JSON.stringify(result.body),new RegExp(id+'|cs_mock|checkout.example|pending|paid'));
+    assert.deepEqual(h.records()[0],before);
+    assert.equal((await h.request('/api/booking/'+id,undefined,{cookie})).status,200);
+  }
+  assert.equal((await h.request('/api/booking/'+id)).status,401);
+  assert.equal((await h.request('/api/booking/'+id+'?email='+booking.email+'&phone='+booking.phone)).status,401);
+  assert.equal(h.state.creates.length,1);
+});
+
+test("New audit 1: authenticated retry keeps cookies, hash, expiration and Stripe session",async t=>{
+  const h=await harness(t,{NODE_ENV:'production'}),first=await h.request('/api/checkout',booking);
+  const cookies=first.headers.getSetCookie(),before=h.records()[0];
+  assert.equal(cookies.length,2);
+  for(const cookie of cookies) {
+    for(const flag of [/HttpOnly/,/; Secure/,/SameSite=Strict/,/Max-Age=/,/Expires=/])assert.match(cookie,flag);
+    assert.doesNotMatch(cookie,/Domain=/);
+  }
+  assert.ok(cookies[0].includes(`Path=/api/booking/${first.body.bookingId}`));
+  assert.ok(cookies[1].includes('Path=/api/checkout;'));
+  for(const credential of [h.checkoutCookies(),cookies[0].split(';')[0]]) {
+    const retry=await h.request('/api/checkout',booking,{cookie:credential});
+    assert.equal(retry.status,200);assert.deepEqual(retry.body,first.body);
+    assert.equal(retry.headers.get('set-cookie'),null);assert.deepEqual(h.records()[0],before);
+  }
+  assert.equal(h.state.creates.length,1);
+});
+
+test("New audit 1: concurrent anonymous creation never shares a customer credential",async t=>{
+  const h=await harness(t);h.state.createDelay=30;
+  const results=await Promise.all(Array.from({length:4},()=>h.request('/api/checkout',booking,{cookie:''})));
+  assert.equal(results.filter(r=>r.status===200).length,1);
+  for(const denied of results.filter(r=>r.status!==200)) {
+    assert.equal(denied.status,503);assert.equal(denied.headers.get('set-cookie'),null);
+    assert.deepEqual(Object.keys(denied.body).sort(),['error','referenceId']);
+  }
+  assert.equal(h.state.creates.length,1);assert.equal(h.records().length,1);
+});
+
+test("New audit 1: concurrent owner retry and anonymous replay cannot transfer access",async t=>{
+  const h=await harness(t),first=await h.request('/api/checkout',booking);
+  const cookie=first.headers.getSetCookie()[0].split(';')[0],before=h.records()[0].customerAccess;
+  const [owner,attacker]=await Promise.all([
+    h.request('/api/checkout',booking),h.request('/api/checkout',booking,{cookie:''})
+  ]);
+  assert.ok([200,503].includes(owner.status));assert.equal(attacker.status,503);
+  assert.equal(attacker.headers.get('set-cookie'),null);
+  assert.deepEqual(h.records()[0].customerAccess,before);
+  assert.equal((await h.request('/api/booking/'+first.body.bookingId,undefined,{cookie})).status,200);
+  assert.equal((await h.request('/api/checkout',booking)).status,200);
+  assert.equal(h.state.creates.length,1);
+});
+
+test("New audit 1: ambiguous failure grants only the initiating browser safe retry",async t=>{
+  const h=await harness(t);h.state.fail=new Error('synthetic provider failure');
+  const failed=await h.request('/api/checkout',booking);
+  assert.equal(failed.status,503);assert.equal(failed.headers.getSetCookie().length,2);
+  const before=h.records()[0],key=h.state.creates[0].options.idempotencyKey;
+  const attacker=await h.request('/api/checkout',booking,{cookie:''});
+  assert.equal(attacker.status,503);assert.equal(attacker.headers.get('set-cookie'),null);
+  assert.deepEqual(h.records()[0],before);assert.equal(h.state.creates.length,1);
+  const retry=await h.request('/api/checkout',booking);
+  assert.equal(retry.status,200);assert.equal(retry.headers.get('set-cookie'),null);
+  assert.equal(h.state.creates[1].options.idempotencyKey,key);
+  assert.deepEqual(h.records()[0].customerAccess,before.customerAccess);
+});
+
+test("New audit 1: expired and other-booking credentials cannot authorize Checkout",async t=>{
+  const h=await harness(t),first=await h.request('/api/checkout',booking);
+  const original=h.checkoutCookies(),other=await h.request('/api/checkout',{...booking,time:'13:00'});
+  const otherCookie=h.checkoutCookies().split('; ').find(c=>c.includes(other.body.bookingId));
+  const replay=await h.request('/api/checkout',booking,{cookie:otherCookie});
+  assert.equal(replay.status,503);assert.equal(replay.headers.get('set-cookie'),null);
+  await h.testStore.update(first.body.bookingId,r=>{r.customerAccess.expiresAt=Date.parse('2026-10-01T15:59:59Z');});
+  const before=h.records().find(r=>r.id===first.body.bookingId);
+  const expired=await h.request('/api/checkout',booking,{cookie:original});
+  assert.equal(expired.status,503);assert.equal(expired.headers.get('set-cookie'),null);
+  assert.deepEqual(h.records().find(r=>r.id===first.body.bookingId),before);
+  assert.equal(h.state.creates.length,2);
+});
+
+test("New audit 1: tokens stay out of JSON, URLs, logs, Stripe data and frontend stores",async t=>{
+  const h=await harness(t),first=await h.request('/api/checkout',booking);
+  const tokens=first.headers.getSetCookie().map(c=>c.split(';')[0].split('=')[1]);
+  const retry=await h.request('/api/checkout',booking);
+  const denied=await h.request('/api/checkout',booking,{cookie:''});
+  const customer=await h.request('/api/booking/'+first.body.bookingId,undefined,{cookie:first.headers.getSetCookie()[0].split(';')[0]});
+  const output=JSON.stringify([first.body,retry.body,denied.body,customer.body,h.state.logs,h.state.creates,h.records()]);
+  for(const token of tokens)assert.equal(output.includes(token),false);
+  for(const file of ['public/app.js','public/success.html']) {
+    const source=fs.readFileSync(path.join(root,file),'utf8');
+    assert.doesNotMatch(source,/(?:localStorage|sessionStorage)|er_checkout_access_|er_booking_access_/);
+  }
 });

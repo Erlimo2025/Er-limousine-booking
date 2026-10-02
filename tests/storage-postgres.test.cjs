@@ -122,9 +122,25 @@ test('isolated PostgreSQL integration: transactions, concurrent workers, import 
  await t.test('competing checkout workers create one reservation and one Stripe session',async()=>{
   h.state.createDelay=100;const first=h.request('/api/checkout',factory.booking);
   await new Promise(r=>setTimeout(r,40));const competing=await other.request('/api/checkout',factory.booking);
-  const result=await first;assert.equal(result.status,200);assert.equal(competing.status,409);
+  const result=await first;assert.equal(result.status,200);assert.equal(competing.status,503);
   assert.equal(h.state.creates.length+other.state.creates.length,1);assert.equal((await store.list()).length,1);
-  assert.equal((await other.request('/api/checkout',factory.booking)).status,200);
+  assert.equal((await other.request('/api/checkout',factory.booking, {cookie:h.checkoutCookies()})).status,200);
+  assert.equal(h.state.creates.length+other.state.creates.length,1);
+ });
+ await t.test('unauthenticated replay and authenticated retry stay isolated across PostgreSQL workers',async()=>{
+  const record=(await store.list())[0],before=record.customerAccess.tokenHash;
+  const ownerCookie=h.checkoutCookies();
+  const statusCookie=ownerCookie.split('; ').find(value=>value.includes(record.id)).replace('er_checkout_access_','er_booking_access_');
+  const [owner,attacker]=await Promise.all([
+   h.request('/api/checkout',factory.booking,{cookie:ownerCookie}),
+   other.request('/api/checkout',factory.booking,{cookie:''})
+  ]);
+  assert.ok([200,503].includes(owner.status));assert.equal(attacker.status,503);
+  assert.equal(attacker.headers.get('set-cookie'),null);
+  assert.deepEqual(Object.keys(attacker.body).sort(),['error','referenceId']);
+  assert.equal((await store.get(record.id)).customerAccess.tokenHash,before);
+  assert.equal((await h.request('/api/booking/'+record.id,undefined,{cookie:statusCookie})).status,200);
+  assert.equal((await other.request('/api/checkout',factory.booking,{cookie:ownerCookie})).status,200);
   assert.equal(h.state.creates.length+other.state.creates.length,1);
  });
  await t.test('ambiguous Stripe failure retains a durable attempt for another worker retry',async()=>{
@@ -133,7 +149,7 @@ test('isolated PostgreSQL integration: transactions, concurrent workers, import 
   assert.equal((await h.request('/api/checkout',body)).status,503);
   const records=await store.list(),pending=records.find(r=>r.customer.email===body.email);assert.ok(pending.checkoutAttempt.key);assert.equal(pending.stripeSessionId,null);
   const failedKey=h.state.creates.at(-1).options.idempotencyKey;
-  const retry=await other.request('/api/checkout',body);assert.equal(retry.status,200);
+  const retry=await other.request('/api/checkout',body,{cookie:h.checkoutCookies()});assert.equal(retry.status,200);
   assert.equal(other.state.creates.at(-1).options.idempotencyKey,failedKey);
   assert.equal((await store.list()).filter(r=>r.customer.email===body.email).length,1);
  });
@@ -148,7 +164,7 @@ test('isolated PostgreSQL integration: transactions, concurrent workers, import 
   const count=(await pool.query('SELECT count(*)::integer AS n FROM er_first_ride_claims WHERE booking_id=$1',[record.id])).rows[0].n;assert.equal(count,2);
   const retryBody=record.trip.time==='12:00'?firstBody:secondBody;
   const before=h.state.creates.length+other.state.creates.length;
-  assert.equal((await other.request('/api/checkout',retryBody)).status,200);
+  assert.equal((await other.request('/api/checkout',retryBody,{cookie:(record.trip.time==='12:00'?h:other).checkoutCookies()})).status,200);
   assert.equal(h.state.creates.length+other.state.creates.length,before);
   const paid={id:record.stripeSessionId,metadata:{bookingId:record.id},amount_total:8500,currency:'usd',mode:'payment',payment_status:'paid'};
   assert.equal((await h.webhook(paid)).status,200);assert.equal((await h.webhook(paid)).status,200);
@@ -170,7 +186,7 @@ test('isolated PostgreSQL integration: transactions, concurrent workers, import 
   h.state.fail=new Error('mock ambiguous failure');assert.equal((await h.request('/api/checkout',ambiguous)).status,503);
   const key=h.state.creates.at(-1).options.idempotencyKey;
   assert.equal((await other.request('/api/checkout',{...ambiguous,time:'13:00'})).status,409);
-  assert.equal((await other.request('/api/checkout',ambiguous)).status,200);
+  assert.equal((await other.request('/api/checkout',ambiguous,{cookie:h.checkoutCookies()})).status,200);
   assert.equal(other.state.creates.at(-1).options.idempotencyKey,key);
  });
  await t.test('expired ambiguous FIRST15 attempt keeps original Stripe idempotency key',async()=>{
@@ -180,7 +196,7 @@ test('isolated PostgreSQL integration: transactions, concurrent workers, import 
   const key=h.state.creates.at(-1).options.idempotencyKey;
   h.advance(25*60*60*1000);other.advance(25*60*60*1000);
   other.state.fail=Object.assign(new Error('mock definitive expired parameter rejection'),{type:'StripeInvalidRequestError'});
-  assert.equal((await other.request('/api/checkout',body)).status,503);
+  assert.equal((await other.request('/api/checkout',body,{cookie:h.checkoutCookies()})).status,503);
   assert.equal(other.state.creates.at(-1).options.idempotencyKey,key);
   assert.equal((await h.request('/api/checkout',{...body,time:'13:00'})).status,200);
  });
@@ -197,7 +213,7 @@ test('isolated PostgreSQL integration: transactions, concurrent workers, import 
   assert.equal((await h.request('/api/checkout',body)).status,409);
  });
  await t.test('webhook/admin changes preserve each other, ledgers enforce FIRST15 and customer access remains scoped',async()=>{
-  const result=await h.request('/api/checkout',factory.booking);const cookie=result.headers.get('set-cookie').split(';')[0];const record=await store.get(result.body.bookingId);
+  const result=await h.request('/api/checkout',factory.booking); const record=await store.get(result.body.bookingId);const cookie=h.checkoutCookies().split('; ').find(value=>value.includes(record.id)).replace('er_checkout_access_','er_booking_access_');
   assert.equal((await h.request('/api/booking/'+record.id)).status,401);assert.equal((await h.request('/api/booking/'+record.id,undefined,{cookie})).status,200);
   const login=await h.request('/api/admin/login',{token:'local-test-token'}),adminCookie=login.headers.get('set-cookie').split(';')[0];
   const event={id:record.stripeSessionId,metadata:{bookingId:record.id},amount_total:10000,currency:'usd',mode:'payment',payment_status:'paid'};
