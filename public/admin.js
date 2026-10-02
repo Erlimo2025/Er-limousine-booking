@@ -144,6 +144,10 @@ function renderBooking(b) {
       <p><strong>${esc(b.trip.date)} ${esc(b.trip.time)}</strong> — ${esc(b.quote.vehicle)} — $${total}</p>
       <p>${esc(b.trip.pickup)} → ${esc(b.trip.dropoff)}</p>
 
+      ${b.checkoutAttempt?.quote?.promotion?.code === "FIRST15" ? `
+        <p><strong>FIRST15 reconciliation:</strong> ${esc(b.checkoutAttempt.state || "review_required")}
+        ${b.checkoutAttempt.state === "review_required" ? "— Provider verification required; eligibility remains protected." : ""}</p>
+        <button class="btn btn-secondary reconcileBtn">Check FIRST15 payment state</button>` : ""}
       <div class="admin-controls">
         <select class="status">
           ${["confirmed","assigned","driver_en_route","passenger_on_board","completed","cancelled"]
@@ -162,6 +166,16 @@ function renderBooking(b) {
 }
 
 bookingsEl.addEventListener("click", async (event) => {
+  if(event.target.classList.contains("reconcileBtn")) {
+    event.target.disabled=true;
+    try {
+      const id=event.target.closest('.booking-item').dataset.id;
+      await adminFetch('/api/bookings/'+encodeURIComponent(id)+'/reconcile',{method:'POST',body:'{}'});
+      showNotice('Payment-state check completed. Unresolved cases require provider verification.','success');
+      await loadBookings();
+    } catch(err) {showNotice(err.message);} finally {event.target.disabled=false;}
+    return;
+  }
   if (!event.target.classList.contains("saveBtn")) return;
 
   const card = event.target.closest(".booking-item");

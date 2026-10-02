@@ -41,9 +41,20 @@ async function harness(t, env = {}, saved = "[]", injectedStore) {
           const previous = [...state.sessions.values()].find(item => item.key === options.idempotencyKey);
           if (previous) return previous;
           const session = {id: `cs_mock_${state.sessions.size}`, url: "https://checkout.example.test/mock",
-            status: "open", payment_status: "unpaid", key: options.idempotencyKey};
+            status: "open", payment_status: "unpaid", key: options.idempotencyKey,
+            mode:params.mode,amount_total:params.line_items[0].price_data.unit_amount,currency:params.line_items[0].price_data.currency,
+            metadata:params.metadata,expires_at:params.expires_at,created:Math.floor(clock/1000)};
           state.sessions.set(session.id, session);
+          if(state.loseResponse){state.loseResponse=false;throw new Error("mock lost response");}
           return session;
+        },
+        list:async params=>{
+          state.listCalls=(state.listCalls||0)+1;
+          if(state.listError)throw new Error("private provider detail");
+          if(state.listResult)return state.listResult;
+          const all=[...state.sessions.values()].filter(x=>x.created>=params.created.gte && x.created<=params.created.lte);
+          const start=params.starting_after ? all.findIndex(x=>x.id===params.starting_after)+1 : 0;
+          return {data:all.slice(start,start+params.limit),has_more:start+params.limit<all.length};
         },
         retrieve: async id => {
           if (state.retrieveError) throw new Error("private provider detail");
@@ -238,7 +249,7 @@ test("ambiguous Stripe failure retries same key, including restart; definitive f
   assert.equal(restarted.state.creates[0].options.idempotencyKey, failure.state.creates[0].options.idempotencyKey);
   assert.equal(restarted.records().length, 1);
   const rejected = await harness(t);
-  rejected.state.fail = Object.assign(new Error("mock invalid request"), {type: "StripeInvalidRequestError"});
+  rejected.state.fail = Object.assign(new Error("mock invalid request"), {type: "StripeInvalidRequestError",statusCode:400,code:"parameter_missing"});
   assert.equal((await rejected.request("/api/checkout", booking)).status, 503);
   assert.equal((await rejected.request("/api/checkout", booking)).status, 200);
   assert.equal(rejected.records().length, 1);
@@ -1100,4 +1111,182 @@ test("New audit 1: tokens stay out of JSON, URLs, logs, Stripe data and frontend
     const source=fs.readFileSync(path.join(root,file),'utf8');
     assert.doesNotMatch(source,/(?:localStorage|sessionStorage)|er_checkout_access_|er_booking_access_/);
   }
+});
+
+
+async function unresolvedFirstRide(t, lost=false) {
+  const h=await harness(t),body={...booking,promoCode:'FIRST15'};
+  if(lost)h.state.loseResponse=true;else h.state.fail=new Error('synthetic ambiguous failure');
+  assert.equal((await h.request('/api/checkout',body)).status,503);
+  return {h,body,record:h.records()[0]};
+}
+
+test('New audit 2: unknown submission remains durable; empty scan after pickup requires review',async t=>{
+  const {h,body,record}=await unresolvedFirstRide(t);
+  assert.equal(record.checkoutAttempt.state,'submitted_unknown');assert.equal(record.stripeSessionId,null);
+  assert.equal(record.checkoutAttempt.submissionCount,1);
+  h.advance(42*24*60*60000);
+  const before=h.state.creates.length;
+  await h.context.runFirstRideReconciliation();
+  assert.equal(h.state.creates.length,before);
+  const saved=h.records()[0];assert.equal(saved.checkoutAttempt.state,'review_required');
+  assert.equal(saved.checkoutAttempt.evidence,'no_conclusive_evidence');assert.equal(h.testStore.shared.claims.size,2);
+  assert.equal((await h.request('/api/checkout',body)).status,400);
+  assert.equal((await h.request('/api/checkout',{...body,date:'2026-12-20'})).status,409);
+  const restarted=await harness(t,{},h.data);
+  assert.equal(restarted.records().find(r=>r.id===record.id).checkoutAttempt.state,'review_required');
+});
+
+test('New audit 2: lost-response session is recovered after pickup and only expired/unpaid releases',async t=>{
+  const {h,body,record}=await unresolvedFirstRide(t,true),session=[...h.state.sessions.values()][0];
+  h.advance(42*24*60*60000);
+  session.status='expired';const before=h.state.creates.length;
+  await h.context.reconcileFirstRide(record.id);
+  const saved=h.records()[0];assert.equal(saved.stripeSessionId,session.id);
+  assert.equal(saved.checkoutAttempt.state,'confirmed_unpaid');assert.equal(h.testStore.shared.claims.size,0);
+  assert.equal(saved.trip.date,record.trip.date);assert.equal(saved.checkoutAttempt.expiresAt,record.checkoutAttempt.expiresAt);
+  assert.equal(h.state.creates.length,before);
+  const future=await h.request('/api/checkout',{...body,date:'2026-12-20'});
+  assert.equal(future.status,200);assert.equal(h.records().find(r=>r.id===future.body.bookingId).quote.total,85);
+});
+
+test('New audit 2: saved open/processing sessions retain claims; paid state establishes permanent ineligibility',async t=>{
+  for(const status of ['open','complete','paid']) {
+    const h=await harness(t),body={...booking,promoCode:'FIRST15'},first=await h.request('/api/checkout',body);
+    const record=h.records()[0],session=h.state.sessions.get(record.stripeSessionId);
+    session.status=status==='paid'?'complete':status;session.payment_status=status==='paid'?'paid':'unpaid';
+    await h.context.reconcileFirstRide(first.body.bookingId);
+    const saved=h.records()[0];
+    if(status==='paid') {
+      assert.equal(saved.paymentStatus,'paid');assert.equal(saved.checkoutAttempt.state,'confirmed_paid');
+      assert.equal(h.testStore.shared.claims.size,0);
+      assert.equal((await h.request('/api/quote',{...body,time:'13:00'})).status,400);
+    }else {assert.equal(saved.checkoutAttempt.state,'session_identified');assert.equal(h.testStore.shared.claims.size,2);}
+    assert.equal(h.state.creates.length,1);
+  }
+});
+
+test('New audit 2: saved expired/unpaid session releases only after verification',async t=>{
+  const h=await harness(t),body={...booking,promoCode:'FIRST15'};await h.request('/api/checkout',body);
+  const record=h.records()[0];h.state.sessions.get(record.stripeSessionId).status='expired';
+  await h.context.reconcileFirstRide(record.id);
+  assert.equal(h.records()[0].checkoutAttempt.state,'confirmed_unpaid');assert.equal(h.testStore.shared.claims.size,0);
+  assert.equal((await h.request('/api/checkout',{...body,time:'13:00'})).status,200);
+});
+
+test('New audit 2: failed retrieval or listing retains claims and sanitized review evidence',async t=>{
+  for(const lost of [false,true]) {
+    const {h,record}=await unresolvedFirstRide(t,lost);
+    if(lost)h.state.retrieveError=true;else h.state.listError=true;
+    await h.context.reconcileFirstRide(record.id);
+    assert.equal(h.records()[0].checkoutAttempt.state,'review_required');
+    assert.equal(h.records()[0].checkoutAttempt.evidence,'provider_unavailable');assert.equal(h.testStore.shared.claims.size,2);
+    assert.doesNotMatch(JSON.stringify([h.records(),h.state.logs]),/private provider detail/);
+  }
+  const h=await harness(t);await h.request('/api/checkout',{...booking,promoCode:'FIRST15'});
+  h.state.retrieveError=true;await h.context.reconcileFirstRide(h.records()[0].id);assert.equal(h.testStore.shared.claims.size,2);
+});
+
+test('New audit 2: multiple, mismatched and incomplete scan results never release or attach',async t=>{
+  for(const kind of ['multiple','amount','currency','mode','expiry','incomplete','contact_only']) {
+    const {h,record}=await unresolvedFirstRide(t,true),original=[...h.state.sessions.values()][0];
+    let data=[original],has_more=false;
+    if(kind==='multiple')data.push({...original,id:'cs_mock_extra'});
+    if(kind==='amount')data=[{...original,amount_total:1}];
+    if(kind==='currency')data=[{...original,currency:'eur'}];
+    if(kind==='mode')data=[{...original,mode:'setup'}];
+    if(kind==='expiry')data=[{...original,expires_at:original.expires_at+1}];
+    if(kind==='incomplete')has_more=true;
+    if(kind==='contact_only')data=[{...original,metadata:{bookingId:record.id,attemptReference:'different'}}];
+    h.state.listResult={data,has_more};await h.context.reconcileFirstRide(record.id);
+    const saved=h.records()[0];assert.equal(saved.stripeSessionId,null);assert.equal(saved.checkoutAttempt.state,'review_required');
+    assert.equal(h.testStore.shared.claims.size,2);assert.equal(h.state.creates.length,1);
+  }
+});
+
+test('New audit 2: pagination positively recovers a session and validates its retrieved state',async t=>{
+  const {h,record}=await unresolvedFirstRide(t,true),original=[...h.state.sessions.values()][0];
+  h.state.sessions.clear();for(let i=0;i<101;i++)h.state.sessions.set('cs_unrelated_'+i,{...original,id:'cs_unrelated_'+i,metadata:{}});
+  h.state.sessions.set(original.id,original);
+  await h.context.reconcileFirstRide(record.id);
+  assert.ok(h.state.listCalls>=2);assert.equal(h.records()[0].stripeSessionId,original.id);
+  assert.equal(h.records()[0].checkoutAttempt.state,'session_identified');assert.equal(h.testStore.shared.claims.size,2);
+});
+
+test('New audit 2: later parameter failure cannot erase an ambiguous submission',async t=>{
+  const {h,body,record}=await unresolvedFirstRide(t);
+  h.state.fail=Object.assign(new Error('synthetic validation failure'),{type:'StripeInvalidRequestError',statusCode:400,code:'parameter_missing'});
+  assert.equal((await h.request('/api/checkout',body)).status,503);
+  assert.equal(h.records()[0].checkoutAttempt.key,record.checkoutAttempt.key);
+  assert.equal(h.records()[0].checkoutAttempt.state,'submitted_unknown');assert.equal(h.testStore.shared.claims.size,2);
+  assert.equal(h.state.creates[0].options.idempotencyKey,h.state.creates[1].options.idempotencyKey);
+});
+
+test('New audit 2: aged/legacy attempts cannot recreate sessions using expired idempotency keys',async t=>{
+  const {h,body,record}=await unresolvedFirstRide(t);h.advance(25*60*60000);
+  assert.equal((await h.request('/api/checkout',body)).status,503);assert.equal(h.state.creates.length,1);
+  assert.equal(h.records()[0].checkoutAttempt.state,'review_required');assert.equal(h.testStore.shared.claims.size,2);
+  const old=h.records()[0];delete old.checkoutAttempt.version;delete old.checkoutAttempt.correlationId;
+  h.testStore.fixtures([old]);await h.context.reconcileFirstRide(record.id);
+  assert.equal(h.records()[0].checkoutAttempt.evidence,'legacy_without_correlation');assert.equal(h.testStore.shared.claims.size,2);
+});
+
+test('New audit 2: a provably unsubmitted prepared attempt can release safely',async t=>{
+  const {h,record}=await unresolvedFirstRide(t);
+  await h.testStore.update(record.id,r=>{r.checkoutAttempt.state='prepared';r.checkoutAttempt.firstSubmittedAt=null;r.checkoutAttempt.submissionCount=0;});
+  const before=h.state.creates.length;await h.context.reconcileFirstRide(record.id);
+  assert.equal(h.records()[0].checkoutAttempt.state,'confirmed_unpaid');assert.equal(h.records()[0].checkoutAttempt.evidence,'not_submitted');
+  assert.equal(h.testStore.shared.claims.size,0);assert.equal(h.state.creates.length,before);
+});
+
+test('New audit 2: customer data/cookies cannot invoke admin recovery; admin sees review and can recheck',async t=>{
+  const {h,body,record}=await unresolvedFirstRide(t),route='/api/bookings/'+record.id+'/reconcile';
+  for(const headers of [{},{cookie:h.checkoutCookies()}])assert.equal((await h.request(route,body,headers)).status,401);
+  const before=h.state.creates.length;
+  const login=await h.request('/api/admin/login',{token:'local-test-token'}),cookie=login.headers.getSetCookie()[0].split(';')[0];
+  const result=await h.request(route,{}, {cookie});assert.equal(result.status,200);assert.deepEqual(result.body,{ok:true});
+  const list=await h.request('/api/bookings',undefined,{cookie});assert.equal(list.body[0].checkoutAttempt.state,'review_required');
+  assert.equal(h.testStore.shared.claims.size,2);assert.equal(h.state.creates.length,before);
+  assert.equal((await h.request(route,{}, {cookie,origin:'https://attacker.example'})).status,403);
+  const source=fs.readFileSync(path.join(root,'public/admin.js'),'utf8');assert.match(source,/reconcileBtn/);assert.doesNotMatch(source,/release anyway/i);
+});
+
+test('New audit 2: new matching contact information cannot release or inspect an old claim',async t=>{
+  const h=await harness(t),body={...booking,promoCode:'FIRST15'};await h.request('/api/checkout',body);
+  const original=h.records()[0];h.state.sessions.get(original.stripeSessionId).status='expired';
+  const attacker=await h.request('/api/checkout',{...body,time:'13:00'},{cookie:''});
+  assert.equal(attacker.status,409);assert.equal(h.state.listCalls||0,0);
+  assert.equal(h.testStore.shared.claims.size,2);
+  assert.deepEqual(h.records().find(r=>r.id===original.id),original);
+  assert.doesNotMatch(JSON.stringify(attacker.body),new RegExp(original.id+'|cs_mock|review_required|confirmed_unpaid'));
+});
+
+test('New audit 2: paid webhook winning a reconciliation race preserves paid eligibility',async t=>{
+  const h=await harness(t),body={...booking,promoCode:'FIRST15'};await h.request('/api/checkout',body);
+  const snapshot=h.records()[0],session=h.state.sessions.get(snapshot.stripeSessionId);
+  assert.equal((await h.webhook({...session,payment_status:'paid',status:'complete'})).status,200);
+  assert.equal(await h.testStore.finalizeReconciliation(snapshot,{state:'confirmed_unpaid',sessionId:session.id,evidence:'verified_expired_unpaid',at:Date.now()}),false);
+  assert.equal(h.records()[0].paymentStatus,'paid');assert.equal(h.records()[0].checkoutAttempt.state,'confirmed_paid');
+  assert.equal((await h.request('/api/quote',{...body,time:'13:00'})).status,400);
+});
+
+test('New audit 2: failed reconciliation write rolls back state and claim',async t=>{
+  const h=await harness(t);await h.request('/api/checkout',{...booking,promoCode:'FIRST15'});
+  const before=h.records()[0];h.state.sessions.get(before.stripeSessionId).status='expired';h.storageFailures.write=true;
+  await assert.rejects(h.context.reconcileFirstRide(before.id),error=>error.storageFailure);
+  assert.deepEqual(h.records()[0],before);assert.equal(h.testStore.shared.claims.size,2);
+});
+
+test('New audit 2: correlation is unique/nonsecret; immutable retries preserve server parameters',async t=>{
+  const {h,body,record}=await unresolvedFirstRide(t);
+  const parameters=h.state.creates[0].params,reference=parameters.metadata.attemptReference;
+  assert.match(reference,/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/);
+  assert.equal(reference,record.checkoutAttempt.correlationId);
+  assert.equal((await h.request('/api/checkout',body)).status,200);
+  assert.equal(JSON.stringify(h.state.creates[1].params),JSON.stringify(parameters));
+  const other=await h.request('/api/checkout',{...body,email:'other@example.test',phone:'2015550101'});
+  assert.equal(other.status,200);assert.notEqual(h.records()[0].checkoutAttempt.correlationId,reference);
+  const tokens=h.checkoutCookies().split('; ').map(c=>c.split('=')[1]);
+  for(const token of tokens)assert.equal(JSON.stringify([h.state.creates,h.records(),h.state.logs]).includes(token),false);
+  assert.equal((await h.request('/api/booking/'+record.id,undefined,{cookie:'er_booking_access_'+record.id+'='+reference})).status,401);
 });

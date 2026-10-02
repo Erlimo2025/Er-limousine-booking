@@ -26,6 +26,22 @@ function validateRecord(r) {
   if(r.customerAccess !== undefined && (!plain(r.customerAccess) || typeof r.customerAccess.tokenHash !== 'string' || !/^[a-f0-9]{64}$/.test(r.customerAccess.tokenHash) || !Number.isFinite(r.customerAccess.expiresAt) || Object.keys(r.customerAccess).some(key=>!['tokenHash','expiresAt'].includes(key)))) fail();
   if(r.stripeSessionId !== null && r.stripeSessionId !== undefined && (typeof r.stripeSessionId !== 'string' || !/^cs_[A-Za-z0-9_]+$/.test(r.stripeSessionId))) fail();
   if(r.checkoutAttempt !== null && r.checkoutAttempt !== undefined && (!plain(r.checkoutAttempt) || typeof r.checkoutAttempt.key !== 'string' || !Number.isFinite(r.checkoutAttempt.expiresAt) || !plain(r.checkoutAttempt.quote) || !Number.isFinite(r.checkoutAttempt.quote.total) || r.checkoutAttempt.quote.total<=0)) fail();
+  if(r.checkoutAttempt?.version !== undefined) {
+    const a=r.checkoutAttempt;
+    if(a.version!==1 || typeof a.correlationId!=='string' || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(a.correlationId) ||
+       !['prepared','submitted_unknown','session_identified','confirmed_paid','confirmed_unpaid','review_required'].includes(a.state) ||
+       (a.firstSubmittedAt!==null && !Number.isFinite(a.firstSubmittedAt)) ||
+       (a.lastReconciledAt!==null && !Number.isFinite(a.lastReconciledAt)) || !Number.isSafeInteger(a.submissionCount) || a.submissionCount<0)fail();
+  }
+  if(r.checkoutAttempt?.version===1 && r.checkoutAttempt.parameters!==undefined) {
+    const a=r.checkoutAttempt,p=a.parameters,item=p?.line_items?.[0];
+    if(!plain(p) || Object.keys(p).some(k=>!['mode','expires_at','customer_email','line_items','metadata','success_url','cancel_url'].includes(k)) ||
+       p.mode!=='payment' || p.expires_at!==a.expiresAt || p.customer_email!==r.customer.email ||
+       !Array.isArray(p.line_items) || p.line_items.length!==1 || item.quantity!==1 ||
+       item.price_data?.unit_amount!==Math.round(a.quote.total*100) || item.price_data?.currency!==a.quote.currency ||
+       p.metadata?.bookingId!==r.id || p.metadata?.attemptReference!==a.correlationId ||
+       p.metadata?.promoCode!=='FIRST15' || p.metadata?.discount!==String(a.quote.discount || 0))fail();
+  }
   for(const key of ['driver','driverPhone','vehicle','plate'])if(typeof r.dispatch[key] !== 'string' || r.dispatch[key].length>200)fail();
   return r;
 }
@@ -72,7 +88,7 @@ function createStore(env = process.env, suppliedPool) {
   const list = client => safe(async()=>decode((await (client || scope.getStore() || pool).query('SELECT id, record FROM er_reservations ORDER BY created_at DESC, id')).rows));
   const get = (id,client) => safe(async()=> {
     if(typeof id !== 'string' || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(id)) return null;
-    const rows=(await (client || pool).query('SELECT id, record FROM er_reservations WHERE id = $1',[id])).rows;return decode(rows)[0] || null;
+    const rows=(await (client || scope.getStore() || pool).query('SELECT id, record FROM er_reservations WHERE id = $1',[id])).rows;return decode(rows)[0] || null;
   });
   const hashIdentity = value => value ? crypto.createHash('sha256').update(value).digest('hex') : null;
   async function recordPaid(client,r) {
@@ -97,10 +113,10 @@ function createStore(env = process.env, suppliedPool) {
       await client.query('SELECT pg_advisory_xact_lock($1)',[730903]);
       const rows=(await client.query('SELECT id, record FROM er_reservations WHERE id = $1 FOR UPDATE',[id])).rows;
       const record=decode(rows)[0];if(!record)return null;
-      const result=await fn(record);validateRecord(record);
+      const result=await fn(record,client);validateRecord(record);
       await client.query('UPDATE er_reservations SET record = $2::jsonb, version = version + 1, updated_at = now() WHERE id = $1',[id,JSON.stringify(record)]);
       await recordPaid(client,record);
-      if(record.paymentStatus==='paid' || (!record.checkoutAttempt && !record.stripeSessionId))await client.query('DELETE FROM er_first_ride_claims WHERE booking_id=$1',[id]);
+      if(record.paymentStatus==='paid' || record.checkoutAttempt?.state==='confirmed_unpaid' || (!record.checkoutAttempt && !record.stripeSessionId))await client.query('DELETE FROM er_first_ride_claims WHERE booking_id=$1',[id]);
       return result === undefined ? record : result;
     });
   }
@@ -148,6 +164,33 @@ function createStore(env = process.env, suppliedPool) {
       if(record && record.paymentStatus!=='paid' && record.stripeSessionId===sessionId)await client.query('DELETE FROM er_first_ride_claims WHERE booking_id=$1',[id]);
     });
   }
+  async function reconciliationCandidates(limit=10) {
+    return safe(async()=>decode((await pool.query("SELECT r.id,r.record FROM er_reservations r WHERE r.record->>'paymentStatus'<>'paid' AND EXISTS (SELECT 1 FROM er_first_ride_claims c WHERE c.booking_id=r.id) ORDER BY (r.record #>> '{checkoutAttempt,lastReconciledAt}')::bigint NULLS FIRST,r.created_at LIMIT $1",[limit])).rows));
+  }
+  async function finalizeReconciliation(snapshot,outcome) {
+    return update(snapshot.id,async(record,client)=>{
+      const attempt=record.checkoutAttempt;
+      if(!attempt || attempt.key!==snapshot.checkoutAttempt?.key ||
+         (record.stripeSessionId || null)!==(snapshot.stripeSessionId || null) ||
+         (attempt.state || null)!==(snapshot.checkoutAttempt.state || null))return false;
+      if(record.paymentStatus==='paid') {attempt.state='confirmed_paid';return false;}
+      if(outcome.state==='confirmed_unpaid') {
+        const proof=outcome.evidence==='verified_expired_unpaid' && !!outcome.sessionId ||
+          outcome.evidence==='not_submitted' && attempt.version===1 && attempt.state==='prepared' && attempt.firstSubmittedAt===null && attempt.submissionCount===0 && !record.stripeSessionId ||
+          outcome.evidence==='validation_rejected_before_execution' && attempt.version===1 && attempt.submissionCount===1 && attempt.state==='submitted_unknown' && !record.stripeSessionId;
+        if(!proof)return false;
+        const paid=await client.query('SELECT 1 FROM er_paid_ride_eligibility WHERE email_hash=$1 OR phone_hash=$2 LIMIT 1',identityHashes(record.customer));
+        const claims=await client.query('SELECT 1 FROM er_first_ride_claims WHERE booking_id=$1 LIMIT 1',[record.id]);
+        if(paid.rows.length || !claims.rows.length) {attempt.state='review_required';attempt.evidence='paid_identity_or_claim_changed';attempt.lastReconciledAt=outcome.at;return false;}
+      }
+      if(outcome.sessionId)record.stripeSessionId=outcome.sessionId;
+      Object.assign(attempt,{state:outcome.state,evidence:outcome.evidence,lastReconciledAt:outcome.at});
+      if(outcome.state==='confirmed_paid') {
+        record.paymentStatus='paid';if(record.status==='awaiting_payment')record.status='confirmed';record.paidAt=new Date(outcome.at).toISOString();
+      }
+      return true;
+    });
+  }
   async function migrate() {
     return transaction(async client=>{
       await client.query('SELECT pg_advisory_xact_lock($1)',[730902]);
@@ -164,6 +207,6 @@ function createStore(env = process.env, suppliedPool) {
       return {inserted,skipped};
     });
   }
-  return {list,get,hasPaidRide,update,createWithBudget,withActionLock,firstRideConflicts,claimFirstRide,releaseExpiredFirstRide,migrate,importLegacy,close:()=>pool.end()};
+  return {list,get,hasPaidRide,update,createWithBudget,withActionLock,firstRideConflicts,claimFirstRide,releaseExpiredFirstRide,reconciliationCandidates,finalizeReconciliation,migrate,importLegacy,close:()=>pool.end()};
 }
 module.exports={createStore,StorageError,validateRecord,validateRecords,connectionOptions};
