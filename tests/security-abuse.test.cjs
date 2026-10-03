@@ -1382,7 +1382,7 @@ test('New audit 3: normal hotel/street bookings remain normal; special vehicle/j
 test('New audit 3: autocomplete retains selected identity and manual edits clear it without redesign',()=>{
   const appSource=fs.readFileSync(path.join(root,'public/app.js'),'utf8');
   const handlers={},input={value:'EWR',dataset:{placeId:booking.pickupPlaceId},addEventListener:(event,fn)=>handlers[event]=fn};
-  const context={suggestionTimers:{},clearTimeout(){},setTimeout(){return 1;},specialOfferActive:()=>true};
+  const context={pickup:input,syncPickupTerminal(){},suggestionTimers:{},clearTimeout(){},setTimeout(){return 1;},specialOfferActive:()=>true};
   vm.createContext(context);
   const start=appSource.indexOf('function enableAddressAutocomplete('),end=appSource.indexOf('/* =========================================',start);
   vm.runInContext(appSource.slice(start,end),context);context.enableAddressAutocomplete(input,{innerHTML:''},'pickup');
@@ -1394,4 +1394,58 @@ test('New audit 3: autocomplete retains selected identity and manual edits clear
   context.renderSuggestions(container,input,[{description:'EWR',placeId:booking.pickupPlaceId}]);
   clicks[0].click({preventDefault(){}});assert.equal(input.dataset.placeId,booking.pickupPlaceId);assert.equal(input.value,'EWR');
   assert.match(appSource,/if \(pickup.dataset.placeId\) data.pickupPlaceId = pickup.dataset.placeId/);
+});
+
+
+test('EWR terminal selector: general/terminal autocomplete, exact dropdown IDs, clearing and mobile placement',()=>{
+  const app=fs.readFileSync(path.join(root,'public/app.js'),'utf8');
+  const classes=new Set(['hidden-field']),handlers={};
+  const field={classList:{toggle(name,hide){if(hide)classes.add(name);else classes.delete(name);}}};
+  const selector={value:'',disabled:true,addEventListener(event,fn){handlers[event]=fn;}};
+  const input={value:'EWR',dataset:{placeId:booking.pickupPlaceId}};
+  const context={pickup:input,document:{getElementById:id=>id==='pickupTerminal' ? selector : field},resetQuote(){}};
+  vm.createContext(context);
+  vm.runInContext(app.slice(app.indexOf('const pickupTerminalField ='),app.indexOf('const dropoff =')),context);
+  context.syncPickupTerminal();assert.equal(classes.has('hidden-field'),false);assert.equal(selector.disabled,false);assert.equal(selector.value,'');
+  for(const key of ['a','b','c','general']) {
+    selector.value=key;handlers.change();
+    const entry=vm.runInContext('ewrTerminalChoices["'+key+'"]',context);
+    assert.equal(input.dataset.placeId,entry.id);assert.equal(input.value,entry.text);
+    context.syncPickupTerminal();assert.equal(selector.value,key==='general' ? '' : key);
+  }
+  input.dataset.placeId='hotel_id';context.syncPickupTerminal();
+  assert.equal(classes.has('hidden-field'),true);assert.equal(selector.disabled,true);assert.equal(selector.value,'');
+  const html=fs.readFileSync(path.join(root,'public/index.html'),'utf8');
+  assert.ok(html.indexOf('id="pickupTerminalField"')>html.indexOf('id="pickupSuggestions"'));
+  assert.ok(html.indexOf('id="pickupTerminalField"')<html.indexOf('id="dropoffField"'));
+  assert.ok(html.indexOf('id="pickupTerminalField"')<html.indexOf('id="bookingCustomerStep"'));
+  assert.match(app,/if \(!pickupTerminal.disabled\) data.pickupTerminal/);
+});
+
+test('EWR terminal selector: normal and special quote/Checkout bind every selection to verified Google identity',async t=>{
+  const entries=Object.entries(approvedEwr);
+  for(let i=0;i<entries.length;i++) {
+    const [id,entry]=entries[i],key=['general','a','b','c'][i];
+    for(const special of [false,true]) {
+      const h=await harness(t),place=airportResult(id);
+      h.state.pickupResults=[place];h.state.placeDetails=place;
+      const body={...(special ? specialBooking : booking),pickup:entry.label,pickupPlaceId:id,pickupTerminal:key};
+      assert.equal((await h.request('/api/quote',body)).body.total,special ? 150 : 100);
+      const result=await h.request('/api/checkout',body);assert.equal(result.status,200);
+      assert.equal(h.records()[0].trip.pickupPlaceId,id);
+      assert.equal(h.records()[0].trip.pickup,place.displayName.text+', '+place.formattedAddress);
+      assert.ok(h.state.routes.every(route=>route.origin.placeId===id));
+    }
+  }
+});
+
+test('EWR terminal selector: normal Round Trip return routes to same terminal; hourly price and security unchanged',async t=>{
+  const h=await harness(t),id=Object.keys(approvedEwr)[1];
+  h.state.pickupResults=[airportResult(id)];h.state.placeDetails=airportResult(id);
+  const body={...booking,pickup:'Terminal A',pickupPlaceId:id,pickupTerminal:'a',tripType:'roundtrip',returnDate:'2026-11-11',returnTime:'12:00'};
+  const result=await h.request('/api/checkout',body);assert.equal(result.status,200);
+  assert.equal(h.state.routes[0].origin.placeId,id);assert.equal(h.state.routes[1].destination.placeId,id);
+  assert.equal(h.records()[0].quote.total,200);
+  assert.equal((await h.request('/api/quote',{...body,tripType:'hourly',hours:3})).body.total,450);
+  assert.equal((await h.request('/api/quote',{...body,pickup:'Hotel',pickupPlaceId:'hotel_id',pickupTerminal:'a'})).status,400);
 });

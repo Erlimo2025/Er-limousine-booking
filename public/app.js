@@ -7,6 +7,27 @@ const tripTypeInput = document.getElementById("tripType");
 const tripTabs = document.querySelectorAll(".trip-tab");
 
 const pickup = document.getElementById("pickup");
+const pickupTerminalField = document.getElementById("pickupTerminalField");
+const pickupTerminal = document.getElementById("pickupTerminal");
+const ewrTerminalChoices = Object.freeze({
+  general:{id:"ChIJ7wzsxeFSwokRhvLXxTe087M",text:"Newark Liberty International Airport (EWR)"},
+  a:{id:"ChIJ2dQDPZNSwokRVJr9XE2SPt0",text:"Newark Liberty International Airport Terminal A"},
+  b:{id:"ChIJ-6uTxfZSwokR-VfW-WSM53k",text:"Newark Liberty International Airport Terminal B"},
+  c:{id:"ChIJMYEleJSwokRawcDBeH8NVg",text:"Newark Liberty International Airport Terminal C"}
+});
+function syncPickupTerminal() {
+  const match=Object.entries(ewrTerminalChoices).find(([,entry])=>entry.id===pickup.dataset.placeId);
+  pickupTerminalField.classList.toggle("hidden-field",!match);
+  pickupTerminal.disabled=!match;
+  pickupTerminal.value=match && match[0]!=="general" ? match[0] : "";
+}
+pickupTerminal.addEventListener("change",()=>{
+  const selected=ewrTerminalChoices[pickupTerminal.value || "general"];
+  if (!selected || pickupTerminal.disabled) return;
+  pickup.dataset.placeId=selected.id;
+  pickup.value=selected.text;
+  resetQuote();
+});
 const dropoff = document.getElementById("dropoff");
 const dropoffField = document.getElementById("dropoffField");
 
@@ -188,6 +209,7 @@ function getFormData() {
   }
 
   if (pickup.dataset.placeId) data.pickupPlaceId = pickup.dataset.placeId;
+  if (!pickupTerminal.disabled) data.pickupTerminal = pickupTerminal.value || "general";
   return data;
 }
 
@@ -428,7 +450,8 @@ function activateEwrManhattanSpecial() {
   pickup.value =
     "Newark Liberty International Airport (EWR), 3 Brewster Rd, Newark, NJ 07114";
 
-  pickup.dataset.placeId = "ChIJ7wzsxeFSwokRhvLXxTe087M";
+  pickup.dataset.placeId = ewrTerminalChoices.general.id;
+  syncPickupTerminal();
   dropoff.value = "";
 
   vehicle.value = "suv";
@@ -756,6 +779,7 @@ function renderSuggestions(
           input.value =
             description;
           input.dataset.placeId = typeof item === "object" ? item.placeId || "" : "";
+          if (input === pickup) syncPickupTerminal();
 
           container.innerHTML =
             "";
@@ -787,6 +811,7 @@ function enableAddressAutocomplete(
     () => {
 
       delete input.dataset.placeId;
+      if (input === pickup) syncPickupTerminal();
       clearTimeout(
         suggestionTimers[key]
       );

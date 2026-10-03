@@ -583,7 +583,7 @@ async function getRouteEstimate(
           },
 
           destination: {
-            address: destination
+            ...(typeof destination === "object" ? {placeId:destination.placeId} : {address:destination})
           },
 
           ...(departureTime ? { departureTime } : {}),
@@ -752,6 +752,28 @@ function distanceMiles(
    $150 EWR → MANHATTAN SPECIAL
 ========================================= */
 
+async function verifyEwrPickup(body,pickupPlace) {
+  const id = body.pickupPlaceId;
+  const rejected = () => new Error("The $150 special requires pickup at Newark Liberty International Airport (EWR).");
+  if (typeof id !== "string" || !Object.hasOwn(ewrPickups,id) || pickupPlace?.id !== id) throw rejected();
+  const details = await googleJson("https://places.googleapis.com/v1/places/" + encodeURIComponent(id), {
+    headers: {"X-Goog-Api-Key":process.env.GOOGLE_MAPS_API_KEY,
+      "X-Goog-FieldMask":"id,displayName,formattedAddress,location,types,primaryType"}
+  });
+  const lat=details.location?.latitude,lng=details.location?.longitude;
+  const types=Array.isArray(details.types) ? details.types : [];
+  const forbidden=["hotel","lodging","restaurant","car_rental","parking","parking_lot","parking_garage","street_address","route"];
+  if (details.id !== id || !Number.isFinite(lat) || !Number.isFinite(lng) ||
+      lat<40.65 || lat>40.73 || lng< -74.22 || lng> -74.13 ||
+      !types.length || types.some(type=>typeof type!=="string") ||
+      forbidden.some(type=>types.includes(type) || details.primaryType===type) ||
+      (ewrPickups[id].kind==="airport" && !types.some(type=>["airport","international_airport"].includes(type))) ||
+      typeof details.displayName?.text!=="string" || !details.displayName.text.trim() ||
+      typeof details.formattedAddress!=="string" || !details.formattedAddress.trim()) throw rejected();
+  return {placeId:id, label:details.displayName.text,address:details.formattedAddress};
+
+}
+
 async function verifyFixedOffer(body) {
   const code =
     sanitizeText(
@@ -811,25 +833,7 @@ async function verifyFixedOffer(body) {
     );
   }
 
-  const id = body.pickupPlaceId;
-  const rejected = () => new Error("The $150 special requires pickup at Newark Liberty International Airport (EWR).");
-  if (typeof id !== "string" || !Object.hasOwn(ewrPickups,id) || pickupPlace.id !== id) throw rejected();
-  const details = await googleJson("https://places.googleapis.com/v1/places/" + encodeURIComponent(id), {
-    headers: {"X-Goog-Api-Key":process.env.GOOGLE_MAPS_API_KEY,
-      "X-Goog-FieldMask":"id,displayName,formattedAddress,location,types,primaryType"}
-  });
-  const lat=details.location?.latitude,lng=details.location?.longitude;
-  const types=Array.isArray(details.types) ? details.types : [];
-  const forbidden=["hotel","lodging","restaurant","car_rental","parking","parking_lot","parking_garage","street_address","route"];
-  if (details.id !== id || !Number.isFinite(lat) || !Number.isFinite(lng) ||
-      lat<40.65 || lat>40.73 || lng< -74.22 || lng> -74.13 ||
-      !types.length || types.some(type=>typeof type!=="string") ||
-      forbidden.some(type=>types.includes(type) || details.primaryType===type) ||
-      (ewrPickups[id].kind==="airport" && !types.some(type=>["airport","international_airport"].includes(type))) ||
-      typeof details.displayName?.text!=="string" || !details.displayName.text.trim() ||
-      typeof details.formattedAddress!=="string" || !details.formattedAddress.trim()) throw rejected();
-  const verifiedPickup = {placeId:id, label:details.displayName.text,
-    address:details.formattedAddress};
+  const verifiedPickup = await verifyEwrPickup(body,pickupPlace);
 
   /*
     Manhattan is New York County.
@@ -1054,13 +1058,19 @@ async function calculateQuote(body) {
   }
 
   const fixedOffer = await verifyFixedOffer(body);
+  let verifiedPickup = fixedOffer?.verifiedPickup;
+  if (!fixedOffer && body.pickupTerminal !== undefined) {
+    const terminalKeys={general:"ChIJ7wzsxeFSwokRhvLXxTe087M",a:"ChIJ2dQDPZNSwokRVJr9XE2SPt0",b:"ChIJ-6uTxfZSwokR-VfW-WSM53k",c:"ChIJMYEleJSwokRawcDBeH8NVg"};
+    if (!Object.hasOwn(terminalKeys,body.pickupTerminal) || terminalKeys[body.pickupTerminal]!==body.pickupPlaceId) throw new Error("Invalid request.");
+    verifiedPickup=await verifyEwrPickup(body,await lookupPlace(body.pickup,true));
+  }
   const route = isHourly ? null :
     await getRouteEstimate(
-      fixedOffer ? {placeId:fixedOffer.verifiedPickup.placeId} : body.pickup,
+      verifiedPickup ? {placeId:verifiedPickup.placeId} : body.pickup,
       body.dropoff,
       isRoundTrip ? new Date(parseServiceDateTime(body.date, body.time, "pickup")).toISOString() : undefined
     );
-  const returnRoute = isRoundTrip ? await getRouteEstimate(body.dropoff, body.pickup,
+  const returnRoute = isRoundTrip ? await getRouteEstimate(body.dropoff, verifiedPickup ? {placeId:verifiedPickup.placeId} : body.pickup,
     new Date(parseServiceDateTime(body.returnDate, body.returnTime, "return")).toISOString()) : null;
 
   /*
@@ -1137,7 +1147,7 @@ async function calculateQuote(body) {
 
   validateCalculatedFare(body.vehicle, total);
 
-  return {
+  const normalQuote = {
     vehicle:
       isHourly && body.vehicle === "escalade" ? "Cadillac Escalade ESV" : rate.label,
 
@@ -1179,6 +1189,8 @@ async function calculateQuote(body) {
 
     fixedOffer: null
   };
+  if (verifiedPickup) Object.defineProperty(normalQuote,"verifiedPickup",{value:verifiedPickup});
+  return normalQuote;
 }
 
 
@@ -1235,7 +1247,7 @@ function createBookingRecord(
 
 
     trip: {
-      ...(body.offerCode ? {pickupPlaceId:body.pickupPlaceId || null} : {}),
+      ...((body.offerCode || body.pickupTerminal !== undefined) ? {pickupPlaceId:body.pickupPlaceId || null} : {}),
       tripType:
         sanitizeText(
           body.tripType,
@@ -1244,7 +1256,7 @@ function createBookingRecord(
 
       pickup:
         sanitizeText(
-          quote?.fixedOffer ? `${quote.fixedOffer.verifiedPickup.label}, ${quote.fixedOffer.verifiedPickup.address}` : body.pickup
+          (quote?.fixedOffer?.verifiedPickup || quote?.verifiedPickup) ? `${(quote.fixedOffer?.verifiedPickup || quote.verifiedPickup).label}, ${(quote.fixedOffer?.verifiedPickup || quote.verifiedPickup).address}` : body.pickup
         ),
 
       dropoff:
