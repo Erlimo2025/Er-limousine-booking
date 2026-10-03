@@ -112,6 +112,7 @@ async function harness(t, env = {}, saved = "[]", injectedStore) {
       if (name === "dotenv") return {config() {}};
       if (name === "express") return express;
       if (name === "stripe") return MockStripe;
+      if (name === "./auth/customers") return require("../auth/customers");
       if (name === "./pricing") return testPricing;
       if (name === "./ewr-pickups") return require("../ewr-pickups");
       if (name === "./storage/postgres") return {createStore: () => {if(injectedStore instanceof Error)throw injectedStore;return testStore;}, StorageError: require("../storage/postgres").StorageError};

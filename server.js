@@ -1587,6 +1587,9 @@ app.use(
   })
 );
 
+require('./auth/customers').installCustomerAuth(app,{store:reservationStore,route,rateLimit,
+  validOrigin:validAdminOrigin,secure:adminCookieSecure,now:()=>Date.now()});
+
 app.use(
   express.static(
     path.join(

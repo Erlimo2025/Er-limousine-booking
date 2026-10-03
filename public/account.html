@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>My Account | ER Limousine Service</title>
+  <link rel="stylesheet" href="/account.css"><script src="/account.js" defer></script>
+</head>
+<body>
+<header class="account-header">
+  <a class="brand" href="/" aria-label="ER Limousine Service home"><span class="brand-monogram">ER</span><span class="brand-copy">LIMOUSINE SERVICE<small>LUXURY · RELIABILITY · ALWAYS ON TIME</small></span></a>
+  <nav aria-label="Customer account navigation">
+    <a class="header-book" href="/#book">BOOK A RIDE</a>
+    <span id="accountNavigation" hidden><a href="#profile">MY ACCOUNT</a><button id="navLogout" class="nav-logout" type="button">LOG OUT</button></span>
+  </nav>
+</header>
+<main class="account-shell" id="accountShell">
+<section id="loginView" class="auth-card">
+  <p class="eyebrow">ER LIMOUSINE SERVICE</p><h1>Welcome Back</h1>
+  <p class="intro">Log in to your account to book rides and manage your account.</p>
+  <form id="loginForm">
+    <div class="form-field"><label for="loginEmail">Email Address</label><input id="loginEmail" type="email" autocomplete="username" required maxlength="254"></div>
+    <div class="form-field"><label for="loginPassword">Password</label><div class="password-field"><input id="loginPassword" data-password-input type="password" autocomplete="current-password" required minlength="10" maxlength="128"><button class="password-toggle" type="button" data-password-toggle="loginPassword" aria-controls="loginPassword" aria-pressed="false" aria-label="Show password">Show</button></div></div>
+    <button class="primary submit-button" type="submit">LOG IN</button>
+  </form>
+  <p class="switch">Don’t have an account? <a href="/account.html#create">Create Account</a></p>
+</section>
+<section id="registerView" class="auth-card" hidden>
+  <p class="eyebrow">ER LIMOUSINE SERVICE</p><h1>Create Your Account</h1>
+  <p class="intro">Welcome to ER Limousine Service.<br>Create an account to book rides, manage your trips, and enjoy exclusive offers.</p>
+  <form id="registerForm">
+    <div class="form-field"><label for="fullName">Full Name</label><input id="fullName" autocomplete="name" required minlength="2" maxlength="120"></div>
+    <div class="form-field"><label for="registerEmail">Email Address</label><input id="registerEmail" type="email" autocomplete="username" required maxlength="254"></div>
+    <div class="form-field"><label for="phone">Phone Number</label><input id="phone" type="tel" autocomplete="tel" required maxlength="40"></div>
+    <div class="form-field"><label for="registerPassword">Password</label><div class="password-field"><input id="registerPassword" data-password-input type="password" autocomplete="new-password" required minlength="10" maxlength="128" aria-describedby="passwordHelp"><button class="password-toggle" type="button" data-password-toggle="registerPassword" aria-controls="registerPassword" aria-pressed="false" aria-label="Show password">Show</button></div><small id="passwordHelp">Use 10–128 characters. Passphrases are welcome.</small></div>
+    <button class="primary submit-button" type="submit">CREATE ACCOUNT</button>
+  </form>
+  <p class="switch">Already have an account? <a href="/account.html">Log In</a></p>
+</section>
+<section id="dashboardView" hidden>
+  <div class="dashboard-heading"><p class="eyebrow">YOUR ER LIMOUSINE ACCOUNT</p><h1 id="welcome">Welcome</h1><p>Manage your account and book your next ride.</p></div>
+  <div class="dashboard-grid">
+    <article class="ride-card"><span class="card-icon" aria-hidden="true">↗</span><p class="eyebrow">YOUR NEXT JOURNEY</p><h2>Travel in comfort.</h2><p>Premium private transportation, whenever you need it.</p><a class="primary" href="/#book">Book a Ride <span aria-hidden="true">→</span></a></article>
+    <article class="profile-card" id="profile"><div class="card-heading"><span class="card-icon" aria-hidden="true">♙</span><h2>My Account</h2></div><p class="card-description">Your account details</p><dl><div><dt>Full Name</dt><dd id="profileName"></dd></div><div><dt>Email Address</dt><dd id="profileEmail"></dd></div><div><dt>Phone Number</dt><dd id="profilePhone"></dd></div></dl><button id="logout" class="text-button" type="button">Log Out</button></article>
+    <article class="future-card"><span class="card-icon" aria-hidden="true">◷</span><h2>My Trips</h2><p>Reservation history coming soon.</p><span class="coming-soon">COMING SOON</span></article>
+    <article class="future-card"><span class="card-icon" aria-hidden="true">▤</span><h2>Payment Methods</h2><p>Saved payment methods coming soon.</p><span class="coming-soon">COMING SOON</span></article>
+  </div>
+</section>
+<p id="message" role="status" aria-live="polite"></p>
+</main>
+<footer><span>ER Limousine Service</span><p>© ER Limousine Service LLC. All rights reserved.</p></footer>
+</body></html>
