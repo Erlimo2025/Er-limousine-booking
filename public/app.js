@@ -29,6 +29,21 @@ pickupTerminal.addEventListener("change",()=>{
   resetQuote();
 });
 const dropoff = document.getElementById("dropoff");
+const dropoffTerminalField = document.getElementById("dropoffTerminalField");
+const dropoffTerminal = document.getElementById("dropoffTerminal");
+function syncDropoffTerminal() {
+  const match=Object.entries(ewrTerminalChoices).find(([,entry])=>entry.id===dropoff.dataset.placeId);
+  dropoffTerminalField.classList.toggle("hidden-field",!match);
+  dropoffTerminal.disabled=!match;
+  dropoffTerminal.value=match && match[0]!=="general" ? match[0] : "";
+}
+dropoffTerminal.addEventListener("change",()=>{
+  const selected=ewrTerminalChoices[dropoffTerminal.value || "general"];
+  if (!selected || dropoffTerminal.disabled) return;
+  dropoff.dataset.placeId=selected.id;
+  dropoff.value=selected.text;
+  resetQuote();
+});
 const dropoffField = document.getElementById("dropoffField");
 
 const dateInput = document.getElementById("date");
@@ -210,6 +225,10 @@ function getFormData() {
 
   if (pickup.dataset.placeId) data.pickupPlaceId = pickup.dataset.placeId;
   if (!pickupTerminal.disabled) data.pickupTerminal = pickupTerminal.value || "general";
+  if (data.tripType !== "hourly" && !dropoffTerminal.disabled) {
+    data.dropoffPlaceId = dropoff.dataset.placeId;
+    data.dropoffTerminal = dropoffTerminal.value || "general";
+  }
   return data;
 }
 
@@ -453,6 +472,8 @@ function activateEwrManhattanSpecial() {
   pickup.dataset.placeId = ewrTerminalChoices.general.id;
   syncPickupTerminal();
   dropoff.value = "";
+  delete dropoff.dataset.placeId;
+  syncDropoffTerminal();
 
   vehicle.value = "suv";
   vehicle.disabled = true;
@@ -780,6 +801,7 @@ function renderSuggestions(
             description;
           input.dataset.placeId = typeof item === "object" ? item.placeId || "" : "";
           if (input === pickup) syncPickupTerminal();
+          if (input === dropoff) syncDropoffTerminal();
 
           container.innerHTML =
             "";
@@ -812,6 +834,7 @@ function enableAddressAutocomplete(
 
       delete input.dataset.placeId;
       if (input === pickup) syncPickupTerminal();
+      if (input === dropoff) syncDropoffTerminal();
       clearTimeout(
         suggestionTimers[key]
       );

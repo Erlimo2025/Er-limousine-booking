@@ -1064,13 +1064,20 @@ async function calculateQuote(body) {
     if (!Object.hasOwn(terminalKeys,body.pickupTerminal) || terminalKeys[body.pickupTerminal]!==body.pickupPlaceId) throw new Error("Invalid request.");
     verifiedPickup=await verifyEwrPickup(body,await lookupPlace(body.pickup,true));
   }
+  let verifiedDropoff;
+  if (fixedOffer && body.dropoffTerminal !== undefined) throw new Error("Invalid request.");
+  if (!fixedOffer && body.dropoffTerminal !== undefined) {
+    const terminalKeys={general:"ChIJ7wzsxeFSwokRhvLXxTe087M",a:"ChIJ2dQDPZNSwokRVJr9XE2SPt0",b:"ChIJ-6uTxfZSwokR-VfW-WSM53k",c:"ChIJMYEleJSwokRawcDBeH8NVg"};
+    if (!Object.hasOwn(terminalKeys,body.dropoffTerminal) || terminalKeys[body.dropoffTerminal]!==body.dropoffPlaceId) throw new Error("Invalid request.");
+    verifiedDropoff=await verifyEwrPickup({pickupPlaceId:body.dropoffPlaceId},await lookupPlace(body.dropoff,true));
+  }
   const route = isHourly ? null :
     await getRouteEstimate(
       verifiedPickup ? {placeId:verifiedPickup.placeId} : body.pickup,
-      body.dropoff,
+      verifiedDropoff ? {placeId:verifiedDropoff.placeId} : body.dropoff,
       isRoundTrip ? new Date(parseServiceDateTime(body.date, body.time, "pickup")).toISOString() : undefined
     );
-  const returnRoute = isRoundTrip ? await getRouteEstimate(body.dropoff, verifiedPickup ? {placeId:verifiedPickup.placeId} : body.pickup,
+  const returnRoute = isRoundTrip ? await getRouteEstimate(verifiedDropoff ? {placeId:verifiedDropoff.placeId} : body.dropoff, verifiedPickup ? {placeId:verifiedPickup.placeId} : body.pickup,
     new Date(parseServiceDateTime(body.returnDate, body.returnTime, "return")).toISOString()) : null;
 
   /*
@@ -1190,6 +1197,7 @@ async function calculateQuote(body) {
     fixedOffer: null
   };
   if (verifiedPickup) Object.defineProperty(normalQuote,"verifiedPickup",{value:verifiedPickup});
+  if (verifiedDropoff) Object.defineProperty(normalQuote,"verifiedDropoff",{value:verifiedDropoff});
   return normalQuote;
 }
 
@@ -1247,6 +1255,7 @@ function createBookingRecord(
 
 
     trip: {
+      ...(body.dropoffTerminal !== undefined ? {dropoffPlaceId:body.dropoffPlaceId || null} : {}),
       ...((body.offerCode || body.pickupTerminal !== undefined) ? {pickupPlaceId:body.pickupPlaceId || null} : {}),
       tripType:
         sanitizeText(
@@ -1261,7 +1270,7 @@ function createBookingRecord(
 
       dropoff:
         sanitizeText(
-          body.dropoff
+          quote?.verifiedDropoff ? `${quote.verifiedDropoff.label}, ${quote.verifiedDropoff.address}` : body.dropoff
         ),
 
       date:

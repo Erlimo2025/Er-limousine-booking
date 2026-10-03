@@ -99,8 +99,9 @@ async function harness(t, env = {}, saved = "[]", injectedStore) {
         if (url.includes("autocomplete")) return {suggestions: [{placePrediction: {placeId:"mock_place_id",text: {text: "Mock address"}}}]};
         const airport={id:booking.pickupPlaceId,displayName:{text:"Newark Liberty International Airport"},
           formattedAddress:"3 Brewster Rd, Newark, NJ",types:["airport"],primaryType:"airport",location:{latitude:40.6895,longitude:-74.1745}};
-        if(url.includes("/v1/places/"))return state.placeDetails || airport;
+        if(url.includes("/v1/places/"))return state.detailsById?.[decodeURIComponent(url.split("/").at(-1))] || state.placeDetails || airport;
         const query=JSON.parse(options.body).textQuery;
+        if(state.searchResults && Object.hasOwn(state.searchResults,query))return {places:state.searchResults[query]};
         if(state.pickupResults && query!=="Manhattan")return {places:state.pickupResults};
         return {places: [query === "Manhattan"
           ? {addressComponents: [{types: ["administrative_area_level_2"], longText: "New York County"}]}
@@ -1382,7 +1383,7 @@ test('New audit 3: normal hotel/street bookings remain normal; special vehicle/j
 test('New audit 3: autocomplete retains selected identity and manual edits clear it without redesign',()=>{
   const appSource=fs.readFileSync(path.join(root,'public/app.js'),'utf8');
   const handlers={},input={value:'EWR',dataset:{placeId:booking.pickupPlaceId},addEventListener:(event,fn)=>handlers[event]=fn};
-  const context={pickup:input,syncPickupTerminal(){},suggestionTimers:{},clearTimeout(){},setTimeout(){return 1;},specialOfferActive:()=>true};
+  const context={pickup:input,dropoff:{},syncPickupTerminal(){},syncDropoffTerminal(){},suggestionTimers:{},clearTimeout(){},setTimeout(){return 1;},specialOfferActive:()=>true};
   vm.createContext(context);
   const start=appSource.indexOf('function enableAddressAutocomplete('),end=appSource.indexOf('/* =========================================',start);
   vm.runInContext(appSource.slice(start,end),context);context.enableAddressAutocomplete(input,{innerHTML:''},'pickup');
@@ -1448,4 +1449,92 @@ test('EWR terminal selector: normal Round Trip return routes to same terminal; h
   assert.equal(h.records()[0].quote.total,200);
   assert.equal((await h.request('/api/quote',{...body,tripType:'hourly',hours:3})).body.total,450);
   assert.equal((await h.request('/api/quote',{...body,pickup:'Hotel',pickupPlaceId:'hotel_id',pickupTerminal:'a'})).status,400);
+});
+
+
+test('EWR drop-off selector: general and A/B/C autocomplete, exact IDs, independent sides, edits and mobile steps',()=>{
+  const app=fs.readFileSync(path.join(root,'public/app.js'),'utf8'),handlers={};
+  const makeInput=()=>({value:'',dataset:{},addEventListener(event,fn){this[event]=fn;}});
+  const pickupInput=makeInput(),dropoffInput=makeInput();
+  const makeField=()=>({hidden:true,classList:{toggle(name,hide){this.owner.hidden=hide;}}});
+  const pickupField=makeField(),dropoffField=makeField();pickupField.classList.owner=pickupField;dropoffField.classList.owner=dropoffField;
+  const makeSelect=key=>({value:'',disabled:true,addEventListener(event,fn){handlers[key]=fn;}});
+  const pickupSelect=makeSelect('pickup'),dropoffSelect=makeSelect('dropoff');
+  const elements={pickupTerminal:pickupSelect,pickupTerminalField:pickupField,dropoff:dropoffInput,dropoffTerminal:dropoffSelect,dropoffTerminalField:dropoffField,bookingStepLabel:{textContent:''}};
+  const context={pickup:pickupInput,document:{getElementById:id=>elements[id],createElement:()=>({addEventListener(event,fn){this.click=fn;}})},
+    resetQuote(){},clearTimeout(){},setTimeout(){},suggestionTimers:{},specialOfferActive:()=>false,
+    mobileBooking:{matches:true},bookingPanel:{dataset:{}}};
+  vm.createContext(context);vm.runInContext(app.slice(app.indexOf('const pickupTerminalField'),app.indexOf('const dropoffField')),context);
+  vm.runInContext(app.slice(app.indexOf('function renderSuggestions('),app.indexOf('async function requestQuote(',app.indexOf('function renderSuggestions('))),context);
+  const rendered=[],container={innerHTML:'',appendChild:x=>rendered.push(x)};
+  for(const [id,entry] of Object.entries(approvedEwr)) {
+    context.renderSuggestions(container,dropoffInput,[{description:entry.label,placeId:id}]);rendered.at(-1).click({preventDefault(){}});
+    assert.equal(dropoffField.hidden,false);assert.equal(dropoffSelect.disabled,false);
+    assert.equal(dropoffSelect.value,entry.kind==='airport' ? '' : entry.label.slice(-1).toLowerCase());
+  }
+  pickupSelect.disabled=false;pickupSelect.value='a';handlers.pickup();const originalPickup={...pickupInput.dataset};
+  for(const choice of ['a','b','c','general']) {
+    dropoffSelect.value=choice;handlers.dropoff();
+    const expected=vm.runInContext('ewrTerminalChoices["'+choice+'"]',context);
+    assert.equal(dropoffInput.dataset.placeId,expected.id);assert.equal(dropoffInput.value,expected.text);
+    assert.deepEqual(pickupInput.dataset,originalPickup);
+  }
+  const originalDropoff={...dropoffInput.dataset};pickupSelect.value='b';handlers.pickup();assert.deepEqual(dropoffInput.dataset,originalDropoff);
+  const stepStart=app.indexOf('function showBookingStep('),stepEnd=app.indexOf('function continueBooking(',stepStart);
+  vm.runInContext(app.slice(stepStart,stepEnd),context);
+  context.showBookingStep(2);context.showBookingStep(1);assert.deepEqual(dropoffInput.dataset,originalDropoff);
+  context.enableAddressAutocomplete(dropoffInput,container,'dropoff');dropoffInput.value='Hotel';dropoffInput.input();
+  assert.equal(dropoffInput.dataset.placeId,undefined);assert.equal(dropoffField.hidden,true);assert.equal(dropoffSelect.value,'');
+  context.renderSuggestions(container,dropoffInput,[{description:'Hotel',placeId:'hotel_id'}]);rendered.at(-1).click({preventDefault(){}});
+  assert.equal(dropoffField.hidden,true);assert.equal(dropoffSelect.disabled,true);
+  const html=fs.readFileSync(path.join(root,'public/index.html'),'utf8');
+  assert.ok(html.indexOf('id="dropoffTerminalField"')>html.indexOf('id="dropoffSuggestions"'));
+  assert.ok(html.indexOf('id="dropoffTerminalField"')<html.indexOf('id="bookingCustomerStep"'));
+});
+
+test('EWR drop-off selector: every terminal quotes, routes, reserves and checks out at normal pricing',async t=>{
+  let index=0;
+  for(const [id,entry] of Object.entries(approvedEwr)) {
+    const h=await harness(t),place=airportResult(id);
+    h.state.searchResults={[entry.label]:[place]};h.state.detailsById={[id]:place};
+    const body={...booking,pickup:'Manhattan',dropoff:entry.label,dropoffPlaceId:id,dropoffTerminal:['general','a','b','c'][index++]};
+    const quote=await h.request('/api/quote',body);assert.equal(quote.status,200);assert.equal(quote.body.total,100);assert.equal(quote.body.fixedOffer,null);
+    const checkout=await h.request('/api/checkout',body);assert.equal(checkout.status,200);
+    assert.equal(h.records()[0].trip.dropoffPlaceId,id);assert.equal(h.records()[0].trip.dropoff,place.displayName.text+', '+place.formattedAddress);
+    assert.ok(h.state.routes.every(route=>route.destination.placeId===id));assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount,10000);
+    const promo=await h.request('/api/quote',{...body,promoCode:'FIRST15'});assert.equal(promo.body.total,85);
+    const special=await h.request('/api/quote',{...body,vehicle:'suv',offerCode:'EWR_MANHATTAN_SUV'});assert.equal(special.status,400);
+  }
+});
+
+test('EWR drop-off selector: both EWR identities stay independent in outbound and return routes',async t=>{
+  const h=await harness(t),ids=Object.keys(approvedEwr),origin=airportResult(ids[1]),destination=airportResult(ids[2]);
+  h.state.searchResults={'Terminal A':[origin],'Terminal B':[destination]};h.state.detailsById={[ids[1]]:origin,[ids[2]]:destination};
+  const body={...booking,pickup:'Terminal A',pickupPlaceId:ids[1],pickupTerminal:'a',dropoff:'Terminal B',dropoffPlaceId:ids[2],dropoffTerminal:'b',tripType:'roundtrip',returnDate:'2026-11-11',returnTime:'12:00'};
+  const checkout=await h.request('/api/checkout',body);assert.equal(checkout.status,200);
+  assert.equal(h.state.routes[0].origin.placeId,ids[1]);assert.equal(h.state.routes[0].destination.placeId,ids[2]);
+  assert.equal(h.state.routes[1].origin.placeId,ids[2]);assert.equal(h.state.routes[1].destination.placeId,ids[1]);
+  const record=h.records()[0];assert.equal(record.trip.pickupPlaceId,ids[1]);assert.equal(record.trip.dropoffPlaceId,ids[2]);assert.equal(record.quote.total,200);
+});
+
+test('EWR drop-off selector: forged IDs, conflicting locations, changed identities and provider failures reject Checkout',async t=>{
+  for(const change of [{dropoffPlaceId:'hotel_id'},{dropoffTerminal:'b'},{dropoff:'Hotel'},{dropoffPlaceId:null}]) {
+    const h=await harness(t);h.state.searchResults={Hotel:[airportResult('hotel_id')]};
+    const body={...booking,dropoff:'EWR',dropoffPlaceId:booking.pickupPlaceId,dropoffTerminal:'general',...change};
+    for(const endpoint of ['/api/quote','/api/checkout'])assert.equal((await h.request(endpoint,body)).status,400);
+    assert.equal(h.state.creates.length,0);
+  }
+  for(const change of [{placeDetails:airportResult('changed')},{googleError:true}]) {
+    const h=await harness(t);Object.assign(h.state,change);
+    assert.equal((await h.request('/api/checkout',{...booking,dropoff:'EWR',dropoffPlaceId:booking.pickupPlaceId,dropoffTerminal:'general'})).status,400);
+    assert.equal(h.state.creates.length,0);
+  }
+});
+
+
+test('EWR drop-off selector: a special request cannot attach an airport destination ID to Manhattan text',async t=>{
+  const h=await harness(t);
+  const forged={...specialBooking,dropoffTerminal:'general',dropoffPlaceId:booking.pickupPlaceId};
+  for(const endpoint of ['/api/quote','/api/checkout'])assert.equal((await h.request(endpoint,forged)).status,400);
+  assert.equal(h.state.creates.length,0);assert.equal(h.records().length,0);
 });
