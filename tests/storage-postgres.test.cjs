@@ -303,4 +303,21 @@ test('isolated PostgreSQL integration: transactions, concurrent workers, import 
   }
  });
 
+ await t.test('New audit 3: PostgreSQL persists only verified special pickup; Checkout re-verifies across workers',async()=>{
+  await pool.query('TRUNCATE er_first_ride_claims, er_reservations, er_storage_audit, er_payment_ledger, er_paid_ride_eligibility');
+  const body={...factory.booking,vehicle:'suv',offerCode:'EWR_MANHATTAN_SUV',promoCode:'FIRST15',email:'ewr-bound@example.test',phone:'2015550188'};
+  const fresh=await factory.harness(t,{},'[]',store),retryWorker=await factory.harness(t,{},'[]',second);
+  const result=await fresh.request('/api/checkout',body);assert.equal(result.status,200);
+  const record=await second.get(result.body.bookingId);
+  assert.equal(record.trip.pickupPlaceId,body.pickupPlaceId);
+  assert.equal(record.trip.pickup,'Newark Liberty International Airport, 3 Brewster Rd, Newark, NJ');
+  assert.equal(record.quote.total,150);assert.equal(record.quote.discount,0);assert.equal(record.quote.promotion,null);
+  assert.equal(fresh.state.routes[0].origin.placeId,record.trip.pickupPlaceId);
+  retryWorker.state.sessions=fresh.state.sessions;
+  retryWorker.state.placeDetails={id:'changed_id',displayName:{text:'Hotel'},formattedAddress:'Nearby street'};
+  const denied=await retryWorker.request('/api/checkout',body,{cookie:fresh.checkoutCookies()});
+  assert.equal(denied.status,400);assert.equal(retryWorker.state.creates.length,0);
+  assert.deepEqual(await store.get(record.id),record);
+ });
+
 });

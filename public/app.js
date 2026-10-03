@@ -187,6 +187,7 @@ function getFormData() {
         .toUpperCase();
   }
 
+  if (pickup.dataset.placeId) data.pickupPlaceId = pickup.dataset.placeId;
   return data;
 }
 
@@ -427,6 +428,7 @@ function activateEwrManhattanSpecial() {
   pickup.value =
     "Newark Liberty International Airport (EWR), 3 Brewster Rd, Newark, NJ 07114";
 
+  pickup.dataset.placeId = "ChIJ7wzsxeFSwokRhvLXxTe087M";
   dropoff.value = "";
 
   vehicle.value = "suv";
@@ -753,6 +755,7 @@ function renderSuggestions(
 
           input.value =
             description;
+          input.dataset.placeId = typeof item === "object" ? item.placeId || "" : "";
 
           container.innerHTML =
             "";
@@ -783,12 +786,14 @@ function enableAddressAutocomplete(
     "input",
     () => {
 
+      delete input.dataset.placeId;
       clearTimeout(
         suggestionTimers[key]
       );
 
-      const query =
-        input.value.trim();
+      const typedQuery = input.value.trim();
+      const query = specialOfferActive() && /^(?:terminal\s+)?[abc]$/i.test(typedQuery)
+        ? `Newark Liberty International Airport Terminal ${typedQuery.slice(-1).toUpperCase()}` : typedQuery;
 
       if (query.length < 3) {
 

@@ -7,6 +7,7 @@ const path = require("path");
 const crypto = require("crypto");
 const { isIP } = require("net");
 const pricing = require("./pricing");
+const ewrPickups = require("./ewr-pickups");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -578,7 +579,7 @@ async function getRouteEstimate(
 
         body: JSON.stringify({
           origin: {
-            address: origin
+            ...(typeof origin === "object" ? {placeId:origin.placeId} : {address:origin})
           },
 
           destination: {
@@ -627,7 +628,7 @@ async function getRouteEstimate(
    GOOGLE PLACE VERIFICATION
 ========================================= */
 
-async function lookupPlace(query) {
+async function lookupPlace(query, strict = false) {
   const key =
     process.env.GOOGLE_MAPS_API_KEY;
 
@@ -651,20 +652,21 @@ async function lookupPlace(query) {
             key,
 
           "X-Goog-FieldMask":
-            "places.displayName,places.formattedAddress,places.addressComponents,places.location,places.types"
+            "places.id,places.displayName,places.formattedAddress,places.addressComponents,places.location,places.types,places.primaryType"
         },
 
         body: JSON.stringify({
           textQuery:
             sanitizeText(query, 200),
 
-          maxResultCount: 1,
+          maxResultCount: strict ? 3 : 1,
 
           languageCode: "en"
         })
       }
     );
 
+  if (strict && (!Array.isArray(data.places) || data.places.length !== 1)) return null;
   return (
     Array.isArray(data.places) &&
     data.places[0]
@@ -796,7 +798,7 @@ async function verifyFixedOffer(body) {
     pickupPlace,
     dropoffPlace
   ] = await Promise.all([
-    lookupPlace(body.pickup),
+    lookupPlace(body.pickup, true),
     lookupPlace(body.dropoff)
   ]);
 
@@ -809,60 +811,25 @@ async function verifyFixedOffer(body) {
     );
   }
 
-  /*
-    Verify EWR using the actual Google
-    location returned for the pickup.
-
-    EWR center:
-    approximately 40.6895, -74.1745
-  */
-
-  const pickupLat =
-    Number(
-      pickupPlace.location?.latitude
-    );
-
-  const pickupLng =
-    Number(
-      pickupPlace.location?.longitude
-    );
-
-  let isEwr = false;
-
-  if (
-    Number.isFinite(pickupLat) &&
-    Number.isFinite(pickupLng)
-  ) {
-    const milesFromEwr =
-      distanceMiles(
-        pickupLat,
-        pickupLng,
-        40.6895,
-        -74.1745
-      );
-
-    isEwr =
-      milesFromEwr <= 3;
-  }
-
-  const pickupText =
-    `${
-      pickupPlace.displayName?.text || ""
-    } ${
-      pickupPlace.formattedAddress || ""
-    }`
-      .toLowerCase();
-
-  if (
-    pickupText.includes(
-      "newark liberty international airport"
-    ) ||
-    pickupText.includes(
-      "newark liberty"
-    )
-  ) {
-    isEwr = true;
-  }
+  const id = body.pickupPlaceId;
+  const rejected = () => new Error("The $150 special requires pickup at Newark Liberty International Airport (EWR).");
+  if (typeof id !== "string" || !Object.hasOwn(ewrPickups,id) || pickupPlace.id !== id) throw rejected();
+  const details = await googleJson("https://places.googleapis.com/v1/places/" + encodeURIComponent(id), {
+    headers: {"X-Goog-Api-Key":process.env.GOOGLE_MAPS_API_KEY,
+      "X-Goog-FieldMask":"id,displayName,formattedAddress,location,types,primaryType"}
+  });
+  const lat=details.location?.latitude,lng=details.location?.longitude;
+  const types=Array.isArray(details.types) ? details.types : [];
+  const forbidden=["hotel","lodging","restaurant","car_rental","parking","parking_lot","parking_garage","street_address","route"];
+  if (details.id !== id || !Number.isFinite(lat) || !Number.isFinite(lng) ||
+      lat<40.65 || lat>40.73 || lng< -74.22 || lng> -74.13 ||
+      !types.length || types.some(type=>typeof type!=="string") ||
+      forbidden.some(type=>types.includes(type) || details.primaryType===type) ||
+      (ewrPickups[id].kind==="airport" && !types.some(type=>["airport","international_airport"].includes(type))) ||
+      typeof details.displayName?.text!=="string" || !details.displayName.text.trim() ||
+      typeof details.formattedAddress!=="string" || !details.formattedAddress.trim()) throw rejected();
+  const verifiedPickup = {placeId:id, label:details.displayName.text,
+    address:details.formattedAddress};
 
   /*
     Manhattan is New York County.
@@ -887,23 +854,15 @@ async function verifyFixedOffer(body) {
       "Manhattan"
     );
 
-  if (!isEwr) {
-    throw new Error(
-      "The $150 special requires pickup at Newark Liberty International Airport (EWR)."
-    );
-  }
-
   if (!isManhattan) {
     throw new Error(
       "The $150 EWR Airport Special is available only for trips to Manhattan. Please use Get Quote for this destination."
     );
   }
 
-  return {
-    code,
-    label: offer.label,
-    price: money(offer.price)
-  };
+  const verifiedOffer = {code,label:offer.label,price:money(offer.price)};
+  Object.defineProperty(verifiedOffer,"verifiedPickup",{value:verifiedPickup});
+  return verifiedOffer;
 }
 
 
@@ -1094,9 +1053,10 @@ async function calculateQuote(body) {
     throw new Error("The EWR → Manhattan special cannot be used for hourly bookings.");
   }
 
+  const fixedOffer = await verifyFixedOffer(body);
   const route = isHourly ? null :
     await getRouteEstimate(
-      body.pickup,
+      fixedOffer ? {placeId:fixedOffer.verifiedPickup.placeId} : body.pickup,
       body.dropoff,
       isRoundTrip ? new Date(parseServiceDateTime(body.date, body.time, "pickup")).toISOString() : undefined
     );
@@ -1107,9 +1067,6 @@ async function calculateQuote(body) {
     Verify fixed offer before
     calculating normal pricing.
   */
-
-  const fixedOffer =
-    await verifyFixedOffer(body);
 
   if (fixedOffer) {
     validateCalculatedFare(body.vehicle, fixedOffer.price);
@@ -1278,6 +1235,7 @@ function createBookingRecord(
 
 
     trip: {
+      ...(body.offerCode ? {pickupPlaceId:body.pickupPlaceId || null} : {}),
       tripType:
         sanitizeText(
           body.tripType,
@@ -1286,7 +1244,7 @@ function createBookingRecord(
 
       pickup:
         sanitizeText(
-          body.pickup
+          quote?.fixedOffer ? `${quote.fixedOffer.verifiedPickup.label}, ${quote.fixedOffer.verifiedPickup.address}` : body.pickup
         ),
 
       dropoff:
@@ -1784,11 +1742,11 @@ app.get(
         )
           ? data.suggestions
               .map(
-                (item) =>
-                  item
-                    .placePrediction
-                    ?.text
-                    ?.text
+                (item) => {
+                  const prediction=item.placePrediction;
+                  return prediction?.text?.text && prediction?.placeId
+                    ? {description:prediction.text.text,placeId:prediction.placeId} : null;
+                }
               )
               .filter(Boolean)
               .slice(0, 6)
