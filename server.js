@@ -755,10 +755,10 @@ function distanceMiles(
    $150 EWR → MANHATTAN SPECIAL
 ========================================= */
 
-async function verifyEwrPickup(body,pickupPlace) {
+async function verifyEwrPickup(body) {
   const id = body.pickupPlaceId;
   const rejected = () => new Error("The $150 special requires pickup at Newark Liberty International Airport (EWR).");
-  if (typeof id !== "string" || !Object.hasOwn(ewrPickups,id) || pickupPlace?.id !== id) throw rejected();
+  if (typeof id !== "string" || !Object.hasOwn(ewrPickups,id)) throw rejected();
   const details = await googleJson("https://places.googleapis.com/v1/places/" + encodeURIComponent(id), {
     headers: {"X-Goog-Api-Key":process.env.GOOGLE_MAPS_API_KEY,
       "X-Goog-FieldMask":"id,displayName,formattedAddress,location,types,primaryType"}
@@ -773,6 +773,16 @@ async function verifyEwrPickup(body,pickupPlace) {
       (ewrPickups[id].kind==="airport" && !types.some(type=>["airport","international_airport"].includes(type))) ||
       typeof details.displayName?.text!=="string" || !details.displayName.text.trim() ||
       typeof details.formattedAddress!=="string" || !details.formattedAddress.trim()) throw rejected();
+  // Text is a consistency check only; authorization requires verified allowlisted identity.
+  const normalize=value=>String(value || '').normalize('NFKC').trim().toLowerCase().replace(/\s+/g,' ');
+  const entry=ewrPickups[id];
+  const names=entry.kind==='airport'
+    ? ['EWR','EWR Airport','Newark Airport','Newark Liberty International Airport','Newark Liberty International Airport (EWR)']
+    : [entry.label,'Newark Liberty International Airport '+entry.label];
+  names.push(details.displayName.text);
+  const compatible=new Set(names.flatMap(name=>[normalize(name),normalize(name+', '+details.formattedAddress)]));
+  if(entry.kind==='airport') compatible.add(normalize('Newark Liberty International Airport (EWR), 3 Brewster Rd, Newark, NJ 07114'));
+  if(!compatible.has(normalize(body.pickup))) throw rejected();
   return {placeId:id, label:details.displayName.text,address:details.formattedAddress};
 
 }
@@ -823,7 +833,7 @@ async function verifyFixedOffer(body) {
     pickupPlace,
     dropoffPlace
   ] = await Promise.all([
-    lookupPlace(body.pickup, true),
+    verifyEwrPickup(body),
     lookupPlace(body.dropoff)
   ]);
 
@@ -836,7 +846,7 @@ async function verifyFixedOffer(body) {
     );
   }
 
-  const verifiedPickup = await verifyEwrPickup(body,pickupPlace);
+  const verifiedPickup = pickupPlace;
 
   /*
     Manhattan is New York County.
@@ -1065,14 +1075,14 @@ async function calculateQuote(body) {
   if (!fixedOffer && body.pickupTerminal !== undefined) {
     const terminalKeys={general:"ChIJ7wzsxeFSwokRhvLXxTe087M",a:"ChIJ2dQDPZNSwokRVJr9XE2SPt0",b:"ChIJ-6uTxfZSwokR-VfW-WSM53k",c:"ChIJMYEleJSwokRawcDBeH8NVg"};
     if (!Object.hasOwn(terminalKeys,body.pickupTerminal) || terminalKeys[body.pickupTerminal]!==body.pickupPlaceId) throw new Error("Invalid request.");
-    verifiedPickup=await verifyEwrPickup(body,await lookupPlace(body.pickup,true));
+    verifiedPickup=await verifyEwrPickup(body);
   }
   let verifiedDropoff;
   if (fixedOffer && body.dropoffTerminal !== undefined) throw new Error("Invalid request.");
   if (!fixedOffer && body.dropoffTerminal !== undefined) {
     const terminalKeys={general:"ChIJ7wzsxeFSwokRhvLXxTe087M",a:"ChIJ2dQDPZNSwokRVJr9XE2SPt0",b:"ChIJ-6uTxfZSwokR-VfW-WSM53k",c:"ChIJMYEleJSwokRawcDBeH8NVg"};
     if (!Object.hasOwn(terminalKeys,body.dropoffTerminal) || terminalKeys[body.dropoffTerminal]!==body.dropoffPlaceId) throw new Error("Invalid request.");
-    verifiedDropoff=await verifyEwrPickup({pickupPlaceId:body.dropoffPlaceId},await lookupPlace(body.dropoff,true));
+    verifiedDropoff=await verifyEwrPickup({pickupPlaceId:body.dropoffPlaceId,pickup:body.dropoff});
   }
   const route = isHourly ? null :
     await getRouteEstimate(

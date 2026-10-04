@@ -1328,7 +1328,7 @@ test('New audit 3: all four approved IDs bind quote, route, Checkout and reserva
 });
 
 test('New audit 3: typed airport/terminal variations work only when Google resolves the approved identity',async t=>{
-  for(const pickup of ['EWR','Newark Airport','Newark Liberty International Airport','Terminal A','Terminal B','Terminal C']) {
+  for(const pickup of ['EWR','Newark Airport','Newark Liberty International Airport']) {
     const h=await harness(t);assert.equal((await h.request('/api/quote',{...specialBooking,pickup})).status,200);
   }
 });
@@ -1359,7 +1359,6 @@ test('New audit 3: missing, malformed, inherited and forged IDs fail; approved I
 
 test('New audit 3: changed identity, ambiguity, inconsistent details and provider failure fail closed',async t=>{
   for(const change of [
-    {pickupResults:[]},{pickupResults:[airportResult(),airportResult()]},
     {placeDetails:airportResult('changed_id')},{placeDetails:airportResult(undefined,{types:['hotel']})},
     {placeDetails:airportResult(undefined,{location:{latitude:41,longitude:-73}})},
     {placeDetails:airportResult(undefined,{location:{latitude:'40.6895',longitude:-74.1745}})},
@@ -1542,3 +1541,30 @@ test('EWR drop-off selector: a special request cannot attach an airport destinat
   for(const endpoint of ['/api/quote','/api/checkout'])assert.equal((await h.request(endpoint,forged)).status,400);
   assert.equal(h.state.creates.length,0);assert.equal(h.records().length,0);
 });
+
+ test('EWR direct identity verification ignores mismatched/ambiguous text search for special and normal terminals',async t=>{
+  const entries=Object.entries(approvedEwr);
+  for(let i=0;i<entries.length;i++){
+   const [id,entry]=entries[i],key=['general','a','b','c'][i];
+   for(const search of [[],[airportResult()],[airportResult(),airportResult()]]){
+    const h=await harness(t);h.state.pickupResults=search;h.state.placeDetails=airportResult(id);
+    const body={...specialBooking,pickup:entry.kind==='airport'?'Newark Liberty International Airport (EWR), 3 Brewster Rd, Newark, NJ 07114':'Newark Liberty International Airport '+entry.label,pickupPlaceId:id,pickupTerminal:key};
+    const quote=await h.request('/api/quote',body);assert.equal(quote.status,200);assert.equal(quote.body.total,150);
+    assert.equal((await h.request('/api/checkout',body)).status,200);assert.equal(h.records()[0].quote.total,150);
+    assert.ok(h.state.routes.every(route=>route.origin.placeId===id));
+   }
+   for(const side of ['pickup','dropoff']){
+    const h=await harness(t);h.state.pickupResults=[];h.state.placeDetails=airportResult(id);
+    const body={...booking,[side]:entry.label,[side+'PlaceId']:id,[side+'Terminal']:key};
+    assert.equal((await h.request('/api/quote',body)).status,200);
+    assert.equal((await h.request('/api/checkout',body)).status,200);
+   }
+  }
+ });
+ test('EWR direct verification rejects conflicting terminal text and forged airport-business descriptions',async t=>{
+  for(const pickup of ['Terminal B','Newark Liberty International Airport Hotel','Airport Parking','Rental Car Facility','Nearby street']){
+   const h=await harness(t);const id=Object.keys(approvedEwr)[1];h.state.placeDetails=airportResult(id);
+   for(const endpoint of ['/api/quote','/api/checkout'])assert.equal((await h.request(endpoint,{...specialBooking,pickup,pickupPlaceId:id})).status,400);
+   assert.equal(h.state.creates.length,0);
+  }
+ });
