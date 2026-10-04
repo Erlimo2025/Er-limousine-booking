@@ -233,11 +233,18 @@ function rateLimit(scope, limit, windowMs = MINUTE) {
 }
 
 // Timeout covers both the request and reading the response body.
-async function googleJson(url, options) {
+async function googleJson(url, options, ewrDiagnostic) {
   try {
-    const response = await fetch(url, { ...options, signal: AbortSignal.timeout(8000) });
-    if (!response.ok) throw new Error("Google service unavailable");
-    return await response.json();
+    if(ewrDiagnostic) ewrDiagnostic('EWR_VERIFY_PROVIDER_REQUEST_STARTED');
+    let response;
+    try { response=await fetch(url, { ...options, signal: AbortSignal.timeout(8000) }); }
+    catch(error) { if(ewrDiagnostic) ewrDiagnostic(error?.name==='TimeoutError'||error?.name==='AbortError'?'EWR_VERIFY_PROVIDER_TIMEOUT':'EWR_VERIFY_PROVIDER_NETWORK_FAILURE'); throw error; }
+    if (!response.ok) { if(ewrDiagnostic) ewrDiagnostic('EWR_VERIFY_PROVIDER_HTTP_FAILURE'); throw new Error("Google service unavailable"); }
+    let data;
+    try { data=await response.json(); }
+    catch(error) { if(ewrDiagnostic) ewrDiagnostic(error?.name==='TimeoutError'||error?.name==='AbortError'?'EWR_VERIFY_PROVIDER_TIMEOUT':error?.name==='SyntaxError'?'EWR_VERIFY_PROVIDER_INVALID_JSON':'EWR_VERIFY_PROVIDER_BAD_RESPONSE'); throw error; }
+    if(ewrDiagnostic) ewrDiagnostic('EWR_VERIFY_PROVIDER_RESPONSE_RECEIVED');
+    return data;
   } catch (_) {
     throw new Error("Address and route lookup is temporarily unavailable. Please try again.");
   }
@@ -755,24 +762,44 @@ function distanceMiles(
    $150 EWR → MANHATTAN SPECIAL
 ========================================= */
 
-async function verifyEwrPickup(body) {
+async function verifyEwrPickup(body,req) {
   const id = body.pickupPlaceId;
+  // Temporary EWR-only diagnostics: fixed categories and booleans, never payload values.
+  const labels=['GENERAL','TERMINAL_A','TERMINAL_B','TERMINAL_C'];
+  const identity=labels[Object.keys(ewrPickups).indexOf(id)] || 'UNAPPROVED';
+  const referenceId=req?.referenceId || crypto.randomUUID();
+  const diagnostic=(reason,structure={})=>console.error(JSON.stringify({timestamp:new Date().toISOString(),referenceId,operation:'ewr_verification',identity,reason,...structure}));
   const rejected = () => new Error("The $150 special requires pickup at Newark Liberty International Airport (EWR).");
-  if (typeof id !== "string" || !Object.hasOwn(ewrPickups,id)) throw rejected();
+  if (typeof id !== "string" || !Object.hasOwn(ewrPickups,id)) {
+    diagnostic(id===undefined||id===null||id===''?'EWR_VERIFY_PLACE_ID_MISSING':typeof id!=='string'?'EWR_VERIFY_PLACE_ID_MALFORMED':'EWR_VERIFY_PLACE_ID_NOT_APPROVED');
+    throw rejected();
+  }
+  diagnostic('EWR_VERIFY_PLACE_ID_APPROVED');
   const details = await googleJson("https://places.googleapis.com/v1/places/" + encodeURIComponent(id), {
     headers: {"X-Goog-Api-Key":process.env.GOOGLE_MAPS_API_KEY,
       "X-Goog-FieldMask":"id,displayName,formattedAddress,location,types,primaryType"}
-  });
+  },diagnostic);
+  if(details===null||details===undefined){diagnostic('EWR_VERIFY_PROVIDER_BAD_RESPONSE');throw new TypeError('Invalid EWR provider response');}
   const lat=details.location?.latitude,lng=details.location?.longitude;
   const types=Array.isArray(details.types) ? details.types : [];
   const forbidden=["hotel","lodging","restaurant","car_rental","parking","parking_lot","parking_garage","street_address","route"];
-  if (details.id !== id || !Number.isFinite(lat) || !Number.isFinite(lng) ||
-      lat<40.65 || lat>40.73 || lng< -74.22 || lng> -74.13 ||
-      !types.length || types.some(type=>typeof type!=="string") ||
-      forbidden.some(type=>types.includes(type) || details.primaryType===type) ||
-      (ewrPickups[id].kind==="airport" && !types.some(type=>["airport","international_airport"].includes(type))) ||
-      typeof details.displayName?.text!=="string" || !details.displayName.text.trim() ||
-      typeof details.formattedAddress!=="string" || !details.formattedAddress.trim()) throw rejected();
+  const structure={idExists:typeof details.id==='string',idMatches:details.id===id,
+    coordinatesExist:Number.isFinite(lat)&&Number.isFinite(lng),
+    geographyPassed:Number.isFinite(lat)&&Number.isFinite(lng)&&lat>=40.65&&lat<=40.73&&lng>=-74.22&&lng<=-74.13,
+    typesPresent:types.length>0,typesValid:types.every(type=>typeof type==='string'),
+    formattedAddressExists:typeof details.formattedAddress==='string'&&!!details.formattedAddress.trim(),
+    displayNameExists:typeof details.displayName?.text==='string'&&!!details.displayName.text.trim()};
+  // Do not echo arbitrary provider type strings; report only existing fixed guard categories.
+  let reason;
+  if(!structure.idMatches)reason='EWR_VERIFY_ID_MISMATCH';
+  else if(!structure.coordinatesExist)reason='EWR_VERIFY_LOCATION_MISSING';
+  else if(!structure.geographyPassed)reason='EWR_VERIFY_GEOGRAPHY_REJECTED';
+  else if(!types.length||!structure.typesValid)reason='EWR_VERIFY_TYPES_MISSING_OR_INVALID';
+  else if(forbidden.some(type=>types.includes(type)||details.primaryType===type))reason='EWR_VERIFY_TYPE_REJECTED';
+  else if(ewrPickups[id].kind==='airport'&&!types.some(type=>['airport','international_airport'].includes(type)))reason='EWR_VERIFY_AIRPORT_TYPE_MISSING';
+  else if(!structure.displayNameExists)reason='EWR_VERIFY_DISPLAY_NAME_MISSING';
+  else if(!structure.formattedAddressExists)reason='EWR_VERIFY_ADDRESS_MISSING';
+  if(reason){diagnostic(reason,structure);throw rejected();}
   // Text is a consistency check only; authorization requires verified allowlisted identity.
   const normalize=value=>String(value || '').normalize('NFKC').trim().toLowerCase().replace(/\s+/g,' ');
   const entry=ewrPickups[id];
@@ -782,12 +809,14 @@ async function verifyEwrPickup(body) {
   names.push(details.displayName.text);
   const compatible=new Set(names.flatMap(name=>[normalize(name),normalize(name+', '+details.formattedAddress)]));
   if(entry.kind==='airport') compatible.add(normalize('Newark Liberty International Airport (EWR), 3 Brewster Rd, Newark, NJ 07114'));
-  if(!compatible.has(normalize(body.pickup))) throw rejected();
+  const textCompatible=compatible.has(normalize(body.pickup));
+  if(!textCompatible){diagnostic('EWR_VERIFY_TEXT_CONFLICT',{...structure,textCompatible});throw rejected();}
+  diagnostic('EWR_VERIFY_SUCCESS',{...structure,textCompatible});
   return {placeId:id, label:details.displayName.text,address:details.formattedAddress};
 
 }
 
-async function verifyFixedOffer(body) {
+async function verifyFixedOffer(body,req) {
   const code =
     sanitizeText(
       body.offerCode,
@@ -833,7 +862,7 @@ async function verifyFixedOffer(body) {
     pickupPlace,
     dropoffPlace
   ] = await Promise.all([
-    verifyEwrPickup(body),
+    verifyEwrPickup(body,req),
     lookupPlace(body.dropoff)
   ]);
 
@@ -1052,7 +1081,7 @@ async function validateCheckoutQuote(body, quote) {
   }
 }
 
-async function calculateQuote(body) {
+async function calculateQuote(body,req) {
   validateBookingInput(body);
   await storageReady;
   await readBookings();
@@ -1070,19 +1099,19 @@ async function calculateQuote(body) {
     throw new Error("The EWR → Manhattan special cannot be used for hourly bookings.");
   }
 
-  const fixedOffer = await verifyFixedOffer(body);
+  const fixedOffer = await verifyFixedOffer(body,req);
   let verifiedPickup = fixedOffer?.verifiedPickup;
   if (!fixedOffer && body.pickupTerminal !== undefined) {
     const terminalKeys={general:"ChIJ7wzsxeFSwokRhvLXxTe087M",a:"ChIJ2dQDPZNSwokRVJr9XE2SPt0",b:"ChIJ-6uTxfZSwokR-VfW-WSM53k",c:"ChIJMYEleJSwokRawcDBeH8NVg"};
     if (!Object.hasOwn(terminalKeys,body.pickupTerminal) || terminalKeys[body.pickupTerminal]!==body.pickupPlaceId) throw new Error("Invalid request.");
-    verifiedPickup=await verifyEwrPickup(body);
+    verifiedPickup=await verifyEwrPickup(body,req);
   }
   let verifiedDropoff;
   if (fixedOffer && body.dropoffTerminal !== undefined) throw new Error("Invalid request.");
   if (!fixedOffer && body.dropoffTerminal !== undefined) {
     const terminalKeys={general:"ChIJ7wzsxeFSwokRhvLXxTe087M",a:"ChIJ2dQDPZNSwokRVJr9XE2SPt0",b:"ChIJ-6uTxfZSwokR-VfW-WSM53k",c:"ChIJMYEleJSwokRawcDBeH8NVg"};
     if (!Object.hasOwn(terminalKeys,body.dropoffTerminal) || terminalKeys[body.dropoffTerminal]!==body.dropoffPlaceId) throw new Error("Invalid request.");
-    verifiedDropoff=await verifyEwrPickup({pickupPlaceId:body.dropoffPlaceId,pickup:body.dropoff});
+    verifiedDropoff=await verifyEwrPickup({pickupPlaceId:body.dropoffPlaceId,pickup:body.dropoff},req);
   }
   const route = isHourly ? null :
     await getRouteEstimate(
@@ -1837,7 +1866,7 @@ app.post(
     try {
       const quote =
         await calculateQuote(
-          req.body
+          req.body,req
         );
 
       res.json(quote);
@@ -2002,7 +2031,7 @@ async function createCheckout(body, ip, fingerprint, req, res) {
 
   let quote =
     await calculateQuote(
-      body
+      body,req
     );
 
   // Independently validate the final server quote before storing a booking

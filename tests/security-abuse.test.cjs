@@ -85,10 +85,13 @@ async function harness(t, env = {}, saved = "[]", injectedStore) {
     }},
     fetch: async (url, options) => {
       state.googleCalls++;
+      if(state.providerTimeout)throw Object.assign(new Error('synthetic-private-timeout-marker'),{name:'TimeoutError'});
+      if(state.providerNetworkFailure)throw new Error("synthetic-private-network-marker");
       if (state.onGoogle) state.onGoogle();
       if (state.timeout) return new Promise((resolve, reject) =>
         options.signal.addEventListener("abort", () => reject(new Error("mock secret detail"))));
       return {ok: !state.googleError, json: async () => {
+        if(state.providerInvalidJson)throw new SyntaxError("synthetic-private-json-marker");
         if(state.googleBody!==undefined)return state.googleBody;
         if (url.includes("computeRoutes")) {
           const route = JSON.parse(options.body);
@@ -1568,3 +1571,42 @@ test('EWR drop-off selector: a special request cannot attach an airport destinat
    assert.equal(h.state.creates.length,0);
   }
  });
+
+test('temporary EWR diagnostics correlate all approved identities without exposing provider or customer values',async t=>{
+ for(const [id,entry]of Object.entries(approvedEwr)){
+  const h=await harness(t);h.state.placeDetails=airportResult(id,{displayName:{text:'synthetic-private-name-marker'},formattedAddress:'synthetic-private-address-marker'});
+  const result=await h.request('/api/quote',{...specialBooking,pickup:entry.label,pickupPlaceId:id});assert.equal(result.status,200);
+  const logs=h.state.logs.map(x=>{try{return JSON.parse(x)}catch{return {}}}).filter(x=>x.operation==='ewr_verification');
+  assert.ok(logs.some(x=>x.reason==='EWR_VERIFY_SUCCESS'));assert.ok(logs.every(x=>x.referenceId===result.headers.get('x-request-id')));
+  assert.equal(logs.at(-1).textCompatible,true);
+  const output=h.state.logs.join(' ');for(const value of ['synthetic-private',id,booking.email,booking.phone,'mock-google-key',booking.dropoff])assert.ok(!output.includes(value),value);
+  assert.ok(!JSON.stringify(result.body).includes('EWR_VERIFY'));
+ }
+});
+test('temporary EWR diagnostics identify existing rejection guards and preserve sanitized customer errors',async t=>{
+ const cases=[
+  [{pickupPlaceId:undefined},{},'EWR_VERIFY_PLACE_ID_MISSING'],
+  [{pickupPlaceId:{}},{},'EWR_VERIFY_PLACE_ID_MALFORMED'],
+  [{pickupPlaceId:'unapproved-private-marker'},{},'EWR_VERIFY_PLACE_ID_NOT_APPROVED'],
+  [{},{placeDetails:airportResult('changed-private-marker')},'EWR_VERIFY_ID_MISMATCH'],
+  [{},{placeDetails:airportResult(undefined,{location:{latitude:41,longitude:-73}})},'EWR_VERIFY_GEOGRAPHY_REJECTED'],
+  [{pickup:'private customer hotel address'},{},'EWR_VERIFY_TEXT_CONFLICT'],
+  [{},{placeDetails:airportResult(undefined,{types:['parking']})},'EWR_VERIFY_TYPE_REJECTED'],
+  [{},{placeDetails:airportResult(undefined,{location:{}})},'EWR_VERIFY_LOCATION_MISSING'],
+  [{},{placeDetails:airportResult(undefined,{types:[]})},'EWR_VERIFY_TYPES_MISSING_OR_INVALID'],
+  [{},{placeDetails:airportResult(undefined,{types:['point_of_interest']})},'EWR_VERIFY_AIRPORT_TYPE_MISSING'],
+  [{},{placeDetails:airportResult(undefined,{displayName:{}})},'EWR_VERIFY_DISPLAY_NAME_MISSING'],
+  [{},{placeDetails:airportResult(undefined,{formattedAddress:''})},'EWR_VERIFY_ADDRESS_MISSING'],
+  [{},{googleError:true},'EWR_VERIFY_PROVIDER_HTTP_FAILURE'],
+  [{},{providerNetworkFailure:true},'EWR_VERIFY_PROVIDER_NETWORK_FAILURE'],
+  [{},{providerInvalidJson:true},'EWR_VERIFY_PROVIDER_INVALID_JSON'],
+  [{},{providerTimeout:true},'EWR_VERIFY_PROVIDER_TIMEOUT'],
+  [{},{googleBody:null},'EWR_VERIFY_PROVIDER_BAD_RESPONSE']
+ ];
+ for(const [body,state,reason]of cases){const h=await harness(t);Object.assign(h.state,state);const r=await h.request('/api/quote',{...specialBooking,...body});assert.equal(r.status,400);
+  const logs=h.state.logs.map(x=>{try{return JSON.parse(x)}catch{return {}}});assert.ok(logs.some(x=>x.reason===reason),reason);
+  assert.ok(logs.filter(x=>x.reason).every(x=>x.referenceId===r.body.referenceId));
+  assert.doesNotMatch(h.state.logs.join(' '),/private-marker|private customer|synthetic-private|mock-google-key/);
+  assert.ok(!JSON.stringify(r.body).includes('EWR_VERIFY'));
+ }
+});
