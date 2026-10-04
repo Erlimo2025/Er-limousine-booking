@@ -25,7 +25,7 @@ async function harness(t, env = {}, saved = "[]", injectedStore) {
   const testPricing = JSON.parse(JSON.stringify(pricing));
   const state = { creates: [], sessions: new Map(), googleCalls: 0, routes: [], timeout: false,
     googleError: false, fail: null, retrieveError: false, createDelay: 0, timeoutMs: null };
-  state.logs=[];state.smsMessages=[];state.smsFail=false;
+  state.logs=[];state.emailMessages=[];state.emailFail=false;
   const storageFailures = {};
   const {memoryStore} = require("./helpers/memory-storage.cjs");
   const testStore = injectedStore || memoryStore(JSON.parse(saved), undefined, storageFailures);
@@ -112,9 +112,9 @@ async function harness(t, env = {}, saved = "[]", injectedStore) {
       if (name === "dotenv") return {config() {}};
       if (name === "express") return express;
       if (name === "stripe") return MockStripe;
-      if (name === "./services/sms") return {createSmsProvider:()=>{if(env.TEST_RECOVERY_CONFIG_FAILURE)throw new Error('synthetic provider configuration');return {enabled:env.CUSTOMER_SMS_RECOVERY_ENABLED==='true',sendCode:async message=>{if(state.smsFail)throw new Error('synthetic SMS secret marker');state.smsMessages.push({phone:message.phone,code:message.code});}};}};
-      if (name === "./auth/recovery") return {installPasswordRecovery:(app,options)=>require('../auth/recovery').installPasswordRecovery(app,{...options,...(env.TEST_FIXED_RECOVERY_CODE?{codeFactory:()=> '806413'}:{})})};
+      if (name === "./services/email") return {createEmailProvider:options=>{if(env.TEST_VALIDATE_EMAIL_CONFIG)require('../services/email').createEmailProvider(options);if(env.TEST_RECOVERY_CONFIG_FAILURE)throw new Error('synthetic provider configuration');return {enabled:env.CUSTOMER_EMAIL_RECOVERY_ENABLED==='true',sendResetLink:async message=>{if(state.emailFail)throw new Error('synthetic email secret marker');state.emailMessages.push({...message});}};}};
       if (name === "./auth/customers") return require("../auth/customers");
+      if (name === "./auth/recovery") return require("../auth/recovery");
       if (name === "./pricing") return testPricing;
       if (name === "./ewr-pickups") return require("../ewr-pickups");
       if (name === "./storage/postgres") return {createStore: () => {if(injectedStore instanceof Error)throw injectedStore;return testStore;}, StorageError: require("../storage/postgres").StorageError};

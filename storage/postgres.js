@@ -197,6 +197,7 @@ function createStore(env = process.env, suppliedPool) {
       await client.query(fs.readFileSync(path.join(__dirname,'../migrations/001-reservations.sql'),'utf8'));
       await client.query(fs.readFileSync(path.join(__dirname,'../migrations/003-customer-accounts.sql'),'utf8'));
       await client.query(fs.readFileSync(path.join(__dirname,'../migrations/004-customer-recovery.sql'),'utf8'));
+      await client.query(fs.readFileSync(path.join(__dirname,'../migrations/005-email-recovery.sql'),'utf8'));
     });
   }
   async function importLegacy(records) {

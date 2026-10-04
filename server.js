@@ -251,8 +251,8 @@ const SITE_URL =
 let reservationStore;
 try { reservationStore = createStore(process.env); }
 catch (_) { console.error("Reservation storage configuration unavailable."); process.exitCode = 1; }
-let recoverySmsProvider,recoveryConfigurationFailed=false;
-try { recoverySmsProvider=require('./services/sms').createSmsProvider({enabled:process.env.CUSTOMER_SMS_RECOVERY_ENABLED==='true'}); }
+let recoveryEmailProvider,recoveryConfigurationFailed=false;
+try { recoveryEmailProvider=require('./services/email').createEmailProvider({enabled:process.env.CUSTOMER_EMAIL_RECOVERY_ENABLED==='true',apiKey:process.env.CUSTOMER_EMAIL_RECOVERY_ENABLED==='true'?process.env.RESEND_API_KEY:undefined,from:process.env.CUSTOMER_RECOVERY_FROM,siteUrl:SITE_URL,production:productionHttps}); }
 catch (_) { recoveryConfigurationFailed=true; console.error('Customer recovery configuration unavailable.'); }
 const storageReady = reservationStore && !recoveryConfigurationFailed ? reservationStore.migrate() : Promise.reject(new StorageError());
 // Attach immediately so an unavailable database never creates an unhandled rejection.
@@ -1592,9 +1592,11 @@ app.use(
 
 require('./auth/customers').installCustomerAuth(app,{store:reservationStore,route,rateLimit,
   validOrigin:validAdminOrigin,secure:adminCookieSecure,now:()=>Date.now()});
-require('./auth/recovery').installPasswordRecovery(app,{store:reservationStore,smsProvider:recoverySmsProvider,route,rateLimit,
+require('./auth/recovery').installPasswordRecovery(app,{store:reservationStore,emailProvider:recoveryEmailProvider,route,rateLimit,
   validOrigin:validAdminOrigin,clientKey,secure:adminCookieSecure,now:()=>Date.now(),
   reportFailure:req=>logDiagnostic(req,503,'provider_error')});
+
+app.use(['/reset-password.html','/reset-password.js'],(req,res,next)=>{res.set({'Cache-Control':'no-store','Referrer-Policy':'no-referrer','Content-Security-Policy':"default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'"});next();});
 
 app.use(
   express.static(

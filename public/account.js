@@ -66,42 +66,12 @@ window.addEventListener('hashchange',()=>{
 });
 window.addEventListener('pageshow',()=>load());
 
-function recoveryStep(step){
-  for(const name of ['Phone','Code','Password'])el('recovery'+name+'Step').hidden=name!==step;
-  el('message').textContent='';
-}
-let recoveryResendAt=0;
-function recoveryForm(id,action){
-  const form=el(id);if(!form)return;
-  form.addEventListener('submit',async event=>{
-    event.preventDefault();const button=form.querySelector('button[type=submit]');button.disabled=true;el('message').textContent='';
-    try{await action();}catch(error){el('message').textContent=error.message;}
-    finally{button.disabled=false;}
-  });
-}
-async function sendRecoveryCode(){
-  const result=await api('recovery/request',{phone:el('recoveryPhone').value});
-  el('recoveryNotice').textContent=result.message;el('recoveryCode').value='';
-  recoveryResendAt=Date.now()+60000;el('resendRecoveryCode').disabled=true;recoveryStep('Code');
-  setTimeout(()=>{if(Date.now()>=recoveryResendAt)el('resendRecoveryCode').disabled=false;},60000);
-}
-recoveryForm('recoveryPhoneForm',sendRecoveryCode);
-recoveryForm('recoveryCodeForm',async()=>{
-  try{await api('recovery/verify',{code:el('recoveryCode').value});recoveryStep('Password');}
-  finally{el('recoveryCode').value='';}
-});
-recoveryForm('recoveryResetForm',async()=>{
-  const password=el('newPassword').value,confirmation=el('confirmPassword').value;
+const recoveryForm=el('recoveryEmailForm');
+if(recoveryForm)recoveryForm.addEventListener('submit',async event=>{
+  event.preventDefault();const button=recoveryForm.querySelector('button[type=submit]');button.disabled=true;el('message').textContent='';
   try{
-    if(password!==confirmation)throw new Error('Passwords must match.');
-    const result=await api('recovery/reset',{password,confirmPassword:confirmation});
-    el('recoveryPhoneForm').reset();el('recoveryCodeForm').reset();recoveryStep('Phone');
-    history.replaceState(null,'','/account.html');show('login');
-    el('message').textContent=result.message;el('message').classList.add('success');
-  }finally{el('newPassword').value='';el('confirmPassword').value='';hidePasswords();}
-});
-if(el('resendRecoveryCode'))el('resendRecoveryCode').addEventListener('click',async()=>{
-  if(Date.now()<recoveryResendAt)return;
-  el('resendRecoveryCode').disabled=true;
-  try{await sendRecoveryCode();}catch(error){el('message').textContent=error.message;el('resendRecoveryCode').disabled=false;}
+    const result=await api('recovery/request',{email:el('recoveryEmail').value});
+    el('recoveryNotice').textContent=result.message;el('recoveryNotice').hidden=false;
+    setTimeout(()=>{button.disabled=false;},60000);
+  }catch(error){el('message').textContent=error.message;button.disabled=false;}
 });

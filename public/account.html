@@ -39,20 +39,9 @@
 </section>
 <section id="recoveryView" class="auth-card" hidden>
   <p class="eyebrow">ER LIMOUSINE SERVICE</p><h1>Password Recovery</h1>
-  <div id="recoveryPhoneStep">
-    <p class="intro">Enter the phone number associated with your account.</p>
-    <form id="recoveryPhoneForm"><div class="form-field"><label for="recoveryPhone">Phone Number</label><input id="recoveryPhone" type="tel" autocomplete="tel" required maxlength="40"></div><button class="primary submit-button" type="submit">Send Verification Code</button></form>
-  </div>
-  <div id="recoveryCodeStep" hidden>
-    <p class="intro">Enter the 6-digit code sent to your phone.</p>
-    <p id="recoveryNotice" class="recovery-notice" role="status"></p>
-    <form id="recoveryCodeForm"><div class="form-field"><label for="recoveryCode">Verification Code</label><input id="recoveryCode" type="password" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" minlength="6" maxlength="6" required aria-describedby="codeHelp"><small id="codeHelp">Codes expire after 10 minutes.</small></div><button class="primary submit-button" type="submit">Verify Code</button></form>
-    <button id="resendRecoveryCode" class="text-button" type="button">Resend code</button><small id="resendHelp">Please wait at least 60 seconds between requests.</small>
-  </div>
-  <div id="recoveryPasswordStep" hidden>
-    <p class="intro">Choose a new password for your account.</p>
-    <form id="recoveryResetForm"><div class="form-field"><label for="newPassword">New Password</label><div class="password-field"><input id="newPassword" data-password-input type="password" autocomplete="new-password" minlength="10" maxlength="128" required><button class="password-toggle" type="button" data-password-toggle="newPassword" aria-controls="newPassword" aria-pressed="false" aria-label="Show new password">Show</button></div></div><div class="form-field"><label for="confirmPassword">Confirm New Password</label><input id="confirmPassword" type="password" autocomplete="new-password" minlength="10" maxlength="128" required></div><small>Use 10–128 characters. Passphrases are welcome.</small><button class="primary submit-button" type="submit">Reset Password</button></form>
-  </div>
+  <p class="intro">Enter the email address associated with your account.</p>
+  <form id="recoveryEmailForm"><div class="form-field"><label for="recoveryEmail">Email Address</label><input id="recoveryEmail" type="email" autocomplete="email" required maxlength="254"></div><button class="primary submit-button" type="submit">Send Reset Link</button></form>
+  <p id="recoveryNotice" class="recovery-notice" role="status" hidden></p>
   <p class="switch"><a href="/account.html">Back to Log In</a></p>
 </section>
 <section id="dashboardView" hidden>
