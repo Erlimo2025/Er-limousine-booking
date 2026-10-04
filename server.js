@@ -1590,8 +1590,19 @@ app.use(
   })
 );
 
-require('./auth/customers').installCustomerAuth(app,{store:reservationStore,route,rateLimit,
+const customerAuth=require('./auth/customers').installCustomerAuth(app,{store:reservationStore,route,rateLimit,
   validOrigin:validAdminOrigin,secure:adminCookieSecure,now:()=>Date.now()});
+const {tripQuery}=require('./storage/customer-trips');
+app.get('/api/customer/trips',route(customerAuth.requireCustomer),route(async(req,res)=>{
+  const query=tripQuery(req.query,Date.now());
+  res.json(await reservationStore.customerTrips(req.customer.id,query));
+}));
+app.get('/api/customer/trips/:id',route(customerAuth.requireCustomer),route(async(req,res)=>{
+  const trip=await reservationStore.customerTrip(req.customer.id,req.params.id);
+  if(!trip)return res.status(404).json({error:'Trip not found.'});
+  res.json({trip});
+}));
+
 require('./auth/recovery').installPasswordRecovery(app,{store:reservationStore,emailProvider:recoveryEmailProvider,route,rateLimit,
   validOrigin:validAdminOrigin,clientKey,secure:adminCookieSecure,now:()=>Date.now(),
   reportFailure:req=>logDiagnostic(req,503,'provider_error')});
@@ -1965,6 +1976,11 @@ async function createCheckout(body, ip, fingerprint, req, res) {
     throw Object.assign(new Error("Checkout is temporarily unavailable. Please try again."),{status:503});
   }
 
+  if(booking && req.customer){
+    const owner=await reservationStore.reservationOwner(booking.id);
+    if(owner && owner!==req.customer.id)throw Object.assign(new Error('Checkout is temporarily unavailable. Please try again.'),{status:503});
+  }
+
   /*
     IMPORTANT:
     The price is calculated again
@@ -2019,7 +2035,13 @@ async function createCheckout(body, ip, fingerprint, req, res) {
     booking.customerAccess = newCustomerAccess(body,token);
     booking.checkoutFingerprint = fingerprint;
     booking.checkoutClientHash = checkoutHash(ip);
-    await reservationStore.createWithBudget(booking, bookings => enforceBookingBudget(bookings, body, ip));
+    const start=parseServiceDateTime(body.date,body.time,'pickup');
+    const end=body.tripType==='roundtrip'?parseServiceDateTime(body.returnDate,body.returnTime,'return'):
+      start+(body.tripType==='hourly'?Number(body.hours)*60*MINUTE:0);
+    await reservationStore.createWithBudget(booking, bookings => enforceBookingBudget(bookings, body, ip),{
+      customerId:req.customer?.id || null,sessionHash:req.customerSessionHash,
+      now:Date.now(),start:new Date(start),end:new Date(end)
+    });
     // Also delivered on a safe error response, allowing ownership-proven ambiguous retries.
     issueCustomerAccessCookies(res,booking,token);
   }
@@ -2188,6 +2210,8 @@ async function createCheckout(body, ip, fingerprint, req, res) {
 app.post("/api/checkout", async (req, res) => {
   try {
     validateBookingInput(req.body);
+    await storageReady;
+    await customerAuth.resolve(req,res);
     // Also throttle customer actions across changing source IPs. Normal retries
     // have ample room; arbitrary extra fields cannot reset these counters.
     for (const [kind, identity] of [

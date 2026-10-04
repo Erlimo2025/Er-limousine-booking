@@ -103,9 +103,16 @@ function createStore(env = process.env, suppliedPool) {
     const result=await (scope.getStore() || pool).query('SELECT 1 FROM er_paid_ride_eligibility WHERE email_hash = $1 OR phone_hash = $2 LIMIT 1',[hashIdentity(email),hashIdentity(phone)]);
     return result.rows.length>0;
   });
-  const insert = (record,client,skip=false) => safe(async()=>{
+  const insert = (record,client,skip=false,association={}) => safe(async()=>{
     validateRecord(record);
-    const result=await client.query('INSERT INTO er_reservations (id, record, created_at) VALUES ($1, $2::jsonb, $3) '+(skip?'ON CONFLICT (id) DO NOTHING ':'')+'RETURNING id', [record.id,JSON.stringify(record),record.createdAt]);if(result.rowCount)await recordPaid(client,record);return result.rowCount;
+    let owner=null;
+    if(association.customerId && association.sessionHash){
+      // Match password-reset/session creation's customer-first lock order. Invalidated optional sessions stay guest.
+      await client.query('SELECT id FROM er_customers WHERE id=$1 FOR UPDATE',[association.customerId]);
+      const active=await client.query("SELECT s.customer_id FROM er_customer_sessions s JOIN er_customers c ON c.id=s.customer_id WHERE s.token_hash=$1 AND s.customer_id=$2 AND s.expires_at>$3 AND c.account_status='active' FOR SHARE OF s",[association.sessionHash,association.customerId,new Date(association.now)]);
+      owner=active.rows[0]?.customer_id || null;
+    }
+    const result=await client.query('INSERT INTO er_reservations (id, record, created_at,customer_id,scheduled_start_at,scheduled_end_at) VALUES ($1, $2::jsonb, $3,$4,$5,$6) '+(skip?'ON CONFLICT (id) DO NOTHING ':'')+'RETURNING id', [record.id,JSON.stringify(record),record.createdAt,owner,association.start || null,association.end || null]);if(result.rowCount)await recordPaid(client,record);return result.rowCount;
   });
   async function update(id,fn) {
     if(typeof id !== 'string' || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(id))return null;
@@ -120,11 +127,11 @@ function createStore(env = process.env, suppliedPool) {
       return result === undefined ? record : result;
     });
   }
-  async function createWithBudget(record,check) {
+  async function createWithBudget(record,check,association={}) {
     return transaction(async client=>{
       // Atomic budget/read/create across processes, held only for database operations.
       await client.query('SELECT pg_advisory_xact_lock($1)',[730901]);
-      const records=await list(client);await check(records);await insert(record,client);return record;
+      const records=await list(client);await check(records);await insert(record,client,false,association);return record;
     });
   }
   async function withActionLock(fingerprint,fn) {
@@ -198,6 +205,7 @@ function createStore(env = process.env, suppliedPool) {
       await client.query(fs.readFileSync(path.join(__dirname,'../migrations/003-customer-accounts.sql'),'utf8'));
       await client.query(fs.readFileSync(path.join(__dirname,'../migrations/004-customer-recovery.sql'),'utf8'));
       await client.query(fs.readFileSync(path.join(__dirname,'../migrations/005-email-recovery.sql'),'utf8'));
+      await client.query(fs.readFileSync(path.join(__dirname,'../migrations/006-customer-trips.sql'),'utf8'));
     });
   }
   async function importLegacy(records) {
@@ -210,6 +218,6 @@ function createStore(env = process.env, suppliedPool) {
       return {inserted,skipped};
     });
   }
-  return {...require('./recovery').recoveryStorage(pool,transaction,safe),...require('./customers').customerStorage(pool,transaction,safe),list,get,hasPaidRide,update,createWithBudget,withActionLock,firstRideConflicts,claimFirstRide,releaseExpiredFirstRide,reconciliationCandidates,finalizeReconciliation,migrate,importLegacy,close:()=>pool.end()};
+  return {...require('./customer-trips').customerTripsStorage(pool,safe,validateRecord),...require('./recovery').recoveryStorage(pool,transaction,safe),...require('./customers').customerStorage(pool,transaction,safe),list,get,hasPaidRide,update,createWithBudget,withActionLock,firstRideConflicts,claimFirstRide,releaseExpiredFirstRide,reconciliationCandidates,finalizeReconciliation,migrate,importLegacy,close:()=>pool.end()};
 }
 module.exports={createStore,StorageError,validateRecord,validateRecords,connectionOptions};

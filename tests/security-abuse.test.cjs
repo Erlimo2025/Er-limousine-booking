@@ -113,6 +113,7 @@ async function harness(t, env = {}, saved = "[]", injectedStore) {
       if (name === "express") return express;
       if (name === "stripe") return MockStripe;
       if (name === "./services/email") return {createEmailProvider:options=>{if(env.TEST_VALIDATE_EMAIL_CONFIG)require('../services/email').createEmailProvider(options);if(env.TEST_RECOVERY_CONFIG_FAILURE)throw new Error('synthetic provider configuration');return {enabled:env.CUSTOMER_EMAIL_RECOVERY_ENABLED==='true',sendResetLink:async message=>{if(state.emailFail)throw new Error('synthetic email secret marker');state.emailMessages.push({...message});}};}};
+      if (name === "./storage/customer-trips") return require("../storage/customer-trips");
       if (name === "./auth/customers") return require("../auth/customers");
       if (name === "./auth/recovery") return require("../auth/recovery");
       if (name === "./pricing") return testPricing;

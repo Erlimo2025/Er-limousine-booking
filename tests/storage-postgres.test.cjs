@@ -63,7 +63,7 @@ test('failed transactional writes rollback and discard a connection if rollback 
   const storage=createStore({}, {connect:async()=>client});
   await assert.rejects(storage.createWithBudget(fixture(),()=>{}),generic);
   assert.ok(queries.some(q=>q.sql==='BEGIN'));assert.ok(queries.some(q=>q.sql==='ROLLBACK'));assert.ok(!queries.some(q=>q.sql==='COMMIT'));assert.equal(discarded,rollbackFailure);
-  const insert=queries.find(q=>q.sql.startsWith('INSERT INTO er_reservations'));assert.ok(insert.sql.includes('$1'));assert.equal(insert.values.length,3);
+  const insert=queries.find(q=>q.sql.startsWith('INSERT INTO er_reservations'));assert.ok(insert.sql.includes('$1'));assert.equal(insert.values.length,6);assert.deepEqual(insert.values.slice(3),[null,null,null]);
  }
 });
 test('versioned immutable FIRST15 parameters reject corrupted payment amounts',()=>{

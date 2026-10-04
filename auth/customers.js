@@ -41,7 +41,7 @@ function phone(value) {
  return /^[2-9]\d{2}[2-9]\d{6}$/.test(digits) ? {display:value.trim(),normalized:'+1'+digits} : null;
 }
 const profile=c=>({fullName:c.full_name,email:c.display_email,phone:c.display_phone});
-function installCustomerAuth(app,{store,route,rateLimit,validOrigin,secure,now=Date.now}) {
+function customerAuthentication({store,secure,now=Date.now}) {
  const name=secure?'__Host-er_customer_session':'er_customer_session';
  const cookieOptions={httpOnly:true,secure,sameSite:'strict',path:'/'};
  function token(req) {
@@ -50,14 +50,25 @@ function installCustomerAuth(app,{store,route,rateLimit,validOrigin,secure,now=D
   const value=matches[0].slice(name.length+1);return /^[A-Za-z0-9_-]{43}$/.test(value)?value:null;
  }
  const clear=res=>res.clearCookie(name,cookieOptions);
+ const resolve=async(req,res)=>{
+  const raw=token(req);req.customerSessionHash=raw?hashToken(raw):null;
+  req.customer=raw?await store.resolveCustomerSession(req.customerSessionHash,now()):null;
+  if(!req.customer){req.customerSessionHash=null;if(req.headers.cookie && String(req.headers.cookie).split(';').some(x=>x.trim().startsWith(name+'=')))clear(res);}
+  return req.customer;
+ };
+ const auth=async(req,res,next)=>{
+  await resolve(req,res);
+  if(!req.customer){clear(res);return req.path.startsWith('/api/')?res.status(401).json({error:'Please log in to continue.'}):res.redirect('/account.html');}
+  next();
+ };
+ return {name,cookieOptions,token,clear,resolve,requireCustomer:auth};
+}
+function installCustomerAuth(app,{store,route,rateLimit,validOrigin,secure,now=Date.now}) {
+ const authentication=customerAuthentication({store,secure,now});
+ const {name,cookieOptions,token,clear,requireCustomer:auth}=authentication;
  const makeSession=()=>{const raw=crypto.randomBytes(32).toString('base64url');const created=new Date(now());return {raw,hash:hashToken(raw),created,expires:new Date(created.getTime()+SESSION_MS)};};
  const issue=(res,s)=>res.cookie(name,s.raw,{...cookieOptions,maxAge:SESSION_MS});
  const reject=(res,status,message)=>res.status(status).json({error:message});
- const auth=async(req,res,next)=>{
-  const raw=token(req);req.customer=raw ? await store.resolveCustomerSession(hashToken(raw),now()) : null;
-  if(!req.customer){clear(res);return req.path.startsWith('/api/')?reject(res,401,'Please log in to continue.'):res.redirect('/account.html');}
-  next();
- };
  app.use(['/api/customer','/account.html','/account/dashboard'],(req,res,next)=>{res.set('Cache-Control','no-store');next();});
  app.use('/api/customer',rateLimit('customer-api',120));
  const mutation=(req,res,next)=>{
@@ -92,8 +103,9 @@ function installCustomerAuth(app,{store,route,rateLimit,validOrigin,secure,now=D
  }));
  app.get('/api/customer/profile',route(auth),route(async(req,res)=>res.json({customer:profile(req.customer)})));
  app.get('/account/dashboard',route(auth),(req,res)=>res.sendFile(require('node:path').join(__dirname,'../public/account.html')));
- app.post('/api/customer/logout',mutation,route(async(req,res)=>{
+  app.post('/api/customer/logout',mutation,route(async(req,res)=>{
   const raw=token(req);if(raw)await store.revokeCustomerSession(hashToken(raw));clear(res);res.json({ok:true});
- }));
+  }));
+ return authentication;
 }
-module.exports={installCustomerAuth,hashPassword,verifyPassword,passwordValid,email,phone,hashToken,SESSION_MS};
+module.exports={customerAuthentication,installCustomerAuth,hashPassword,verifyPassword,passwordValid,email,phone,hashToken,SESSION_MS};
