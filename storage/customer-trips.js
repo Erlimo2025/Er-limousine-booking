@@ -25,7 +25,7 @@ function tripDto(record) {
  return {reference:record.id,status:record.status,paymentStatus:record.paymentStatus,tripType:t.tripType,
   pickup:t.pickup,dropoff:t.dropoff,date:t.date,time:t.time,timeZone:'America/New_York',
   ...(t.tripType==='roundtrip'?{returnDate:t.returnDate,returnTime:t.returnTime}:{}),
-  ...(t.tripType==='hourly'?{hours:Number(t.hours)}:{}),vehicle:record.quote.vehicle,passengers:t.passengers,
+  ...(t.tripType==='hourly'?{hours:Number(t.hours)}:{}),vehicle:t.vehicle==='suv'?'Luxury SUV':record.quote.vehicle,passengers:t.passengers,
   pickupTerminal:terminal(t.pickupPlaceId),dropoffTerminal:terminal(t.dropoffPlaceId),
   total:record.quote.total,currency:record.quote.currency,createdAt:record.createdAt};
 }

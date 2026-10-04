@@ -13,6 +13,14 @@ function fixture(overrides={}){return {id:crypto.randomUUID(),createdAt:'2026-10
  trip:{pickup:'A long pickup address',dropoff:'Destination',date:'2026-11-10',time:'12:00',vehicle:'escalade',tripType:'oneway',passengers:6},
  quote:{total:100,currency:'usd',vehicle:'Cadillac Escalade ESV',vehicleKey:'escalade'},dispatch:{driver:'',driverPhone:'',vehicle:'',plate:''},...overrides};}
 
+test('My Trips SUV display uses Luxury SUV without changing stored vehicle, fare or other vehicle labels',()=>{
+ const record=fixture();record.trip.vehicle='suv';record.quote.vehicleKey='suv';record.quote.vehicle='Black SUV';
+ const original=JSON.stringify(record);
+ assert.equal(tripDto(record).vehicle,'Luxury SUV');assert.equal(tripDto(record).total,record.quote.total);
+ assert.equal(JSON.stringify(record),original);
+ assert.equal(tripDto(fixture()).vehicle,'Cadillac Escalade ESV');
+});
+
 test('My Trips ownership derives only from a valid server session; cross-account and ID enumeration are denied',async t=>{
  const h=await harness(t),a=await register(h),b=await register(h,{email:'second@example.test',phone:'2035550188'});
  const aid=[...h.testStore.shared.customers.values()].find(x=>x.normalized_email===account.email).id;
