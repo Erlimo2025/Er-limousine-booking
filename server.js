@@ -239,7 +239,19 @@ async function googleJson(url, options, ewrDiagnostic) {
     let response;
     try { response=await fetch(url, { ...options, signal: AbortSignal.timeout(8000) }); }
     catch(error) { if(ewrDiagnostic) ewrDiagnostic(error?.name==='TimeoutError'||error?.name==='AbortError'?'EWR_VERIFY_PROVIDER_TIMEOUT':'EWR_VERIFY_PROVIDER_NETWORK_FAILURE'); throw error; }
-    if (!response.ok) { if(ewrDiagnostic) ewrDiagnostic('EWR_VERIFY_PROVIDER_HTTP_FAILURE',Number.isInteger(response.status)&&response.status>=100&&response.status<=599?{providerStatus:response.status}:{}); throw new Error("Google service unavailable"); }
+    if (!response.ok) {
+      if(ewrDiagnostic) {
+        const diagnostic=Number.isInteger(response.status)&&response.status>=100&&response.status<=599?{providerStatus:response.status}:{};
+        const statuses=new Set(['CANCELLED','UNKNOWN','INVALID_ARGUMENT','DEADLINE_EXCEEDED','NOT_FOUND','ALREADY_EXISTS','PERMISSION_DENIED','RESOURCE_EXHAUSTED','FAILED_PRECONDITION','ABORTED','OUT_OF_RANGE','UNIMPLEMENTED','INTERNAL','UNAVAILABLE','DATA_LOSS','UNAUTHENTICATED']);
+        // Inspect only the structured status; never retain/log messages, details or payloads.
+        try {
+          const status=(await response.json())?.error?.status;
+          if(typeof status==='string'&&statuses.has(status))diagnostic.providerErrorStatus=status;
+        } catch (_) { /* Invalid/unavailable JSON adds no provider error status. */ }
+        ewrDiagnostic('EWR_VERIFY_PROVIDER_HTTP_FAILURE',diagnostic);
+      }
+      throw new Error("Google service unavailable");
+    }
     let data;
     try { data=await response.json(); }
     catch(error) { if(ewrDiagnostic) ewrDiagnostic(error?.name==='TimeoutError'||error?.name==='AbortError'?'EWR_VERIFY_PROVIDER_TIMEOUT':error?.name==='SyntaxError'?'EWR_VERIFY_PROVIDER_INVALID_JSON':'EWR_VERIFY_PROVIDER_BAD_RESPONSE'); throw error; }

@@ -1643,7 +1643,7 @@ test('EWR HTTP failure diagnostics log only validated numeric provider status, n
  for(const status of [400,403,404,429,500,503,'404',null,-1,600,NaN]){
   const h=await harness(t);h.state.googleError=true;h.state.providerStatus=status;
   let bodyReads=0;h.state.googleBody={get privatePayload(){bodyReads++;return 'synthetic-private-provider-body';}};
-  // A JSON parser hook proves non-success bodies are not read at all.
+  // Invalid diagnostic JSON must never leak parser details or inspect unrelated fields.
   h.state.providerInvalidJson=true;
   const result=await h.request('/api/quote',specialBooking);assert.equal(result.status,400);
   const logs=h.state.logs.map(line=>{try{return JSON.parse(line)}catch{return {}}});
@@ -1656,5 +1656,28 @@ test('EWR HTTP failure diagnostics log only validated numeric provider status, n
   const output=JSON.stringify([h.state.logs,result.body]);
   for(const value of ['synthetic-private','mock-google-key',booking.email,booking.phone,booking.pickupPlaceId,booking.dropoff])assert.ok(!output.includes(value),value);
   assert.ok(!Object.hasOwn(result.body,'providerStatus'));
+ }
+});
+
+test('EWR HTTP failures expose only explicitly allowlisted structured Google status in server diagnostics',async t=>{
+ for(const status of ['INVALID_ARGUMENT','NOT_FOUND','PERMISSION_DENIED','UNAVAILABLE','ATTACKER_PRIVATE_MARKER','invalid_argument','INVALID_ARGUMENT private-secret','INVALID_ARGUMENT\n',null,400,{},'A'.repeat(65)]){
+  const h=await harness(t);h.state.googleError=true;h.state.providerStatus=400;
+  h.state.googleBody={error:{status,message:'synthetic-private-message mock-google-key '+booking.email,details:[{private:'synthetic-private-details'}]},private:'synthetic-private-body'};
+  const result=await h.request('/api/quote',specialBooking);assert.equal(result.status,400);
+  const entry=h.state.logs.map(line=>{try{return JSON.parse(line)}catch{return {}}}).find(x=>x.reason==='EWR_VERIFY_PROVIDER_HTTP_FAILURE');
+  assert.equal(entry.providerStatus,400);
+  const approved=['INVALID_ARGUMENT','NOT_FOUND','PERMISSION_DENIED','UNAVAILABLE'].includes(status);
+  if(approved)assert.equal(entry.providerErrorStatus,status);else assert.ok(!Object.hasOwn(entry,'providerErrorStatus'));
+  assert.deepEqual(Object.keys(entry).sort(),['timestamp','referenceId','operation','identity','reason','providerStatus',...(approved?['providerErrorStatus']:[])].sort());
+  assert.equal(entry.referenceId,result.body.referenceId);
+  const output=JSON.stringify([h.state.logs,result.body]);assert.doesNotMatch(output,/synthetic-private|ATTACKER_PRIVATE_MARKER|mock-google-key/);
+  for(const value of [booking.email,booking.phone,booking.pickupPlaceId])assert.ok(!output.includes(value));
+  assert.ok(!Object.hasOwn(result.body,'providerErrorStatus'));assert.ok(!Object.hasOwn(result.body,'providerStatus'));
+ }
+ for(const body of [{},null,{error:{message:'synthetic-private-message'}}]){
+  const h=await harness(t);h.state.googleError=true;h.state.googleBody=body;
+  assert.equal((await h.request('/api/quote',specialBooking)).status,400);
+  const entry=h.state.logs.map(line=>{try{return JSON.parse(line)}catch{return {}}}).find(x=>x.reason==='EWR_VERIFY_PROVIDER_HTTP_FAILURE');
+  assert.ok(!Object.hasOwn(entry,'providerErrorStatus'));
  }
 });
