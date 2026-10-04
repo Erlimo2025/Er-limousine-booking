@@ -8,10 +8,10 @@ function hidePasswords(){
 }
 function show(view){
   hidePasswords();
-  for(const name of ['login','register','dashboard'])el(name+'View').hidden=name!==view;
+  for(const name of ['login','register','dashboard','recovery'])if(el(name+'View'))el(name+'View').hidden=name!==view;
   el('accountNavigation').hidden=view!=='dashboard';
   el('accountShell').classList.toggle('is-dashboard',view==='dashboard');
-  el('message').textContent='';
+  el('message').textContent='';el('message').classList?.remove?.('success');
 }
 function displayFirstName(fullName){
   const first=fullName.trim().split(/\s+/)[0];
@@ -58,10 +58,50 @@ async function logout(){
   finally{for(const button of buttons)button.disabled=false;}
 }
 el('logout').addEventListener('click',logout);el('navLogout').addEventListener('click',logout);
-async function load(){try{const result=await api('profile');dashboard(result.customer);}catch(_){show(location.hash==='#create'?'register':'login');}}
+async function load(){try{const result=await api('profile');dashboard(result.customer);}catch(_){show(location.hash==='#create'?'register':location.hash==='#recover'?'recovery':'login');}}
 window.addEventListener('hashchange',()=>{
   // Profile navigation must not switch an authenticated dashboard to the login view.
   if(location.hash==='#profile' && !el('dashboardView').hidden)return;
-  el('loginForm').reset();el('registerForm').reset();show(location.hash==='#create'?'register':'login');
+  el('loginForm').reset();el('registerForm').reset();show(location.hash==='#create'?'register':location.hash==='#recover'?'recovery':'login');
 });
 window.addEventListener('pageshow',()=>load());
+
+function recoveryStep(step){
+  for(const name of ['Phone','Code','Password'])el('recovery'+name+'Step').hidden=name!==step;
+  el('message').textContent='';
+}
+let recoveryResendAt=0;
+function recoveryForm(id,action){
+  const form=el(id);if(!form)return;
+  form.addEventListener('submit',async event=>{
+    event.preventDefault();const button=form.querySelector('button[type=submit]');button.disabled=true;el('message').textContent='';
+    try{await action();}catch(error){el('message').textContent=error.message;}
+    finally{button.disabled=false;}
+  });
+}
+async function sendRecoveryCode(){
+  const result=await api('recovery/request',{phone:el('recoveryPhone').value});
+  el('recoveryNotice').textContent=result.message;el('recoveryCode').value='';
+  recoveryResendAt=Date.now()+60000;el('resendRecoveryCode').disabled=true;recoveryStep('Code');
+  setTimeout(()=>{if(Date.now()>=recoveryResendAt)el('resendRecoveryCode').disabled=false;},60000);
+}
+recoveryForm('recoveryPhoneForm',sendRecoveryCode);
+recoveryForm('recoveryCodeForm',async()=>{
+  try{await api('recovery/verify',{code:el('recoveryCode').value});recoveryStep('Password');}
+  finally{el('recoveryCode').value='';}
+});
+recoveryForm('recoveryResetForm',async()=>{
+  const password=el('newPassword').value,confirmation=el('confirmPassword').value;
+  try{
+    if(password!==confirmation)throw new Error('Passwords must match.');
+    const result=await api('recovery/reset',{password,confirmPassword:confirmation});
+    el('recoveryPhoneForm').reset();el('recoveryCodeForm').reset();recoveryStep('Phone');
+    history.replaceState(null,'','/account.html');show('login');
+    el('message').textContent=result.message;el('message').classList.add('success');
+  }finally{el('newPassword').value='';el('confirmPassword').value='';hidePasswords();}
+});
+if(el('resendRecoveryCode'))el('resendRecoveryCode').addEventListener('click',async()=>{
+  if(Date.now()<recoveryResendAt)return;
+  el('resendRecoveryCode').disabled=true;
+  try{await sendRecoveryCode();}catch(error){el('message').textContent=error.message;el('resendRecoveryCode').disabled=false;}
+});

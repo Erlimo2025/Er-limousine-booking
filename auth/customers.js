@@ -86,7 +86,7 @@ function installCustomerAuth(app,{store,route,rateLimit,validOrigin,secure,now=D
   const matched=await verifyPassword(validInput?password:'invalid-password-input',c?.password_hash);
   if(!validInput || !matched || c?.account_status!=='active')return reject(res,401,'Email or password is incorrect.');
   const s=makeSession();
-  if(!await store.createCustomerSession(c.id,s))return reject(res,401,'Email or password is incorrect.');
+  if(!await store.createCustomerSession(c.id,s,c.password_hash))return reject(res,401,'Email or password is incorrect.');
   const old=token(req);if(old)await store.revokeCustomerSession(hashToken(old));
   issue(res,s);res.json({customer:profile(c)});
  }));

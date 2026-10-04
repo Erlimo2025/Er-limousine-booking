@@ -251,7 +251,10 @@ const SITE_URL =
 let reservationStore;
 try { reservationStore = createStore(process.env); }
 catch (_) { console.error("Reservation storage configuration unavailable."); process.exitCode = 1; }
-const storageReady = reservationStore ? reservationStore.migrate() : Promise.reject(new StorageError());
+let recoverySmsProvider,recoveryConfigurationFailed=false;
+try { recoverySmsProvider=require('./services/sms').createSmsProvider({enabled:process.env.CUSTOMER_SMS_RECOVERY_ENABLED==='true'}); }
+catch (_) { recoveryConfigurationFailed=true; console.error('Customer recovery configuration unavailable.'); }
+const storageReady = reservationStore && !recoveryConfigurationFailed ? reservationStore.migrate() : Promise.reject(new StorageError());
 // Attach immediately so an unavailable database never creates an unhandled rejection.
 storageReady.catch(() => { console.error("Reservation storage initialization unavailable."); });
 const readBookings = () => reservationStore.list();
@@ -1589,6 +1592,9 @@ app.use(
 
 require('./auth/customers').installCustomerAuth(app,{store:reservationStore,route,rateLimit,
   validOrigin:validAdminOrigin,secure:adminCookieSecure,now:()=>Date.now()});
+require('./auth/recovery').installPasswordRecovery(app,{store:reservationStore,smsProvider:recoverySmsProvider,route,rateLimit,
+  validOrigin:validAdminOrigin,clientKey,secure:adminCookieSecure,now:()=>Date.now(),
+  reportFailure:req=>logDiagnostic(req,503,'provider_error')});
 
 app.use(
   express.static(

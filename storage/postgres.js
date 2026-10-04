@@ -196,6 +196,7 @@ function createStore(env = process.env, suppliedPool) {
       await client.query('SELECT pg_advisory_xact_lock($1)',[730902]);
       await client.query(fs.readFileSync(path.join(__dirname,'../migrations/001-reservations.sql'),'utf8'));
       await client.query(fs.readFileSync(path.join(__dirname,'../migrations/003-customer-accounts.sql'),'utf8'));
+      await client.query(fs.readFileSync(path.join(__dirname,'../migrations/004-customer-recovery.sql'),'utf8'));
     });
   }
   async function importLegacy(records) {
@@ -208,6 +209,6 @@ function createStore(env = process.env, suppliedPool) {
       return {inserted,skipped};
     });
   }
-  return {...require('./customers').customerStorage(pool,transaction,safe),list,get,hasPaidRide,update,createWithBudget,withActionLock,firstRideConflicts,claimFirstRide,releaseExpiredFirstRide,reconciliationCandidates,finalizeReconciliation,migrate,importLegacy,close:()=>pool.end()};
+  return {...require('./recovery').recoveryStorage(pool,transaction,safe),...require('./customers').customerStorage(pool,transaction,safe),list,get,hasPaidRide,update,createWithBudget,withActionLock,firstRideConflicts,claimFirstRide,releaseExpiredFirstRide,reconciliationCandidates,finalizeReconciliation,migrate,importLegacy,close:()=>pool.end()};
 }
 module.exports={createStore,StorageError,validateRecord,validateRecords,connectionOptions};

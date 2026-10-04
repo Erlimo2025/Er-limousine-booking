@@ -8,8 +8,10 @@ function customerStorage(pool,transaction,safe) {
    if(!row)return false;
    await client.query('INSERT INTO er_customer_sessions(token_hash,customer_id,created_at,expires_at,last_used_at) VALUES($1,$2,$3,$4,$3)',[s.hash,c.id,s.created,s.expires]);return true;
   }),
-  createCustomerSession:(id,s)=>safe(async()=>{
-   const r=await pool.query("INSERT INTO er_customer_sessions(token_hash,customer_id,created_at,expires_at,last_used_at) SELECT $1,id,$3,$4,$3 FROM er_customers WHERE id=$2 AND account_status='active' RETURNING token_hash",[s.hash,id,s.created,s.expires]);return r.rowCount===1;
+  createCustomerSession:(id,s,expectedPasswordHash)=>transaction(async client=>{
+   const current=(await client.query("SELECT password_hash FROM er_customers WHERE id=$1 AND account_status='active' FOR UPDATE",[id])).rows[0];
+   if(!current || current.password_hash!==expectedPasswordHash)return false;
+   const r=await client.query("INSERT INTO er_customer_sessions(token_hash,customer_id,created_at,expires_at,last_used_at) SELECT $1,id,$3,$4,$3 FROM er_customers WHERE id=$2 AND account_status='active' RETURNING token_hash",[s.hash,id,s.created,s.expires]);return r.rowCount===1;
   }),
   resolveCustomerSession:(hash,now)=>safe(async()=>{
    const r=await pool.query("UPDATE er_customer_sessions s SET last_used_at=$2 FROM er_customers c WHERE s.token_hash=$1 AND s.customer_id=c.id AND s.expires_at>$2 AND c.account_status='active' RETURNING "+columns,[hash,new Date(now)]);return r.rows[0] || null;

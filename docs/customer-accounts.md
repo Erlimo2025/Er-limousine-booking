@@ -20,6 +20,6 @@ Registration: 10 requests per IP per 15 minutes. Login: 30 requests per IP per 1
 
 ## Deferred work
 
-No SMS/email verification, password-reset delivery, profile editing, trip history, account-to-booking association or account-based promotion eligibility is implemented. Contact ownership remains unverified. Do not promise password recovery until a verified recovery flow is added. Expired session rows and expired throttle rows are unusable; they currently remain in storage. A future reviewed retention job can purge expired authentication metadata without deleting customers, reservations or payment records. Provider-managed database backups and restricted database access remain required as documented for reservation storage.
+Local Phase 2 adds password-recovery infrastructure with a mocked SMS provider; production recovery remains disabled pending provider and policy review. See customer-recovery.md. SMS/email enrollment verification, profile editing, trip history, account-to-booking association and account-based promotion eligibility remain deferred. Contact ownership remains unverified. Expired session rows and expired throttle rows are unusable; they currently remain in storage. A future reviewed retention job can purge expired authentication metadata without deleting customers, reservations or payment records. Provider-managed database backups and restricted database access remain required as documented for reservation storage.
 
 Tests use synthetic identities and isolated local PostgreSQL; Stripe and Google remain mocked.

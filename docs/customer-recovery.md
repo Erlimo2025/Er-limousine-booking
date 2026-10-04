@@ -1,0 +1,15 @@
+# Customer password recovery — local Phase 2
+
+Recovery is disabled by default. No live SMS adapter or credentials are included. Setting CUSTOMER_SMS_RECOVERY_ENABLED=true without an installed, reviewed provider prevents server startup. Tests inject an isolated mock provider; never enable a console/debug provider in production.
+
+The request, verify and reset endpoints use POST JSON and same-origin checks. Known and unknown valid phone numbers receive the same response and cookie structure. Unknown numbers have decoy challenges. Delivery happens after the response, outside database transactions. Provider failures are logged only as fixed sanitized categories. A delivery failure or crash never grants reset permission; the user may request another code after cooldown.
+
+Codes use crypto.randomInt and expire within ten minutes. Their verifier is HMAC-SHA256 keyed by a random 32-byte browser challenge credential. Only the credential hash and verifier are stored, so a database copy alone does not permit brute-forcing a six-digit code. Cookies are HttpOnly, SameSite=Strict, Secure in production and restricted to /api/customer/recovery. Codes must be entered in the browser that requested them. Successful verification issues a separate hashed reset grant bounded by the original expiry; each code can be verified once.
+
+PostgreSQL row locks enforce at most five failed guesses per challenge. Persistent limits allow three request attempts per normalized-phone hash per hour, twenty per client hash per hour, and a sixty-second resend cooldown. HTTP limits additionally allow five sends, thirty verification attempts and ten reset attempts per minute per client. Throttled phone requests retain generic response behavior. These controls apply whether an account exists or not.
+
+Reset reuses Phase 1 scrypt hashing. A single transaction locks the customer and challenge, updates the password, revokes all customer sessions and consumes all outstanding challenges. Login session creation checks the password hash again under that customer lock, preventing an old-password login already in progress from issuing a surviving session after reset. Admin sessions remain separate.
+
+Migration 004 adds recovery challenge and throttle tables under the existing transactional migration lock. Expired records remain unusable; no automatic customer/reservation deletion is introduced. A future reviewed retention job may purge expired recovery metadata.
+
+Before production activation the owner must approve a real SMS adapter, delivery operations and recovery policy. Phase 1 phone enrollment is not verified. SMS proves present possession, not original ownership; recycled numbers and SIM swaps remain limitations. No SMS registration verification, email recovery, FIRST15 account integration or support override is implemented. FIRST15 remains unchanged at 15%. Recovery pages/API responses are no-store with restrictive referrer protection; codes, passwords and credentials never enter URLs or browser storage.
