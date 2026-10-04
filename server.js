@@ -795,7 +795,7 @@ async function verifyEwrPickup(body,req) {
   else if(!structure.coordinatesExist)reason='EWR_VERIFY_LOCATION_MISSING';
   else if(!structure.geographyPassed)reason='EWR_VERIFY_GEOGRAPHY_REJECTED';
   else if(!types.length||!structure.typesValid)reason='EWR_VERIFY_TYPES_MISSING_OR_INVALID';
-  else if(forbidden.some(type=>types.includes(type)||details.primaryType===type))reason='EWR_VERIFY_TYPE_REJECTED';
+  else if(ewrPickups[id].kind==='airport'&&forbidden.some(type=>types.includes(type)||details.primaryType===type))reason='EWR_VERIFY_TYPE_REJECTED';
   else if(ewrPickups[id].kind==='airport'&&!types.some(type=>['airport','international_airport'].includes(type)))reason='EWR_VERIFY_AIRPORT_TYPE_MISSING';
   else if(!structure.displayNameExists)reason='EWR_VERIFY_DISPLAY_NAME_MISSING';
   else if(!structure.formattedAddressExists)reason='EWR_VERIFY_ADDRESS_MISSING';

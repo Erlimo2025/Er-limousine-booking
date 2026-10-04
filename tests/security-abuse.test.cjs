@@ -1610,3 +1610,31 @@ test('temporary EWR diagnostics identify existing rejection guards and preserve 
   assert.ok(!JSON.stringify(r.body).includes('EWR_VERIFY'));
  }
 });
+
+test('verified allowlisted EWR terminals accept structural Google categories formerly rejected; quote and Checkout remain $150',async t=>{
+ const entries=Object.entries(approvedEwr).filter(([,entry])=>entry.kind==='terminal');
+ for(const [id,entry]of entries){
+  for(const type of ['parking','route','car_rental']){
+   const h=await harness(t);h.state.placeDetails=airportResult(id,{types:[type,'point_of_interest','establishment'],primaryType:type});
+   const body={...specialBooking,pickup:'Newark Liberty International Airport '+entry.label,pickupPlaceId:id,pickupTerminal:entry.label.slice(-1).toLowerCase()};
+   const quote=await h.request('/api/quote',body);assert.equal(quote.status,200);assert.equal(quote.body.total,150);assert.equal(quote.body.discount,0);assert.equal(quote.body.promotion,null);
+   const checkout=await h.request('/api/checkout',body);assert.equal(checkout.status,200);
+   assert.equal(h.records()[0].quote.total,150);assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount,15000);
+   assert.equal(h.records()[0].trip.pickupPlaceId,id);assert.ok(h.state.routes.every(r=>r.origin.placeId===id));
+   assert.ok(h.state.logs.some(line=>{try{return JSON.parse(line).reason==='EWR_VERIFY_SUCCESS'}catch{return false}}));
+  }
+ }
+});
+test('identity-aware terminal types preserve exact ID, geography, text, provider and structural guards',async t=>{
+ const id=Object.keys(approvedEwr)[1];
+ for(const override of [{id:'unapproved-hotel-id'},{types:[]},{types:['parking',42]},{types:null},{location:{}},{location:{latitude:41,longitude:-73}}]){
+  const h=await harness(t);h.state.placeDetails=airportResult(id,{types:['parking'],primaryType:'parking',...override});
+  for(const endpoint of ['/api/quote','/api/checkout'])assert.equal((await h.request(endpoint,{...specialBooking,pickup:'Terminal A',pickupPlaceId:id})).status,400);
+  assert.equal(h.state.creates.length,0);
+ }
+ for(const pickup of ['Terminal B','Newark Airport Hotel','Airport Parking','Rental Car Facility']){
+  const h=await harness(t);h.state.placeDetails=airportResult(id,{types:['parking'],primaryType:'parking'});
+  assert.equal((await h.request('/api/checkout',{...specialBooking,pickup,pickupPlaceId:id})).status,400);
+ }
+ const h=await harness(t);h.state.googleError=true;assert.equal((await h.request('/api/checkout',{...specialBooking,pickup:'Terminal A',pickupPlaceId:id})).status,400);
+});
