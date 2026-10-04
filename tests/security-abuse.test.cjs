@@ -90,7 +90,7 @@ async function harness(t, env = {}, saved = "[]", injectedStore) {
       if (state.onGoogle) state.onGoogle();
       if (state.timeout) return new Promise((resolve, reject) =>
         options.signal.addEventListener("abort", () => reject(new Error("mock secret detail"))));
-      return {ok: !state.googleError, json: async () => {
+      return {ok: !state.googleError, status:state.providerStatus===undefined?(state.googleError?404:200):state.providerStatus, json: async () => {
         if(state.providerInvalidJson)throw new SyntaxError("synthetic-private-json-marker");
         if(state.googleBody!==undefined)return state.googleBody;
         if (url.includes("computeRoutes")) {
@@ -1637,4 +1637,24 @@ test('identity-aware terminal types preserve exact ID, geography, text, provider
   assert.equal((await h.request('/api/checkout',{...specialBooking,pickup,pickupPlaceId:id})).status,400);
  }
  const h=await harness(t);h.state.googleError=true;assert.equal((await h.request('/api/checkout',{...specialBooking,pickup:'Terminal A',pickupPlaceId:id})).status,400);
+});
+
+test('EWR HTTP failure diagnostics log only validated numeric provider status, never provider body or private values',async t=>{
+ for(const status of [400,403,404,429,500,503,'404',null,-1,600,NaN]){
+  const h=await harness(t);h.state.googleError=true;h.state.providerStatus=status;
+  let bodyReads=0;h.state.googleBody={get privatePayload(){bodyReads++;return 'synthetic-private-provider-body';}};
+  // A JSON parser hook proves non-success bodies are not read at all.
+  h.state.providerInvalidJson=true;
+  const result=await h.request('/api/quote',specialBooking);assert.equal(result.status,400);
+  const logs=h.state.logs.map(line=>{try{return JSON.parse(line)}catch{return {}}});
+  const entry=logs.find(x=>x.reason==='EWR_VERIFY_PROVIDER_HTTP_FAILURE');assert.ok(entry);
+  const valid=Number.isInteger(status)&&status>=100&&status<=599;
+  if(valid)assert.equal(entry.providerStatus,status);else assert.ok(!Object.hasOwn(entry,'providerStatus'));
+  assert.deepEqual(Object.keys(entry).sort(),['timestamp','referenceId','operation','identity','reason',...(valid?['providerStatus']:[])].sort());
+  assert.equal(entry.referenceId,result.body.referenceId);assert.equal(bodyReads,0);
+  assert.ok(!logs.some(x=>x.reason==='EWR_VERIFY_PROVIDER_INVALID_JSON'));
+  const output=JSON.stringify([h.state.logs,result.body]);
+  for(const value of ['synthetic-private','mock-google-key',booking.email,booking.phone,booking.pickupPlaceId,booking.dropoff])assert.ok(!output.includes(value),value);
+  assert.ok(!Object.hasOwn(result.body,'providerStatus'));
+ }
 });
