@@ -412,10 +412,10 @@ function resetQuote() {
   sumTotalLabel.textContent = "Total";
 
   sumVehicle.textContent =
-    vehicle.value === "suv" ? desktopSuburbanLabel.trim() : vehicle.options[
+    vehicle.value === "suv" ? "Luxury SUV" : vehicle.options[
       vehicle.selectedIndex
     ]?.textContent ||
-    "Black SUV";
+    "Luxury SUV";
 
   if (promoSummary) {
     promoSummary.hidden = true;
@@ -965,7 +965,7 @@ async function requestQuote(event) {
       data;
 
     sumVehicle.textContent =
-      data.vehicle;
+      data.vehicleKey === "suv" ? "Luxury SUV" : data.vehicle;
 
     if (
       data.miles === null ||

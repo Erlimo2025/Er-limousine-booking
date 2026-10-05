@@ -1753,3 +1753,20 @@ test('Terminal C NO_MATCH counts are sequential bounded integers without provide
   assert.equal(h.state.routes.length,0);assert.equal(h.state.creates.length,0);assert.equal(h.records().length,0);
  }
 });
+
+
+test('Trip Summary displays Luxury SUV while quote/request keep the internal suv key and original provider label',async()=>{
+ const app=fs.readFileSync(path.join(root,'public/app.js'),'utf8'),cell=()=>({textContent:''});
+ const context={sumVehicle:cell(),sumMiles:cell(),sumMinutes:cell(),sumTotal:cell(),sumMilesLabel:cell(),sumMinutesLabel:cell(),sumTotalLabel:cell(),
+  currentQuote:null,promoSummary:{hidden:false},payBtn:{},quoteBtn:{},quoteArea:{classList:{contains:()=>false,remove(){},add(){}}},
+  vehicle:{value:'suv',disabled:false,options:[{textContent:'Cadillac Escalade ESV'}],selectedIndex:0},form:{reportValidity:()=>true},
+  clearNotice(){},showNotice(){},showPromoResult(){},formatMoney:value=>String(value),getFormData(){return {vehicle:this.vehicle.value};}};
+ context.getFormData=()=>({vehicle:context.vehicle.value});
+ let sent;const data={vehicle:'Black SUV',vehicleKey:'suv',miles:10,minutes:20,total:150,currency:'usd',fixedOffer:{}};
+ context.fetch=async(url,options)=>{sent=JSON.parse(options.body);return {ok:true,json:async()=>data};};vm.createContext(context);
+ vm.runInContext(app.slice(app.indexOf('function resetQuote()'),app.indexOf('/* =========================================',app.indexOf('function resetQuote()'))),context);
+ context.resetQuote();assert.equal(context.sumVehicle.textContent,'Luxury SUV');assert.equal(context.vehicle.value,'suv');
+ vm.runInContext(app.slice(app.indexOf('async function requestQuote('),app.indexOf('quoteBtn.addEventListener(',app.indexOf('async function requestQuote('))),context);
+ const quote=await context.requestQuote();assert.equal(context.sumVehicle.textContent,'Luxury SUV');assert.equal(sent.vehicle,'suv');assert.equal(quote.vehicleKey,'suv');assert.equal(quote.vehicle,'Black SUV');assert.equal(quote.total,150);
+ data.vehicleKey='escalade';data.vehicle='Cadillac Escalade ESV';context.vehicle.value='escalade';await context.requestQuote();assert.equal(context.sumVehicle.textContent,'Cadillac Escalade ESV');
+});
