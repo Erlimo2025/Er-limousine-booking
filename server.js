@@ -1647,6 +1647,9 @@ app.use(
 
 const customerAuth=require('./auth/customers').installCustomerAuth(app,{store:reservationStore,route,rateLimit,
   validOrigin:validAdminOrigin,secure:adminCookieSecure,now:()=>Date.now()});
+require('./routes/customer-payment-methods').installCustomerPaymentMethods(app,{store:reservationStore,stripe,customerAuth,route,
+  enabled:process.env.CUSTOMER_PAYMENT_METHODS_ENABLED==='true',siteUrl:SITE_URL,production:adminCookieSecure,clientKey,
+  reportFailure:(req,status,provider)=>logDiagnostic(req,status,'provider_error',provider),now:()=>Date.now()});
 const {tripQuery}=require('./storage/customer-trips');
 app.get('/api/customer/trips',route(customerAuth.requireCustomer),route(async(req,res)=>{
   const query=tripQuery(req.query,Date.now());

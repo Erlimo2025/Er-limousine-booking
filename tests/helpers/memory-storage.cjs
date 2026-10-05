@@ -9,6 +9,7 @@ function memoryStore(initial=[], shared={records:clone(initial),locks:new Map(),
  const atomic=async fn=>{const before=shared.queue;let release;shared.queue=new Promise(r=>release=r);await before;try{return await fn();}finally{release();}};
  return {
   ...require('./customer-memory.cjs').customerMemory(shared,failures),
+  ...require('./payment-memory.cjs').paymentMemory(shared,failures),
   migrate:async()=>{fail('initialize');},close:async()=>{},
   hasPaidRide:async(email,phone)=>{fail('read');return shared.records.some(r=>r.paymentStatus==='paid' && ((email && r.customer?.email?.trim().toLowerCase()===email) || (phone && r.customer?.phone?.replace(/\D/g,'')===phone)));},
   list:async()=>{fail('read');return clone(shared.records);},

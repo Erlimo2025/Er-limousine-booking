@@ -206,6 +206,7 @@ function createStore(env = process.env, suppliedPool) {
       await client.query(fs.readFileSync(path.join(__dirname,'../migrations/004-customer-recovery.sql'),'utf8'));
       await client.query(fs.readFileSync(path.join(__dirname,'../migrations/005-email-recovery.sql'),'utf8'));
       await client.query(fs.readFileSync(path.join(__dirname,'../migrations/006-customer-trips.sql'),'utf8'));
+      await client.query(fs.readFileSync(path.join(__dirname,'../migrations/007-customer-payment-methods.sql'),'utf8'));
     });
   }
   async function importLegacy(records) {
@@ -218,6 +219,6 @@ function createStore(env = process.env, suppliedPool) {
       return {inserted,skipped};
     });
   }
-  return {...require('./customer-trips').customerTripsStorage(pool,safe,validateRecord),...require('./recovery').recoveryStorage(pool,transaction,safe),...require('./customers').customerStorage(pool,transaction,safe),list,get,hasPaidRide,update,createWithBudget,withActionLock,firstRideConflicts,claimFirstRide,releaseExpiredFirstRide,reconciliationCandidates,finalizeReconciliation,migrate,importLegacy,close:()=>pool.end()};
+  return {...require('./customer-payments').customerPaymentStorage(pool,transaction,safe),...require('./customer-trips').customerTripsStorage(pool,safe,validateRecord),...require('./recovery').recoveryStorage(pool,transaction,safe),...require('./customers').customerStorage(pool,transaction,safe),list,get,hasPaidRide,update,createWithBudget,withActionLock,firstRideConflicts,claimFirstRide,releaseExpiredFirstRide,reconciliationCandidates,finalizeReconciliation,migrate,importLegacy,close:()=>pool.end()};
 }
 module.exports={createStore,StorageError,validateRecord,validateRecords,connectionOptions};

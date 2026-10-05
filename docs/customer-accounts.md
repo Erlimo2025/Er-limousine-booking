@@ -35,3 +35,10 @@ GET /api/customer/trips and GET /api/customer/trips/:id require an active, unexp
 Schedules use the existing America/New_York parser: start is outbound pickup; end is the same pickup for One Way/Airport, return pickup for Round Trip or pickup plus booked hours for Hourly. End is a classification boundary, not evidence of performed service. Completed/cancelled trips are Past; otherwise end after the snapshot is Upcoming, end at/before it is Past. Booking/payment states are displayed as stored; unpaid trips never imply confirmation. No luggage count is fabricated. EWR terminal labels derive solely from the approved stored place-ID allowlist; My Trips performs no Google lookup.
 
 The dashboard is read-only. Trip strings are rendered through textContent; no HTML interpolation or persistent browser trip storage exists. Logout/pagehide clear rendered private data, pageshow revalidates the session and reloads trips, and request-generation checks discard responses that arrive after logout/tab changes. No editing, refunds, cancellation, saved cards, rebooking or historical claiming is implemented. The future historical-claim design requires separate review and booking-specific verified authority, never contact matching alone. FIRST15 stays 15% with its existing contact-based eligibility and PostgreSQL protections.
+
+## Saved payment methods foundation
+
+Phase 1A adds disabled-by-default, authenticated backend APIs only. Account UI
+and booking payments are unchanged; saved cards cannot yet pay for a booking.
+See [customer-payment-methods.md](customer-payment-methods.md) for migration 007,
+session-derived ownership, provisioning/retry safety and local test coverage.

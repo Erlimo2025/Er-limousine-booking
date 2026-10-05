@@ -32,6 +32,7 @@ async function harness(t, env = {}, saved = "[]", injectedStore) {
   const signatureSdk = new Stripe("sk_test_not_a_real_key");
   class MockStripe {
     constructor() {
+      Object.assign(this,require('./helpers/stripe-payments.cjs').stripePaymentMock(state));
       this.webhooks = signatureSdk.webhooks;
       this.checkout = {sessions: {
         create: async (params, options) => {
@@ -122,6 +123,7 @@ async function harness(t, env = {}, saved = "[]", injectedStore) {
       if (name === "./storage/customer-trips") return require("../storage/customer-trips");
       if (name === "./auth/customers") return require("../auth/customers");
       if (name === "./auth/recovery") return require("../auth/recovery");
+      if (name === "./routes/customer-payment-methods") return require("../routes/customer-payment-methods");
       if (name === "./pricing") return testPricing;
       if (name === "./ewr-pickups") return require("../ewr-pickups");
       if (name === "./storage/postgres") return {createStore: () => {if(injectedStore instanceof Error)throw injectedStore;return testStore;}, StorageError: require("../storage/postgres").StorageError};
