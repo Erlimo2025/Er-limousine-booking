@@ -253,6 +253,7 @@ async function googleJson(url, options, ewrDiagnostic, ewrProbe) {
           // Diagnostic only: no probe context is passed recursively, and candidates never authorize booking.
           let outcome='EWR_TERMINAL_C_SEARCH_FAILURE';
           const failure={};
+          let screeningCounts={};
           try {
             const result=await googleJson('https://places.googleapis.com/v1/places:searchText',{
               method:'POST',
@@ -270,13 +271,18 @@ async function googleJson(url, options, ewrDiagnostic, ewrProbe) {
             const normalize=value=>typeof value==='string'?value.normalize('NFKC').trim().toLowerCase().replace(/\s+/g,' '):'';
             const names=new Set(['terminal c','newark liberty international airport terminal c','terminal c, newark liberty international airport','ewr terminal c']);
             const addresses=new Set(['3 brewster rd, newark, nj 07114','3 brewster rd, newark, nj 07114, usa','3 brewster rd, newark, nj 07114, united states']);
-            const candidates=(result.places||[]).filter(place=>typeof place.id==='string'&&!!place.id.trim()&&
-              names.has(normalize(place.displayName?.text))&&addresses.has(normalize(place.formattedAddress))&&
-              Number.isFinite(place.location?.latitude)&&Number.isFinite(place.location?.longitude)&&
+            const places=result.places||[];
+            const nameMatches=places.filter(place=>names.has(normalize(place.displayName?.text)));
+            const addressMatches=nameMatches.filter(place=>addresses.has(normalize(place.formattedAddress)));
+            const geographyMatches=addressMatches.filter(place=>Number.isFinite(place.location?.latitude)&&Number.isFinite(place.location?.longitude)&&
               place.location.latitude>=40.65&&place.location.latitude<=40.73&&place.location.longitude>=-74.22&&place.location.longitude<=-74.13);
+            const candidates=geographyMatches.filter(place=>typeof place.id==='string'&&!!place.id.trim());
+            const boundedCount=items=>Math.min(3,items.length);
+            screeningCounts={providerResultCount:boundedCount(places),nameCompatibleCount:boundedCount(nameMatches),
+              addressCompatibleCount:boundedCount(addressMatches),geographyCompatibleCount:boundedCount(geographyMatches),qualifyingCandidateCount:boundedCount(candidates)};
             outcome=candidates.length===1?(candidates[0].id===ewrProbe.id?'EWR_TERMINAL_C_SEARCH_SAME_ID':'EWR_TERMINAL_C_SEARCH_DIFFERENT_ID'):'EWR_TERMINAL_C_SEARCH_NO_MATCH';
           } catch (_) { /* Preserve the original failure, regardless of diagnostic outcome. */ }
-          ewrDiagnostic(outcome,outcome==='EWR_TERMINAL_C_SEARCH_FAILURE'?failure:{});
+          ewrDiagnostic(outcome,outcome==='EWR_TERMINAL_C_SEARCH_FAILURE'?failure:outcome==='EWR_TERMINAL_C_SEARCH_NO_MATCH'?screeningCounts:{});
         }
       }
       throw new Error("Google service unavailable");

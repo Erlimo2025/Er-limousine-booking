@@ -1714,7 +1714,7 @@ test('Terminal C fixed Text Search diagnostics screen candidates, remain sanitiz
   assert.equal(calls[1].headers['X-Goog-FieldMask'],'places.id,places.displayName,places.formattedAddress,places.location');
   assert.deepEqual(JSON.parse(calls[1].body),{textQuery:'Terminal C, Newark Liberty International Airport, 3 Brewster Rd, Newark, NJ 07114',languageCode:'en',maxResultCount:3});assert.ok(calls.every(c=>c.bounded));
   const logs=h.state.logs.map(line=>{try{return JSON.parse(line)}catch{return {}}});const results=logs.filter(x=>x.reason?.startsWith('EWR_TERMINAL_C_SEARCH_'));assert.equal(results.length,1);const entry=results[0];assert.equal(entry.reason,'EWR_TERMINAL_C_SEARCH_'+outcome);assert.equal(entry.referenceId,r.body.referenceId);
-  assert.deepEqual(Object.keys(entry).sort(),['timestamp','referenceId','operation','identity','reason',...(scenario==='http'?['providerStatus','providerErrorStatus']:[])].sort());
+  assert.deepEqual(Object.keys(entry).sort(),['timestamp','referenceId','operation','identity','reason',...(scenario==='http'?['providerStatus','providerErrorStatus']:[]),...(outcome==='NO_MATCH'?['providerResultCount','nameCompatibleCount','addressCompatibleCount','geographyCompatibleCount','qualifyingCandidateCount']:[])].sort());
   if(scenario==='http'){assert.equal(entry.providerStatus,400);assert.equal(entry.providerErrorStatus,'INVALID_ARGUMENT');}
   const output=JSON.stringify([h.state.logs,r.body]);assert.doesNotMatch(output,/synthetic-private|mock-google-key|https?:|Brewster|latitude|longitude|Terminal C/);for(const value of [id,booking.email,booking.phone])assert.ok(!output.includes(value));
   assert.equal(h.state.creates.length,0);assert.equal(h.state.routes.length,0);assert.equal(h.records().length,0);
@@ -1729,4 +1729,27 @@ test('Terminal C Text Search never runs for other identities or nonmatching erro
  }
  const h=await harness(t);h.state.searchProbeScenario='same';h.state.probeRequests=[];h.state.searchProbeBody={places:[{id:ids[3],displayName:{text:'Terminal C'},formattedAddress:'3 Brewster Rd, Newark, NJ 07114',location:{latitude:40.69,longitude:-74.18}}]};
  assert.equal((await h.request('/api/checkout',{...specialBooking,pickup:'Terminal C',pickupPlaceId:ids[3]})).status,400);assert.equal(h.state.probeRequests.length,2);assert.equal(h.state.creates.length,0);assert.equal(h.records().length,0);
+});
+
+test('Terminal C NO_MATCH counts are sequential bounded integers without provider content or extra requests',async t=>{
+ const id=Object.keys(approvedEwr)[3],base={id,displayName:{text:'Terminal C'},formattedAddress:'3 Brewster Rd, Newark, NJ 07114',location:{latitude:40.69,longitude:-74.18}};
+ const cases=[
+ [[],[0,0,0,0,0]],
+ [[{...base,displayName:{text:'synthetic-private-business'}}],[1,0,0,0,0]],
+ [[{...base,formattedAddress:'synthetic-private-address'}],[1,1,0,0,0]],
+ [[{...base,location:{latitude:41,longitude:-73}}],[1,1,1,0,0]],
+ [[{...base,id:''}],[1,1,1,1,0]],
+ [[base,base],[2,2,2,2,2]],
+ [Array(5).fill(base),[3,3,3,3,3]]
+ ];const fields=['providerResultCount','nameCompatibleCount','addressCompatibleCount','geographyCompatibleCount','qualifyingCandidateCount'];
+ for(const [places,expected]of cases){
+  const h=await harness(t);h.state.searchProbeScenario='counts';h.state.searchProbeBody={places};h.state.probeRequests=[];
+  const r=await h.request('/api/quote',{...specialBooking,pickup:'Terminal C',pickupPlaceId:id});assert.equal(r.status,400);assert.ok(r.body.error.startsWith('Address and route lookup is temporarily unavailable. Please try again.'));
+  const logs=h.state.logs.map(line=>{try{return JSON.parse(line)}catch{return {}}});const entry=logs.find(x=>x.reason==='EWR_TERMINAL_C_SEARCH_NO_MATCH');assert.ok(entry);
+  assert.deepEqual(fields.map(field=>entry[field]),expected);for(const field of fields){assert.ok(Number.isInteger(entry[field]));assert.ok(entry[field]>=0&&entry[field]<=3);}
+  assert.equal(entry.referenceId,r.body.referenceId);assert.equal(h.state.probeRequests.length,2);
+  assert.deepEqual(Object.keys(entry).sort(),['timestamp','referenceId','operation','identity','reason',...fields].sort());
+  const output=JSON.stringify([h.state.logs,r.body]);assert.doesNotMatch(output,/synthetic-private|mock-google-key|Brewster|latitude|longitude|Terminal C/);for(const value of [id,booking.email,booking.phone])assert.ok(!output.includes(value));
+  assert.equal(h.state.routes.length,0);assert.equal(h.state.creates.length,0);assert.equal(h.records().length,0);
+ }
 });
