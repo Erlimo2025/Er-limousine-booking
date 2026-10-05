@@ -233,7 +233,7 @@ function rateLimit(scope, limit, windowMs = MINUTE) {
 }
 
 // Timeout covers both the request and reading the response body.
-async function googleJson(url, options, ewrDiagnostic) {
+async function googleJson(url, options, ewrDiagnostic, ewrProbe) {
   try {
     if(ewrDiagnostic) ewrDiagnostic('EWR_VERIFY_PROVIDER_REQUEST_STARTED');
     let response;
@@ -249,6 +249,21 @@ async function googleJson(url, options, ewrDiagnostic) {
           if(typeof status==='string'&&statuses.has(status))diagnostic.providerErrorStatus=status;
         } catch (_) { /* Invalid/unavailable JSON adds no provider error status. */ }
         ewrDiagnostic('EWR_VERIFY_PROVIDER_HTTP_FAILURE',diagnostic);
+        if(ewrProbe?.identity==='TERMINAL_C'&&diagnostic.providerStatus===400&&diagnostic.providerErrorStatus==='INVALID_ARGUMENT') {
+          // Diagnostic only: no probe context is passed recursively, and its data never authorizes a booking.
+          let success=false;
+          const failure={};
+          try {
+            const result=await googleJson(url,{...options,headers:{...options.headers,'X-Goog-FieldMask':'id'}},(reason,fields)=>{
+              if(reason==='EWR_VERIFY_PROVIDER_HTTP_FAILURE') {
+                if(fields?.providerStatus!==undefined)failure.providerStatus=fields.providerStatus;
+                if(fields?.providerErrorStatus!==undefined)failure.providerErrorStatus=fields.providerErrorStatus;
+              }
+            });
+            success=typeof result?.id==='string'&&result.id===ewrProbe.id;
+          } catch (_) { /* Preserve the original failure, regardless of diagnostic outcome. */ }
+          ewrDiagnostic(success?'EWR_VERIFY_ID_ONLY_SUCCESS':'EWR_VERIFY_ID_ONLY_FAILURE',success?{}:failure);
+        }
       }
       throw new Error("Google service unavailable");
     }
@@ -790,7 +805,7 @@ async function verifyEwrPickup(body,req) {
   const details = await googleJson("https://places.googleapis.com/v1/places/" + encodeURIComponent(id), {
     headers: {"X-Goog-Api-Key":process.env.GOOGLE_MAPS_API_KEY,
       "X-Goog-FieldMask":"id,displayName,formattedAddress,location,types,primaryType"}
-  },diagnostic);
+  },diagnostic,{identity,id});
   if(details===null||details===undefined){diagnostic('EWR_VERIFY_PROVIDER_BAD_RESPONSE');throw new TypeError('Invalid EWR provider response');}
   const lat=details.location?.latitude,lng=details.location?.longitude;
   const types=Array.isArray(details.types) ? details.types : [];

@@ -85,6 +85,18 @@ async function harness(t, env = {}, saved = "[]", injectedStore) {
     }},
     fetch: async (url, options) => {
       state.googleCalls++;
+      if(state.probeScenario&&url.includes('/v1/places/')){
+        const mask=options.headers['X-Goog-FieldMask'];state.probeRequests.push({url,mask,key:options.headers['X-Goog-Api-Key'],bounded:!!options.signal});
+        const probe=mask==='id',scenario=state.probeScenario;
+        if(probe&&scenario==='network')throw new Error('synthetic-private-network');
+        if(probe&&scenario==='timeout')throw Object.assign(new Error('synthetic-private-timeout'),{name:'TimeoutError'});
+        const status=probe?(scenario==='http'?400:200):(state.normalStatus||400);
+        return {ok:status===200,status,json:async()=>{
+          if(probe&&scenario==='badJson')throw new SyntaxError('synthetic-private-parser');
+          if(status!==200)return {error:{status:probe?'INVALID_ARGUMENT':(state.normalErrorStatus||'INVALID_ARGUMENT'),message:'synthetic-private-message',details:['synthetic-private-details']}};
+          return {id:probe&&scenario==='mismatch'?'synthetic-private-id':decodeURIComponent(url.split('/').at(-1))};
+        }};
+      }
       if(state.providerTimeout)throw Object.assign(new Error('synthetic-private-timeout-marker'),{name:'TimeoutError'});
       if(state.providerNetworkFailure)throw new Error("synthetic-private-network-marker");
       if (state.onGoogle) state.onGoogle();
@@ -1679,5 +1691,30 @@ test('EWR HTTP failures expose only explicitly allowlisted structured Google sta
   assert.equal((await h.request('/api/quote',specialBooking)).status,400);
   const entry=h.state.logs.map(line=>{try{return JSON.parse(line)}catch{return {}}}).find(x=>x.reason==='EWR_VERIFY_PROVIDER_HTTP_FAILURE');
   assert.ok(!Object.hasOwn(entry,'providerErrorStatus'));
+ }
+});
+
+test('Terminal C ID-only probe is bounded, exactly once, sanitized and never authorizes the original failure',async t=>{
+ const id=Object.keys(approvedEwr)[3];let originalError;
+ for(const scenario of ['success','mismatch','http','badJson','timeout','network']){
+  const h=await harness(t);h.state.probeScenario=scenario;h.state.probeRequests=[];
+  const r=await h.request('/api/quote',{...specialBooking,pickup:'Terminal C',pickupPlaceId:id});assert.equal(r.status,400);
+  const message=r.body.error.replace(/ Reference: [a-f0-9-]+$/, '');originalError ||= message;assert.equal(message,originalError);assert.ok(r.body.error.endsWith('Reference: '+r.body.referenceId));assert.equal(h.state.creates.length,0);assert.equal(h.state.routes.length,0);
+  const calls=h.state.probeRequests;assert.equal(calls.length,2);assert.equal(calls[0].url,calls[1].url);assert.equal(calls[0].key,calls[1].key);assert.equal(calls[0].mask,'id,displayName,formattedAddress,location,types,primaryType');assert.equal(calls[1].mask,'id');assert.ok(calls.every(c=>c.bounded));
+  const logs=h.state.logs.map(line=>{try{return JSON.parse(line)}catch{return {}}});
+  const probe=logs.filter(x=>x.reason?.startsWith('EWR_VERIFY_ID_ONLY_'));assert.equal(probe.length,1);
+  assert.equal(probe[0].reason,scenario==='success'?'EWR_VERIFY_ID_ONLY_SUCCESS':'EWR_VERIFY_ID_ONLY_FAILURE');assert.equal(probe[0].referenceId,r.body.referenceId);
+  if(scenario==='http'){assert.equal(probe[0].providerStatus,400);assert.equal(probe[0].providerErrorStatus,'INVALID_ARGUMENT');}
+  assert.deepEqual(Object.keys(probe[0]).sort(),['timestamp','referenceId','operation','identity','reason',...(scenario==='http'?['providerStatus','providerErrorStatus']:[])].sort());
+  const output=JSON.stringify([h.state.logs,r.body]);assert.doesNotMatch(output,/synthetic-private|mock-google-key|https?:/);for(const value of [id,booking.email,booking.phone])assert.ok(!output.includes(value));
+ }
+});
+test('Terminal C ID-only probe never runs for other identities or nonmatching failure conditions',async t=>{
+ const ids=Object.keys(approvedEwr);
+ const cases=[...ids.slice(0,3).map(id=>[id,400,'INVALID_ARGUMENT']),...[403,404,429,500,503].map(status=>[ids[3],status,'INVALID_ARGUMENT']),[ids[3],400,'NOT_FOUND'],[ids[3],400,'ATTACKER_PRIVATE_MARKER']];
+ for(const [id,status,errorStatus]of cases){
+  const h=await harness(t);h.state.probeScenario='success';h.state.probeRequests=[];h.state.normalStatus=status;h.state.normalErrorStatus=errorStatus;
+  const r=await h.request('/api/quote',{...specialBooking,pickup:approvedEwr[id].label,pickupPlaceId:id});assert.equal(r.status,400);assert.equal(h.state.probeRequests.length,1);
+  assert.ok(!h.state.logs.some(line=>line.includes('EWR_VERIFY_ID_ONLY_')));
  }
 });
