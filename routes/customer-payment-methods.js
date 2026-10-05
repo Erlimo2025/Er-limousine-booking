@@ -1,5 +1,5 @@
 const {customerPayments,stripePaymentProvider,paymentError,providerId,uuid}=require('../services/customer-payments');
-function installCustomerPaymentMethods(app,{store,stripe,customerAuth,route,enabled,siteUrl,production=false,clientKey,reportFailure,now=Date.now}) {
+function installCustomerPaymentMethods(app,{store,stripe,customerAuth,route,enabled,siteUrl,publishableKey,production=false,clientKey,reportFailure,now=Date.now}) {
  const base='/api/customer/payment-methods';
  const service=stripe?customerPayments({store,provider:stripePaymentProvider(stripe),now}):null;
  let configured=false;
@@ -29,6 +29,10 @@ function installCustomerPaymentMethods(app,{store,stripe,customerAuth,route,enab
   if(!req.body || Array.isArray(req.body) || typeof req.body!=='object')return res.status(400).json({error:'Invalid request.'});next();
  };
  const empty=(req,res,next)=>Object.keys(req.body).length?res.status(400).json({error:'Invalid request.'}):next();
+ app.get(base+'/config',route(async(req,res)=>{
+  if(typeof publishableKey!=='string' || !/^pk_(?:test|live)_[A-Za-z0-9]{8,240}$/.test(publishableKey))return unavailable(req,res);
+  return send(req,res,'list',async()=>res.json({publishableKey}));
+ }));
  app.post(base+'/setup',mutation,route(async(req,res)=>{
   if(Object.keys(req.body).length!==1 || req.body.consent!==true)return res.status(400).json({error:'Consent is required to save a card.'});
   return send(req,res,'setup',async auth=>res.json(await service.setup(auth)));

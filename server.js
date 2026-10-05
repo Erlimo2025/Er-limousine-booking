@@ -1648,7 +1648,7 @@ app.use(
 const customerAuth=require('./auth/customers').installCustomerAuth(app,{store:reservationStore,route,rateLimit,
   validOrigin:validAdminOrigin,secure:adminCookieSecure,now:()=>Date.now()});
 require('./routes/customer-payment-methods').installCustomerPaymentMethods(app,{store:reservationStore,stripe,customerAuth,route,
-  enabled:process.env.CUSTOMER_PAYMENT_METHODS_ENABLED==='true',siteUrl:SITE_URL,production:adminCookieSecure,clientKey,
+  enabled:process.env.CUSTOMER_PAYMENT_METHODS_ENABLED==='true',siteUrl:SITE_URL,publishableKey:process.env.STRIPE_PUBLISHABLE_KEY,production:adminCookieSecure,clientKey,
   reportFailure:(req,status,provider)=>logDiagnostic(req,status,'provider_error',provider),now:()=>Date.now()});
 const {tripQuery}=require('./storage/customer-trips');
 app.get('/api/customer/trips',route(customerAuth.requireCustomer),route(async(req,res)=>{
@@ -1665,6 +1665,10 @@ require('./auth/recovery').installPasswordRecovery(app,{store:reservationStore,e
   validOrigin:validAdminOrigin,clientKey,secure:adminCookieSecure,now:()=>Date.now(),
   reportFailure:req=>logDiagnostic(req,503,'provider_error')});
 
+app.get('/payment-methods.html',(req,res,next)=>{res.set({'Cache-Control':'no-store','Referrer-Policy':'no-referrer'});next();},route(customerAuth.requireCustomer));
+app.use(['/payment-methods.html','/payment-methods.js'],(req,res,next)=>{
+  res.set({'Cache-Control':'no-store','Referrer-Policy':'no-referrer','Content-Security-Policy':"default-src 'none'; script-src 'self' https://js.stripe.com https://*.js.stripe.com; script-src-attr 'none'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://api.stripe.com; frame-src https://js.stripe.com https://*.js.stripe.com https://hooks.stripe.com; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self'"});next();
+});
 app.use(['/reset-password.html','/reset-password.js'],(req,res,next)=>{res.set({'Cache-Control':'no-store','Referrer-Policy':'no-referrer','Content-Security-Policy':"default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'"});next();});
 
 app.use(

@@ -1,8 +1,9 @@
-# Customer saved payment methods — Phase 1A
+# Customer saved payment methods — Phases 1A and 1B
 
-This is a backend-only foundation. No account payment page, saved-card booking,
-off-session charging, Checkout integration or payment webhook change is included.
-Stripe alone collects card data in a future Stripe.js/Elements page. Application
+Phase 1A is the backend foundation; Phase 1B adds a dedicated authenticated
+payment-method page. No saved-card booking, off-session charging, Checkout
+integration or payment webhook change is included.
+Stripe alone collects card data in Stripe.js/Elements. Application
 APIs must never accept card numbers, CVC or billing addresses.
 
 ## Configuration
@@ -12,8 +13,11 @@ blank and other values leave them disabled. Enabled routes fail closed unless
 the existing Stripe client and a valid canonical `SITE_URL` are configured.
 Production requires HTTPS; links/ownership never derive from the Host header.
 The existing private `STRIPE_SECRET_KEY` is reused server-side.
-`STRIPE_PUBLISHABLE_KEY` is a blank placeholder for the future frontend and is
-not required or returned by this backend release. No new dependency is added.
+`STRIPE_PUBLISHABLE_KEY` remains blank in the example. The authenticated,
+feature-gated `/api/customer/payment-methods/config` endpoint returns only a
+validated `pk_test_`/`pk_live_` publishable key. Missing/malformed configuration
+produces a generic unavailable error; secret keys are never returned. This
+endpoint shares the existing list rate-limit policy. No new dependency is added.
 
 ## Persistence and provisioning
 
@@ -102,7 +106,36 @@ PostgreSQL. They cover concurrency, durable lost-response retries, transaction
 rollback, network outside transactions, ownership, safe DTOs, limits, origin
 checks, revocation and existing booking regressions. No live provider is called.
 
-The frontend, reviewed Stripe.js/CSP integration and eventual saved-card booking
-flow remain separate phases. Enabling production or resolving review-required
+Eventual saved-card booking remains a separate phase. Enabling production or resolving review-required
 attempts is outside this implementation. FIRST15 stays 15%; guest bookings,
 EWR, pricing, My Trips and existing Checkout/webhook authority are unchanged.
+
+## Phase 1B customer page
+
+`/payment-methods.html` requires the existing customer session. The dashboard
+links to it. It displays only safe card brand, masked last four digits and expiry;
+opaque references remain in memory for deliberate, confirmed removal.
+
+Add Card first shows explicit save-card consent. Only after consent does the
+browser create/reuse the server attempt and load official `https://js.stripe.com/v3/`.
+The card Element (postal collection and Link disabled) sends raw card data only
+to Stripe. `confirmCardSetup` handles card authentication without an application
+return URL. Browser success is followed by the existing server verification;
+only verification success permits the saved-success message and refreshed list.
+Failed verification can be retried without reconfirming. Provider errors are
+generic and neither secrets nor provider responses enter logs or browser storage.
+
+The dedicated page alone permits Stripe script/frame origins (`js.stripe.com`,
+`*.js.stripe.com`, plus `hooks.stripe.com` frames) and `api.stripe.com` connections.
+There are no Google/Address Element, wallet, analytics or Link permissions.
+Other pages keep their original CSP. no-store, no-referrer, no inline scripts,
+DENY framing and frame-ancestors none remain. See
+[Stripe CSP guidance](https://docs.stripe.com/security/guide#content-security-policy)
+and [card setup confirmation](https://docs.stripe.com/js/setup_intents/confirm_card_setup).
+
+Pagehide and logout destroy Elements and clear cards, configuration, attempt
+references and client secrets. Pageshow revalidates and reloads; generation
+checks discard stale asynchronous results. Session failures clear the UI and
+return to existing login. Only the opaque application setup-attempt UUID is temporarily retained in a dedicated sessionStorage entry for authenticated verification after navigation. No client secret, Stripe identifier, card metadata or provider object is persisted; localStorage and IndexedDB are not used. Logout/current-session failure and terminal verification clear this reference. Foreign attempts return the same terminal unavailable response. Unresolved/provider-ambiguous verification remains retryable without recreating a SetupIntent. Verified-save success is independent of subsequent list refresh; refresh failures offer Retry without repeating confirmation.
+Tests and desktop/mobile browser checks use mocked Stripe only; real Stripe
+authentication/provider behavior requires a separately approved test-mode review.

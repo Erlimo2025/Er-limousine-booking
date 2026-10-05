@@ -94,7 +94,14 @@ function customerPayments({store,provider,now=Date.now}) {
    await authority(auth);const a=await store.paymentSetup(auth.id,id),m=await store.paymentMapping(auth.id);
    if(!a || !a.stripe_setup_id || a.state==='cancelled')throw paymentError(404);
    if(!validMapping(m))throw paymentError();
-   const si=await provider.retrieveSetup(a.stripe_setup_id);checkSetup(si,m,a);await completed(si,m);
+   const si=await provider.retrieveSetup(a.stripe_setup_id);checkSetup(si,m,a);
+   if(si.status==='canceled' || (elapsed(a.expires_at)>=0 && ['requires_payment_method','requires_confirmation','requires_action'].includes(si.status))){
+    // Retire only after Stripe conclusively confirms cancellation; processing stays retryable.
+    if(si.status!=='canceled'){const canceled=await provider.cancelSetup(si.id,a.id);checkSetup(canceled,m,a);if(canceled.status!=='canceled')throw paymentError();}
+    await store.updatePaymentSetup(auth.id,auth.sessionHash,a,'cancelled',now());throw paymentError(404);
+   }
+   if(si.status!=='succeeded')throw paymentError(409);
+   if(!await completed(si,m,true)){await store.updatePaymentSetup(auth.id,auth.sessionHash,a,'cancelled',now());throw paymentError(404);}
    if(a.state!=='succeeded')await store.updatePaymentSetup(auth.id,auth.sessionHash,a,'succeeded',now());else await authority(auth);
    return {ok:true};
   }),

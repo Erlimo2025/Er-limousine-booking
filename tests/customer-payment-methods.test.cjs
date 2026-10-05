@@ -89,7 +89,7 @@ test('aged unknown provisioning/setup enters review rather than blindly creating
 
 test('setup verification is provider-authoritative, owner-scoped and rejects incomplete/failed states',async t=>{
  const {h,headers}=await setup(t),out=await start(h,headers);
- for(const status of ['requires_payment_method','requires_action','processing','canceled']){h.state.payments.setups.values().next().value.status=status;assert.equal((await verify(h,headers,out.body.attempt)).status,409);}
+ for(const status of ['requires_payment_method','requires_action','processing']){h.state.payments.setups.values().next().value.status=status;assert.equal((await verify(h,headers,out.body.attempt)).status,409);}
  const {pm}=complete(h,out.body.attempt);assert.equal((await verify(h,headers,out.body.attempt)).status,200);assert.equal((await verify(h,headers,out.body.attempt)).status,200);assert.equal(h.testStore.shared.paymentSetups.get(out.body.attempt).state,'succeeded');
  const list=await h.request(base,undefined,headers);assert.equal(list.status,200);assert.deepEqual(list.body,[{id:pm.id,brand:'visa',last4:'4242',expMonth:3,expYear:2030}]);assert.doesNotMatch(JSON.stringify(list.body),/cus_|fingerprint|billing|metadata|livemode|funding|network/);
 });
@@ -104,7 +104,7 @@ test('SetupIntent/customer/card association, type, live mode and returned identi
  for(const change of [{customer:'cus_foreign'},{id:'seti_foreign'},{livemode:true},{usage:'off_session'},{payment_method_types:['card','other']},{metadata:{setupReference:crypto.randomUUID()}}]){
   const {h,headers}=await setup(t),out=await start(h,headers),{si}=complete(h,out.body.attempt);Object.assign(si,change);assert.equal((await verify(h,headers,out.body.attempt)).status,503);
  }
- for(const change of [{customer:'cus_foreign'},{type:'us_bank_account'},{livemode:true}]){const {h,headers}=await setup(t),out=await start(h,headers),{pm}=complete(h,out.body.attempt);Object.assign(pm,change);assert.equal((await verify(h,headers,out.body.attempt)).status,503);}
+ for(const change of [{customer:'cus_foreign'},{type:'us_bank_account'},{livemode:true}]){const {h,headers}=await setup(t),out=await start(h,headers),{pm}=complete(h,out.body.attempt);Object.assign(pm,change);assert.equal((await verify(h,headers,out.body.attempt)).status,change.customer?404:503);}
 });
 
 test('ownership is checked before detach; foreign, missing and repeated removal are safe equivalent no-ops',async t=>{
@@ -131,7 +131,7 @@ test('completed setup cooldown and expiry keep at most one active attempt; proce
 test('completed card detached before verification retires stale attempt and permits a new setup without duplicate Customers',async t=>{
  const {h,headers}=await setup(t),first=await start(h,headers),{pm}=complete(h,first.body.attempt);
  assert.equal((await remove(h,headers,pm.id)).status,200);assert.deepEqual((await h.request(base,undefined,headers)).body,[]);
- assert.equal((await verify(h,headers,first.body.attempt)).status,503);h.advance(30*60000);
+ assert.equal((await verify(h,headers,first.body.attempt)).status,404);h.advance(30*60000);
  const next=await start(h,headers);assert.equal(next.status,200);assert.notEqual(next.body.attempt,first.body.attempt);
  assert.equal(h.testStore.shared.paymentSetups.get(first.body.attempt).state,'cancelled');assert.equal((await verify(h,headers,first.body.attempt)).status,404);
  assert.equal(h.state.payments.customers.size,1);assert.equal(h.state.payments.calls.filter(x=>x.op==='createCustomer').length,1);
@@ -262,4 +262,14 @@ test('PostgreSQL saved cards: migrations, competing workers, persistent retries,
  await Promise.all([cleanupA.paymentLimit(owner,'cleanup-client','list',beforeCleanup+30000),cleanupB.paymentLimit(owner,'cleanup-client','list',beforeCleanup+30000)]);assert.equal((await pool.query('SELECT count(*)::int AS n FROM er_customer_payment_limits WHERE reset_at<$1',[new Date(now)])).rows[0].n,0);
  assert.equal((await pool.query('SELECT attempts FROM er_customer_payment_limits WHERE identity_hash=$1',[live])).rows[0].attempts,19);
  const index=(await pool.query("SELECT indexdef FROM pg_indexes WHERE schemaname=$1 AND indexname='er_customer_payment_limits_expiry'",[schema])).rows[0];assert.match(index.indexdef,/reset_at, identity_hash/);
+});
+
+test('resume verification retires cancelled and expired pending attempts, preserving processing uncertainty',async t=>{
+ for(const status of ['canceled','requires_action','processing']){
+  const {h,headers}=await setup(t),out=await start(h,headers),a=h.testStore.shared.paymentSetups.get(out.body.attempt);
+  h.state.payments.setups.get(a.stripe_setup_id).status=status;h.advance(31*60000);
+  const r=await verify(h,headers,a.id);assert.equal(r.status,status==='processing'?409:404);
+  assert.equal(h.testStore.shared.paymentSetups.get(a.id).state,status==='processing'?'identified':'cancelled');
+  assert.equal(h.state.payments.customers.size,1);
+ }
 });
