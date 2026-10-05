@@ -233,7 +233,7 @@ function rateLimit(scope, limit, windowMs = MINUTE) {
 }
 
 // Timeout covers both the request and reading the response body.
-async function googleJson(url, options, ewrDiagnostic, ewrProbe) {
+async function googleJson(url, options, ewrDiagnostic) {
   try {
     if(ewrDiagnostic) ewrDiagnostic('EWR_VERIFY_PROVIDER_REQUEST_STARTED');
     let response;
@@ -249,41 +249,6 @@ async function googleJson(url, options, ewrDiagnostic, ewrProbe) {
           if(typeof status==='string'&&statuses.has(status))diagnostic.providerErrorStatus=status;
         } catch (_) { /* Invalid/unavailable JSON adds no provider error status. */ }
         ewrDiagnostic('EWR_VERIFY_PROVIDER_HTTP_FAILURE',diagnostic);
-        if(ewrProbe?.identity==='TERMINAL_C'&&diagnostic.providerStatus===400&&diagnostic.providerErrorStatus==='INVALID_ARGUMENT') {
-          // Diagnostic only: no probe context is passed recursively, and candidates never authorize booking.
-          let outcome='EWR_TERMINAL_C_SEARCH_FAILURE';
-          const failure={};
-          let screeningCounts={};
-          try {
-            const result=await googleJson('https://places.googleapis.com/v1/places:searchText',{
-              method:'POST',
-              headers:{...options.headers,'Content-Type':'application/json','X-Goog-FieldMask':'places.id,places.displayName,places.formattedAddress,places.location'},
-              body:JSON.stringify({textQuery:'Terminal C, Newark Liberty International Airport, 3 Brewster Rd, Newark, NJ 07114',languageCode:'en',maxResultCount:3})
-            },(reason,fields)=>{
-              if(reason==='EWR_VERIFY_PROVIDER_HTTP_FAILURE') {
-                if(fields?.providerStatus!==undefined)failure.providerStatus=fields.providerStatus;
-                if(fields?.providerErrorStatus!==undefined)failure.providerErrorStatus=fields.providerErrorStatus;
-              }
-            });
-            if(!result||typeof result!=='object'||Array.isArray(result)||
-               (result.places!==undefined&&!Array.isArray(result.places))||
-               (result.places||[]).some(place=>!place||typeof place!=='object'||Array.isArray(place))) throw new Error('Invalid diagnostic response');
-            const normalize=value=>typeof value==='string'?value.normalize('NFKC').trim().toLowerCase().replace(/\s+/g,' '):'';
-            const names=new Set(['terminal c','newark liberty international airport terminal c','terminal c, newark liberty international airport','ewr terminal c']);
-            const addresses=new Set(['3 brewster rd, newark, nj 07114','3 brewster rd, newark, nj 07114, usa','3 brewster rd, newark, nj 07114, united states']);
-            const places=result.places||[];
-            const nameMatches=places.filter(place=>names.has(normalize(place.displayName?.text)));
-            const addressMatches=nameMatches.filter(place=>addresses.has(normalize(place.formattedAddress)));
-            const geographyMatches=addressMatches.filter(place=>Number.isFinite(place.location?.latitude)&&Number.isFinite(place.location?.longitude)&&
-              place.location.latitude>=40.65&&place.location.latitude<=40.73&&place.location.longitude>=-74.22&&place.location.longitude<=-74.13);
-            const candidates=geographyMatches.filter(place=>typeof place.id==='string'&&!!place.id.trim());
-            const boundedCount=items=>Math.min(3,items.length);
-            screeningCounts={providerResultCount:boundedCount(places),nameCompatibleCount:boundedCount(nameMatches),
-              addressCompatibleCount:boundedCount(addressMatches),geographyCompatibleCount:boundedCount(geographyMatches),qualifyingCandidateCount:boundedCount(candidates)};
-            outcome=candidates.length===1?(candidates[0].id===ewrProbe.id?'EWR_TERMINAL_C_SEARCH_SAME_ID':'EWR_TERMINAL_C_SEARCH_DIFFERENT_ID'):'EWR_TERMINAL_C_SEARCH_NO_MATCH';
-          } catch (_) { /* Preserve the original failure, regardless of diagnostic outcome. */ }
-          ewrDiagnostic(outcome,outcome==='EWR_TERMINAL_C_SEARCH_FAILURE'?failure:outcome==='EWR_TERMINAL_C_SEARCH_NO_MATCH'?screeningCounts:{});
-        }
       }
       throw new Error("Google service unavailable");
     }
@@ -809,9 +774,9 @@ function distanceMiles(
    $150 EWR → MANHATTAN SPECIAL
 ========================================= */
 
-async function verifyEwrPickup(body,req) {
+async function verifyEwrPickup(body,req,isPickup=true) {
   const id = body.pickupPlaceId;
-  // Temporary EWR-only diagnostics: fixed categories and booleans, never payload values.
+  // Sanitized EWR diagnostics: fixed categories and booleans, never payload values.
   const labels=['GENERAL','TERMINAL_A','TERMINAL_B','TERMINAL_C'];
   const identity=labels[Object.keys(ewrPickups).indexOf(id)] || 'UNAPPROVED';
   const referenceId=req?.referenceId || crypto.randomUUID();
@@ -822,15 +787,19 @@ async function verifyEwrPickup(body,req) {
     throw rejected();
   }
   diagnostic('EWR_VERIFY_PLACE_ID_APPROVED');
-  const details = await googleJson("https://places.googleapis.com/v1/places/" + encodeURIComponent(id), {
+  // Only the exact approved C pickup selection uses General EWR as provider authority.
+  // A, B, General and all drop-off identities retain their existing verification.
+  const terminalCPickup=isPickup && id==='ChIJMYEleJSwokRawcDBeH8NVg';
+  const verificationId=terminalCPickup ? 'ChIJ7wzsxeFSwokRhvLXxTe087M' : id;
+  const details = await googleJson("https://places.googleapis.com/v1/places/" + encodeURIComponent(verificationId), {
     headers: {"X-Goog-Api-Key":process.env.GOOGLE_MAPS_API_KEY,
       "X-Goog-FieldMask":"id,displayName,formattedAddress,location,types,primaryType"}
-  },diagnostic,{identity,id});
+  },diagnostic);
   if(details===null||details===undefined){diagnostic('EWR_VERIFY_PROVIDER_BAD_RESPONSE');throw new TypeError('Invalid EWR provider response');}
   const lat=details.location?.latitude,lng=details.location?.longitude;
   const types=Array.isArray(details.types) ? details.types : [];
   const forbidden=["hotel","lodging","restaurant","car_rental","parking","parking_lot","parking_garage","street_address","route"];
-  const structure={idExists:typeof details.id==='string',idMatches:details.id===id,
+  const structure={idExists:typeof details.id==='string',idMatches:details.id===verificationId,
     coordinatesExist:Number.isFinite(lat)&&Number.isFinite(lng),
     geographyPassed:Number.isFinite(lat)&&Number.isFinite(lng)&&lat>=40.65&&lat<=40.73&&lng>=-74.22&&lng<=-74.13,
     typesPresent:types.length>0,typesValid:types.every(type=>typeof type==='string'),
@@ -842,8 +811,8 @@ async function verifyEwrPickup(body,req) {
   else if(!structure.coordinatesExist)reason='EWR_VERIFY_LOCATION_MISSING';
   else if(!structure.geographyPassed)reason='EWR_VERIFY_GEOGRAPHY_REJECTED';
   else if(!types.length||!structure.typesValid)reason='EWR_VERIFY_TYPES_MISSING_OR_INVALID';
-  else if(ewrPickups[id].kind==='airport'&&forbidden.some(type=>types.includes(type)||details.primaryType===type))reason='EWR_VERIFY_TYPE_REJECTED';
-  else if(ewrPickups[id].kind==='airport'&&!types.some(type=>['airport','international_airport'].includes(type)))reason='EWR_VERIFY_AIRPORT_TYPE_MISSING';
+  else if(ewrPickups[verificationId].kind==='airport'&&forbidden.some(type=>types.includes(type)||details.primaryType===type))reason='EWR_VERIFY_TYPE_REJECTED';
+  else if(ewrPickups[verificationId].kind==='airport'&&!types.some(type=>['airport','international_airport'].includes(type)))reason='EWR_VERIFY_AIRPORT_TYPE_MISSING';
   else if(!structure.displayNameExists)reason='EWR_VERIFY_DISPLAY_NAME_MISSING';
   else if(!structure.formattedAddressExists)reason='EWR_VERIFY_ADDRESS_MISSING';
   if(reason){diagnostic(reason,structure);throw rejected();}
@@ -853,13 +822,13 @@ async function verifyEwrPickup(body,req) {
   const names=entry.kind==='airport'
     ? ['EWR','EWR Airport','Newark Airport','Newark Liberty International Airport','Newark Liberty International Airport (EWR)']
     : [entry.label,'Newark Liberty International Airport '+entry.label];
-  names.push(details.displayName.text);
+  if (!terminalCPickup) names.push(details.displayName.text);
   const compatible=new Set(names.flatMap(name=>[normalize(name),normalize(name+', '+details.formattedAddress)]));
   if(entry.kind==='airport') compatible.add(normalize('Newark Liberty International Airport (EWR), 3 Brewster Rd, Newark, NJ 07114'));
   const textCompatible=compatible.has(normalize(body.pickup));
   if(!textCompatible){diagnostic('EWR_VERIFY_TEXT_CONFLICT',{...structure,textCompatible});throw rejected();}
   diagnostic('EWR_VERIFY_SUCCESS',{...structure,textCompatible});
-  return {placeId:id, label:details.displayName.text,address:details.formattedAddress};
+  return {placeId:verificationId, label:details.displayName.text+(terminalCPickup ? " (Terminal C)" : ""),address:details.formattedAddress};
 
 }
 
@@ -1158,7 +1127,7 @@ async function calculateQuote(body,req) {
   if (!fixedOffer && body.dropoffTerminal !== undefined) {
     const terminalKeys={general:"ChIJ7wzsxeFSwokRhvLXxTe087M",a:"ChIJ2dQDPZNSwokRVJr9XE2SPt0",b:"ChIJ-6uTxfZSwokR-VfW-WSM53k",c:"ChIJMYEleJSwokRawcDBeH8NVg"};
     if (!Object.hasOwn(terminalKeys,body.dropoffTerminal) || terminalKeys[body.dropoffTerminal]!==body.dropoffPlaceId) throw new Error("Invalid request.");
-    verifiedDropoff=await verifyEwrPickup({pickupPlaceId:body.dropoffPlaceId,pickup:body.dropoff},req);
+    verifiedDropoff=await verifyEwrPickup({pickupPlaceId:body.dropoffPlaceId,pickup:body.dropoff},req,false);
   }
   const route = isHourly ? null :
     await getRouteEstimate(

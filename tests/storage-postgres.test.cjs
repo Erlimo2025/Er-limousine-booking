@@ -320,4 +320,15 @@ test('isolated PostgreSQL integration: transactions, concurrent workers, import 
   assert.deepEqual(await store.get(record.id),record);
  });
 
+ await t.test('Terminal C-only fallback persists chauffeur instructions across PostgreSQL workers and payment updates',async()=>{
+  await pool.query('TRUNCATE er_first_ride_claims, er_reservations, er_storage_audit, er_payment_ledger, er_paid_ride_eligibility');
+  const c='ChIJMYEleJSwokRawcDBeH8NVg',general=factory.booking.pickupPlaceId;
+  const body={...factory.booking,pickup:'Newark Liberty International Airport Terminal C',pickupPlaceId:c,pickupTerminal:'c',vehicle:'suv',offerCode:'EWR_MANHATTAN_SUV',promoCode:'FIRST15'};
+  const fresh=await factory.harness(t,{},'[]',store),worker=await factory.harness(t,{},'[]',second);fresh.state.rejectTerminalCDetails=true;worker.state.rejectTerminalCDetails=true;
+  const out=await fresh.request('/api/checkout',body);assert.equal(out.status,200);const record=await second.get(out.body.bookingId);
+  assert.equal(record.trip.pickupPlaceId,c);assert.equal(record.trip.pickup,'Newark Liberty International Airport (Terminal C), 3 Brewster Rd, Newark, NJ');assert.equal(record.trip.vehicle,'suv');assert.equal(record.quote.total,150);assert.equal(record.quote.discount,0);assert.equal(record.quote.promotion,null);assert.deepEqual(fresh.state.detailsRequests,[general]);assert.equal(fresh.state.routes[0].origin.placeId,general);
+  worker.state.sessions=fresh.state.sessions;const retry=await worker.request('/api/checkout',body,{cookie:fresh.checkoutCookies()});assert.equal(retry.status,200);assert.equal(worker.state.creates.length,0);assert.deepEqual(worker.state.detailsRequests,[general]);assert.deepEqual(await store.get(record.id),record);
+  const session=[...fresh.state.sessions.values()][0];assert.equal((await worker.webhook({...session,payment_status:'paid'})).status,200);const paid=await store.get(record.id);assert.equal(paid.paymentStatus,'paid');assert.deepEqual(paid.trip,record.trip);
+ });
+
 });

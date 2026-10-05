@@ -85,18 +85,9 @@ async function harness(t, env = {}, saved = "[]", injectedStore) {
     }},
     fetch: async (url, options) => {
       state.googleCalls++;
-      if(state.searchProbeScenario&&(url.includes('/v1/places/')||(url.includes('places:searchText')&&JSON.parse(options.body).textQuery==='Terminal C, Newark Liberty International Airport, 3 Brewster Rd, Newark, NJ 07114'))){
-        const search=url.includes('places:searchText'),scenario=state.searchProbeScenario;
-        state.probeRequests.push({url,method:options.method||'GET',headers:options.headers,body:options.body,bounded:!!options.signal});
-        if(search&&scenario==='network')throw new Error('synthetic-private-network');
-        if(search&&scenario==='timeout')throw Object.assign(new Error('synthetic-private-timeout'),{name:'TimeoutError'});
-        const status=search?(scenario==='http'?400:200):(state.normalStatus||400);
-        return {ok:status===200,status,json:async()=>{
-          if(search&&scenario==='badJson')throw new SyntaxError('synthetic-private-parser');
-          if(status!==200)return {error:{status:search?'INVALID_ARGUMENT':(state.normalErrorStatus||'INVALID_ARGUMENT'),message:'synthetic-private-message',details:['synthetic-private-details']}};
-          return state.searchProbeBody;
-        }};
-      }
+      (state.detailsRequests ||= []);
+      if(url.includes("/v1/places/")) state.detailsRequests.push(decodeURIComponent(url.split("/").at(-1)));
+      if(state.rejectTerminalCDetails && url.endsWith('ChIJMYEleJSwokRawcDBeH8NVg')) throw new Error('Terminal C provider rejects this identity');
       if(state.providerTimeout)throw Object.assign(new Error('synthetic-private-timeout-marker'),{name:'TimeoutError'});
       if(state.providerNetworkFailure)throw new Error("synthetic-private-network-marker");
       if (state.onGoogle) state.onGoogle();
@@ -1328,7 +1319,8 @@ const specialBooking={...booking,vehicle:'suv',offerCode:'EWR_MANHATTAN_SUV',pro
 
 test('New audit 3: all four approved IDs bind quote, route, Checkout and reservation to verified pickup',async t=>{
   for(const [id,entry] of Object.entries(approvedEwr)) {
-    const h=await harness(t),place=airportResult(id,{types:entry.kind==='terminal' ? ['point_of_interest','establishment'] : ['airport']});
+    const routeId=entry.label==='Terminal C'?booking.pickupPlaceId:id;
+    const h=await harness(t),place=airportResult(routeId,{types:entry.kind==='terminal' && entry.label!=='Terminal C' ? ['point_of_interest','establishment'] : ['airport']});
     h.state.pickupResults=[place];h.state.placeDetails=place;
     const body={...specialBooking,pickup:entry.label,pickupPlaceId:id};
     const quote=await h.request('/api/quote',body);assert.equal(quote.status,200);assert.equal(quote.body.total,150);
@@ -1337,8 +1329,8 @@ test('New audit 3: all four approved IDs bind quote, route, Checkout and reserva
     const checkout=await h.request('/api/checkout',body);assert.equal(checkout.status,200);
     assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount,15000);
     assert.equal(h.records()[0].trip.pickupPlaceId,id);
-    assert.equal(h.records()[0].trip.pickup,place.displayName.text+', '+place.formattedAddress);
-    assert.ok(h.state.routes.every(route=>route.origin.placeId===id && !route.origin.address));
+    assert.equal(h.records()[0].trip.pickup,place.displayName.text+(entry.label==='Terminal C'?' (Terminal C)':'')+', '+place.formattedAddress);
+    assert.ok(h.state.routes.every(route=>route.origin.placeId===routeId && !route.origin.address));
   }
 });
 
@@ -1446,14 +1438,15 @@ test('EWR terminal selector: normal and special quote/Checkout bind every select
   for(let i=0;i<entries.length;i++) {
     const [id,entry]=entries[i],key=['general','a','b','c'][i];
     for(const special of [false,true]) {
-      const h=await harness(t),place=airportResult(id);
+      const routeId=entry.label==='Terminal C'?booking.pickupPlaceId:id;
+      const h=await harness(t),place=airportResult(routeId);
       h.state.pickupResults=[place];h.state.placeDetails=place;
       const body={...(special ? specialBooking : booking),pickup:entry.label,pickupPlaceId:id,pickupTerminal:key};
       assert.equal((await h.request('/api/quote',body)).body.total,special ? 150 : 100);
       const result=await h.request('/api/checkout',body);assert.equal(result.status,200);
       assert.equal(h.records()[0].trip.pickupPlaceId,id);
-      assert.equal(h.records()[0].trip.pickup,place.displayName.text+', '+place.formattedAddress);
-      assert.ok(h.state.routes.every(route=>route.origin.placeId===id));
+      assert.equal(h.records()[0].trip.pickup,place.displayName.text+(entry.label==='Terminal C'?' (Terminal C)':'')+', '+place.formattedAddress);
+      assert.ok(h.state.routes.every(route=>route.origin.placeId===routeId));
     }
   }
 });
@@ -1562,14 +1555,14 @@ test('EWR drop-off selector: a special request cannot attach an airport destinat
   for(let i=0;i<entries.length;i++){
    const [id,entry]=entries[i],key=['general','a','b','c'][i];
    for(const search of [[],[airportResult()],[airportResult(),airportResult()]]){
-    const h=await harness(t);h.state.pickupResults=search;h.state.placeDetails=airportResult(id);
+    const h=await harness(t);h.state.pickupResults=search;h.state.placeDetails=airportResult(entry.label==='Terminal C'?booking.pickupPlaceId:id);
     const body={...specialBooking,pickup:entry.kind==='airport'?'Newark Liberty International Airport (EWR), 3 Brewster Rd, Newark, NJ 07114':'Newark Liberty International Airport '+entry.label,pickupPlaceId:id,pickupTerminal:key};
     const quote=await h.request('/api/quote',body);assert.equal(quote.status,200);assert.equal(quote.body.total,150);
     assert.equal((await h.request('/api/checkout',body)).status,200);assert.equal(h.records()[0].quote.total,150);
-    assert.ok(h.state.routes.every(route=>route.origin.placeId===id));
+    assert.ok(h.state.routes.every(route=>route.origin.placeId===(entry.label==='Terminal C'?booking.pickupPlaceId:id)));
    }
    for(const side of ['pickup','dropoff']){
-    const h=await harness(t);h.state.pickupResults=[];h.state.placeDetails=airportResult(id);
+    const h=await harness(t);h.state.pickupResults=[];h.state.placeDetails=airportResult(side==='pickup'&&entry.label==='Terminal C'?booking.pickupPlaceId:id);
     const body={...booking,[side]:entry.label,[side+'PlaceId']:id,[side+'Terminal']:key};
     assert.equal((await h.request('/api/quote',body)).status,200);
     assert.equal((await h.request('/api/checkout',body)).status,200);
@@ -1586,7 +1579,7 @@ test('EWR drop-off selector: a special request cannot attach an airport destinat
 
 test('temporary EWR diagnostics correlate all approved identities without exposing provider or customer values',async t=>{
  for(const [id,entry]of Object.entries(approvedEwr)){
-  const h=await harness(t);h.state.placeDetails=airportResult(id,{displayName:{text:'synthetic-private-name-marker'},formattedAddress:'synthetic-private-address-marker'});
+  const h=await harness(t);h.state.placeDetails=airportResult(entry.label==='Terminal C'?booking.pickupPlaceId:id,{displayName:{text:'synthetic-private-name-marker'},formattedAddress:'synthetic-private-address-marker'});
   const result=await h.request('/api/quote',{...specialBooking,pickup:entry.label,pickupPlaceId:id});assert.equal(result.status,200);
   const logs=h.state.logs.map(x=>{try{return JSON.parse(x)}catch{return {}}}).filter(x=>x.operation==='ewr_verification');
   assert.ok(logs.some(x=>x.reason==='EWR_VERIFY_SUCCESS'));assert.ok(logs.every(x=>x.referenceId===result.headers.get('x-request-id')));
@@ -1624,7 +1617,7 @@ test('temporary EWR diagnostics identify existing rejection guards and preserve 
 });
 
 test('verified allowlisted EWR terminals accept structural Google categories formerly rejected; quote and Checkout remain $150',async t=>{
- const entries=Object.entries(approvedEwr).filter(([,entry])=>entry.kind==='terminal');
+ const entries=Object.entries(approvedEwr).filter(([,entry])=>entry.kind==='terminal' && entry.label!=='Terminal C');
  for(const [id,entry]of entries){
   for(const type of ['parking','route','car_rental']){
    const h=await harness(t);h.state.placeDetails=airportResult(id,{types:[type,'point_of_interest','establishment'],primaryType:type});
@@ -1695,66 +1688,6 @@ test('EWR HTTP failures expose only explicitly allowlisted structured Google sta
 });
 
 
-test('Terminal C fixed Text Search diagnostics screen candidates, remain sanitized and never authorize',async t=>{
- const id=Object.keys(approvedEwr)[3];
- const candidate={id,displayName:{text:'Terminal C'},formattedAddress:'3 Brewster Rd, Newark, NJ 07114, USA',location:{latitude:40.69,longitude:-74.18}};
- const cases=[
- ['same',{places:[candidate]},'SAME_ID'],['different',{places:[{...candidate,id:'synthetic-private-candidate-id'}]},'DIFFERENT_ID'],
- ['empty',{places:[]},'NO_MATCH'],['emptyObject',{},'NO_MATCH'],['multiple',{places:[candidate,{...candidate,id:'synthetic-private-candidate-id'}]},'NO_MATCH'],
- ...['Terminal C Restaurant','Terminal C Lounge','Terminal C Parking','Terminal C Store','Terminal C Business'].map(name=>['falsePositive',{places:[{...candidate,displayName:{text:name}}]},'NO_MATCH']),
- ['geography',{places:[{...candidate,location:{latitude:41,longitude:-73}}]},'NO_MATCH'],
- ['address',{places:[{...candidate,formattedAddress:'synthetic-private-address'}]},'NO_MATCH'],
- ['malformed',{places:'synthetic-private-payload'},'FAILURE'],['null',null,'FAILURE'],['badJson',{},'FAILURE'],['timeout',{},'FAILURE'],['network',{},'FAILURE'],['http',{},'FAILURE']
- ];let originalError;
- for(const [scenario,body,outcome]of cases){
-  const h=await harness(t);h.state.searchProbeScenario=scenario;h.state.searchProbeBody=body;h.state.probeRequests=[];
-  const r=await h.request('/api/quote',{...specialBooking,pickup:'Terminal C',pickupPlaceId:id});assert.equal(r.status,400);
-  const message=r.body.error.replace(/ Reference: [a-f0-9-]+$/, '');originalError ||= message;assert.equal(message,originalError);assert.ok(r.body.error.endsWith('Reference: '+r.body.referenceId));
-  const calls=h.state.probeRequests;assert.equal(calls.length,2);assert.equal(calls[1].url,'https://places.googleapis.com/v1/places:searchText');assert.equal(calls[1].method,'POST');assert.equal(calls[1].headers['X-Goog-Api-Key'],calls[0].headers['X-Goog-Api-Key']);
-  assert.equal(calls[1].headers['X-Goog-FieldMask'],'places.id,places.displayName,places.formattedAddress,places.location');
-  assert.deepEqual(JSON.parse(calls[1].body),{textQuery:'Terminal C, Newark Liberty International Airport, 3 Brewster Rd, Newark, NJ 07114',languageCode:'en',maxResultCount:3});assert.ok(calls.every(c=>c.bounded));
-  const logs=h.state.logs.map(line=>{try{return JSON.parse(line)}catch{return {}}});const results=logs.filter(x=>x.reason?.startsWith('EWR_TERMINAL_C_SEARCH_'));assert.equal(results.length,1);const entry=results[0];assert.equal(entry.reason,'EWR_TERMINAL_C_SEARCH_'+outcome);assert.equal(entry.referenceId,r.body.referenceId);
-  assert.deepEqual(Object.keys(entry).sort(),['timestamp','referenceId','operation','identity','reason',...(scenario==='http'?['providerStatus','providerErrorStatus']:[]),...(outcome==='NO_MATCH'?['providerResultCount','nameCompatibleCount','addressCompatibleCount','geographyCompatibleCount','qualifyingCandidateCount']:[])].sort());
-  if(scenario==='http'){assert.equal(entry.providerStatus,400);assert.equal(entry.providerErrorStatus,'INVALID_ARGUMENT');}
-  const output=JSON.stringify([h.state.logs,r.body]);assert.doesNotMatch(output,/synthetic-private|mock-google-key|https?:|Brewster|latitude|longitude|Terminal C/);for(const value of [id,booking.email,booking.phone])assert.ok(!output.includes(value));
-  assert.equal(h.state.creates.length,0);assert.equal(h.state.routes.length,0);assert.equal(h.records().length,0);
- }
- const source=fs.readFileSync(path.join(root,'server.js'),'utf8');assert.ok(!source.includes('EWR_VERIFY_ID_ONLY_'));
-});
-test('Terminal C Text Search never runs for other identities or nonmatching errors; Checkout still fails closed',async t=>{
- const ids=Object.keys(approvedEwr);const cases=[...ids.slice(0,3).map(id=>[id,400,'INVALID_ARGUMENT']),...[403,404,429,500,503].map(status=>[ids[3],status,'INVALID_ARGUMENT']),[ids[3],400,'NOT_FOUND'],[ids[3],400,'ATTACKER_PRIVATE_MARKER']];
- for(const [id,status,errorStatus]of cases){
-  const h=await harness(t);h.state.searchProbeScenario='same';h.state.probeRequests=[];h.state.normalStatus=status;h.state.normalErrorStatus=errorStatus;
-  assert.equal((await h.request('/api/quote',{...specialBooking,pickup:approvedEwr[id].label,pickupPlaceId:id})).status,400);assert.equal(h.state.probeRequests.length,1);assert.ok(!h.state.logs.some(line=>line.includes('EWR_TERMINAL_C_SEARCH_')));
- }
- const h=await harness(t);h.state.searchProbeScenario='same';h.state.probeRequests=[];h.state.searchProbeBody={places:[{id:ids[3],displayName:{text:'Terminal C'},formattedAddress:'3 Brewster Rd, Newark, NJ 07114',location:{latitude:40.69,longitude:-74.18}}]};
- assert.equal((await h.request('/api/checkout',{...specialBooking,pickup:'Terminal C',pickupPlaceId:ids[3]})).status,400);assert.equal(h.state.probeRequests.length,2);assert.equal(h.state.creates.length,0);assert.equal(h.records().length,0);
-});
-
-test('Terminal C NO_MATCH counts are sequential bounded integers without provider content or extra requests',async t=>{
- const id=Object.keys(approvedEwr)[3],base={id,displayName:{text:'Terminal C'},formattedAddress:'3 Brewster Rd, Newark, NJ 07114',location:{latitude:40.69,longitude:-74.18}};
- const cases=[
- [[],[0,0,0,0,0]],
- [[{...base,displayName:{text:'synthetic-private-business'}}],[1,0,0,0,0]],
- [[{...base,formattedAddress:'synthetic-private-address'}],[1,1,0,0,0]],
- [[{...base,location:{latitude:41,longitude:-73}}],[1,1,1,0,0]],
- [[{...base,id:''}],[1,1,1,1,0]],
- [[base,base],[2,2,2,2,2]],
- [Array(5).fill(base),[3,3,3,3,3]]
- ];const fields=['providerResultCount','nameCompatibleCount','addressCompatibleCount','geographyCompatibleCount','qualifyingCandidateCount'];
- for(const [places,expected]of cases){
-  const h=await harness(t);h.state.searchProbeScenario='counts';h.state.searchProbeBody={places};h.state.probeRequests=[];
-  const r=await h.request('/api/quote',{...specialBooking,pickup:'Terminal C',pickupPlaceId:id});assert.equal(r.status,400);assert.ok(r.body.error.startsWith('Address and route lookup is temporarily unavailable. Please try again.'));
-  const logs=h.state.logs.map(line=>{try{return JSON.parse(line)}catch{return {}}});const entry=logs.find(x=>x.reason==='EWR_TERMINAL_C_SEARCH_NO_MATCH');assert.ok(entry);
-  assert.deepEqual(fields.map(field=>entry[field]),expected);for(const field of fields){assert.ok(Number.isInteger(entry[field]));assert.ok(entry[field]>=0&&entry[field]<=3);}
-  assert.equal(entry.referenceId,r.body.referenceId);assert.equal(h.state.probeRequests.length,2);
-  assert.deepEqual(Object.keys(entry).sort(),['timestamp','referenceId','operation','identity','reason',...fields].sort());
-  const output=JSON.stringify([h.state.logs,r.body]);assert.doesNotMatch(output,/synthetic-private|mock-google-key|Brewster|latitude|longitude|Terminal C/);for(const value of [id,booking.email,booking.phone])assert.ok(!output.includes(value));
-  assert.equal(h.state.routes.length,0);assert.equal(h.state.creates.length,0);assert.equal(h.records().length,0);
- }
-});
-
-
 test('Trip Summary displays Luxury SUV while quote/request keep the internal suv key and original provider label',async()=>{
  const app=fs.readFileSync(path.join(root,'public/app.js'),'utf8'),cell=()=>({textContent:''});
  const context={sumVehicle:cell(),sumMiles:cell(),sumMinutes:cell(),sumTotal:cell(),sumMilesLabel:cell(),sumMinutesLabel:cell(),sumTotalLabel:cell(),
@@ -1769,4 +1702,57 @@ test('Trip Summary displays Luxury SUV while quote/request keep the internal suv
  vm.runInContext(app.slice(app.indexOf('async function requestQuote('),app.indexOf('quoteBtn.addEventListener(',app.indexOf('async function requestQuote('))),context);
  const quote=await context.requestQuote();assert.equal(context.sumVehicle.textContent,'Luxury SUV');assert.equal(sent.vehicle,'suv');assert.equal(quote.vehicleKey,'suv');assert.equal(quote.vehicle,'Black SUV');assert.equal(quote.total,150);
  data.vehicleKey='escalade';data.vehicle='Cadillac Escalade ESV';context.vehicle.value='escalade';await context.requestQuote();assert.equal(context.sumVehicle.textContent,'Cadillac Escalade ESV');
+});
+
+
+test('Terminal C-only fallback verifies and routes General EWR, preserves pickup instructions and never probes Terminal C',async t=>{
+ const c='ChIJMYEleJSwokRawcDBeH8NVg',general=booking.pickupPlaceId;
+ for(const special of [true,false]){
+  const h=await harness(t);h.state.rejectTerminalCDetails=true;
+  const body={...(special?specialBooking:booking),pickup:'Newark Liberty International Airport Terminal C',pickupPlaceId:c,pickupTerminal:'c'};
+  const quote=await h.request('/api/quote',body);assert.equal(quote.status,200);assert.equal(quote.body.total,special?150:100);assert.equal(quote.body.vehicleKey,special?'suv':'escalade');
+  if(special){assert.equal(quote.body.discount,0);assert.equal(quote.body.promotion,null);}
+  const out=await h.request('/api/checkout',body);assert.equal(out.status,200);
+  assert.deepEqual(h.state.detailsRequests,[general,general]);assert.ok(h.state.routes.every(r=>r.origin.placeId===general));
+  const record=h.records()[0];assert.equal(record.trip.pickupPlaceId,c);assert.match(record.trip.pickup,/Newark Liberty International Airport \(Terminal C\)/);
+  const {tripDto}=require('../storage/customer-trips');assert.equal(tripDto(record).pickupTerminal,'Terminal C');
+  const admin=fs.readFileSync(path.join(root,'public/admin.js'),'utf8'),context={esc:value=>String(value||'').replaceAll('<','&lt;')};vm.createContext(context);
+  vm.runInContext(admin.slice(admin.indexOf('function renderBooking('),admin.indexOf('bookingsEl.addEventListener("click"')),context);assert.ok(context.renderBooking(record).includes(record.trip.pickup));
+  const session=[...h.state.sessions.values()][0];assert.equal((await h.webhook({...session,payment_status:'paid'})).status,200);assert.equal(h.records()[0].trip.pickup,record.trip.pickup);assert.equal(h.records()[0].trip.pickupPlaceId,c);
+  assert.doesNotMatch(h.state.logs.join(' '),/EWR_TERMINAL_C_SEARCH|EWR_VERIFY_ID_ONLY/);
+ }
+ assert.doesNotMatch(source,/EWR_TERMINAL_C_SEARCH|EWR_VERIFY_ID_ONLY|ewrProbe|screeningCounts|3 brewster rd, newark, nj 07114, united states/);
+});
+
+test('A, B and General continue verifying/routing their exact original Google identities',async t=>{
+ for(const [id,entry]of Object.entries(approvedEwr).slice(0,3)){
+  const h=await harness(t);h.state.placeDetails=airportResult(id);const body={...specialBooking,pickup:entry.label,pickupPlaceId:id};
+  assert.equal((await h.request('/api/quote',body)).status,200);assert.equal((await h.request('/api/checkout',body)).status,200);assert.deepEqual(h.state.detailsRequests,[id,id]);assert.ok(h.state.routes.every(r=>r.origin.placeId===id));assert.equal(h.records()[0].trip.pickupPlaceId,id);
+ }
+});
+
+test('Terminal C fallback retains every General EWR identity, classification, geography, description and provider guard',async t=>{
+ const c='ChIJMYEleJSwokRawcDBeH8NVg',body={...specialBooking,pickup:'Terminal C',pickupPlaceId:c,pickupTerminal:'c'};
+ for(const change of [
+  {placeDetails:airportResult(c)},{placeDetails:airportResult('changed')},{placeDetails:airportResult(undefined,{types:['point_of_interest']})},
+  {placeDetails:airportResult(undefined,{types:['airport','parking']})},{placeDetails:airportResult(undefined,{types:[]})},{placeDetails:airportResult(undefined,{types:['airport',42]})},
+  {placeDetails:airportResult(undefined,{location:{}})},{placeDetails:airportResult(undefined,{location:{latitude:41,longitude:-73}})},
+  {placeDetails:airportResult(undefined,{displayName:{}})},{placeDetails:airportResult(undefined,{formattedAddress:''})},
+  {googleError:true,providerStatus:400,googleBody:{error:{status:'INVALID_ARGUMENT'}}},{providerTimeout:true},{providerNetworkFailure:true},{providerInvalidJson:true}
+ ]){
+  const h=await harness(t);Object.assign(h.state,change);
+  for(const endpoint of ['/api/quote','/api/checkout'])assert.equal((await h.request(endpoint,body)).status,400);
+  assert.deepEqual(h.state.detailsRequests,[booking.pickupPlaceId,booking.pickupPlaceId]);assert.equal(h.state.creates.length,0);assert.equal(h.records().length,0);
+ }
+ for(const change of [{pickupPlaceId:undefined},{pickupPlaceId:'forged'},{pickup:'Terminal A'},{pickup:'EWR'},{pickup:'Newark Airport'},{pickup:'Newark Liberty International Airport Hotel'},{pickup:'Hotel'}]){
+  const h=await harness(t);for(const endpoint of ['/api/quote','/api/checkout'])assert.equal((await h.request(endpoint,{...body,...change})).status,400);assert.equal(h.state.creates.length,0);
+ }
+ for(const change of [{vehicle:'escalade'},{tripType:'hourly',hours:3},{tripType:'roundtrip',returnDate:'2026-11-11',returnTime:'12:00'},{dropoff:'Outside Manhattan'}]){
+  const h=await harness(t);assert.equal((await h.request('/api/checkout',{...body,...change})).status,400);assert.equal(h.state.creates.length,0);
+ }
+});
+
+test('normal Terminal C Round Trip routes back to verified General EWR and preserves chauffeur instructions',async t=>{
+ const h=await harness(t),body={...booking,pickup:'Terminal C',pickupPlaceId:'ChIJMYEleJSwokRawcDBeH8NVg',pickupTerminal:'c',tripType:'roundtrip',returnDate:'2026-11-11',returnTime:'12:00'};
+ h.state.rejectTerminalCDetails=true;assert.equal((await h.request('/api/checkout',body)).status,200);assert.equal(h.state.routes[0].origin.placeId,booking.pickupPlaceId);assert.equal(h.state.routes[1].destination.placeId,booking.pickupPlaceId);assert.match(h.records()[0].trip.pickup,/Terminal C/);assert.equal(h.records()[0].quote.total,200);
 });
