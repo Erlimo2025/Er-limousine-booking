@@ -250,19 +250,33 @@ async function googleJson(url, options, ewrDiagnostic, ewrProbe) {
         } catch (_) { /* Invalid/unavailable JSON adds no provider error status. */ }
         ewrDiagnostic('EWR_VERIFY_PROVIDER_HTTP_FAILURE',diagnostic);
         if(ewrProbe?.identity==='TERMINAL_C'&&diagnostic.providerStatus===400&&diagnostic.providerErrorStatus==='INVALID_ARGUMENT') {
-          // Diagnostic only: no probe context is passed recursively, and its data never authorizes a booking.
-          let success=false;
+          // Diagnostic only: no probe context is passed recursively, and candidates never authorize booking.
+          let outcome='EWR_TERMINAL_C_SEARCH_FAILURE';
           const failure={};
           try {
-            const result=await googleJson(url,{...options,headers:{...options.headers,'X-Goog-FieldMask':'id'}},(reason,fields)=>{
+            const result=await googleJson('https://places.googleapis.com/v1/places:searchText',{
+              method:'POST',
+              headers:{...options.headers,'Content-Type':'application/json','X-Goog-FieldMask':'places.id,places.displayName,places.formattedAddress,places.location'},
+              body:JSON.stringify({textQuery:'Terminal C, Newark Liberty International Airport, 3 Brewster Rd, Newark, NJ 07114',languageCode:'en',maxResultCount:3})
+            },(reason,fields)=>{
               if(reason==='EWR_VERIFY_PROVIDER_HTTP_FAILURE') {
                 if(fields?.providerStatus!==undefined)failure.providerStatus=fields.providerStatus;
                 if(fields?.providerErrorStatus!==undefined)failure.providerErrorStatus=fields.providerErrorStatus;
               }
             });
-            success=typeof result?.id==='string'&&result.id===ewrProbe.id;
+            if(!result||typeof result!=='object'||Array.isArray(result)||
+               (result.places!==undefined&&!Array.isArray(result.places))||
+               (result.places||[]).some(place=>!place||typeof place!=='object'||Array.isArray(place))) throw new Error('Invalid diagnostic response');
+            const normalize=value=>typeof value==='string'?value.normalize('NFKC').trim().toLowerCase().replace(/\s+/g,' '):'';
+            const names=new Set(['terminal c','newark liberty international airport terminal c','terminal c, newark liberty international airport','ewr terminal c']);
+            const addresses=new Set(['3 brewster rd, newark, nj 07114','3 brewster rd, newark, nj 07114, usa','3 brewster rd, newark, nj 07114, united states']);
+            const candidates=(result.places||[]).filter(place=>typeof place.id==='string'&&!!place.id.trim()&&
+              names.has(normalize(place.displayName?.text))&&addresses.has(normalize(place.formattedAddress))&&
+              Number.isFinite(place.location?.latitude)&&Number.isFinite(place.location?.longitude)&&
+              place.location.latitude>=40.65&&place.location.latitude<=40.73&&place.location.longitude>=-74.22&&place.location.longitude<=-74.13);
+            outcome=candidates.length===1?(candidates[0].id===ewrProbe.id?'EWR_TERMINAL_C_SEARCH_SAME_ID':'EWR_TERMINAL_C_SEARCH_DIFFERENT_ID'):'EWR_TERMINAL_C_SEARCH_NO_MATCH';
           } catch (_) { /* Preserve the original failure, regardless of diagnostic outcome. */ }
-          ewrDiagnostic(success?'EWR_VERIFY_ID_ONLY_SUCCESS':'EWR_VERIFY_ID_ONLY_FAILURE',success?{}:failure);
+          ewrDiagnostic(outcome,outcome==='EWR_TERMINAL_C_SEARCH_FAILURE'?failure:{});
         }
       }
       throw new Error("Google service unavailable");
