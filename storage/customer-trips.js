@@ -19,10 +19,15 @@ function tripQuery(query,now) {
  }
  return {view,limit:Number(text),cursor,at:cursor?.at || new Date(now).toISOString()};
 }
+// Display evidence only: Paid remains exclusively a signed-webhook transition.
+function paymentVerificationPending(record) {
+ return record.paymentStatus!=='paid' && record.checkoutAttempt?.state==='session_identified' &&
+  ['verified_paid_awaiting_webhook','payment_pending'].includes(record.checkoutAttempt.evidence);
+}
 function tripDto(record) {
  const t=record.trip;
  const terminal=id=>typeof id==='string'&&Object.hasOwn(ewr,id)?ewr[id].label:null;
- return {reference:record.id,status:record.status,paymentStatus:record.paymentStatus,tripType:t.tripType,
+ return {reference:record.id,status:record.status,paymentStatus:record.paymentStatus,paymentVerificationPending:paymentVerificationPending(record),tripType:t.tripType,
   pickup:t.pickup,dropoff:t.dropoff,date:t.date,time:t.time,timeZone:'America/New_York',
   ...(t.tripType==='roundtrip'?{returnDate:t.returnDate,returnTime:t.returnTime}:{}),
   ...(t.tripType==='hourly'?{hours:Number(t.hours)}:{}),vehicle:t.vehicle==='suv'?'Luxury SUV':record.quote.vehicle,passengers:t.passengers,
@@ -32,6 +37,11 @@ function tripDto(record) {
 function customerTripsStorage(pool,safe,validate) {
  const rowDto=row=>tripDto(validate(row.record));
  return {
+  customerReservation:(customerId,id)=>safe(async()=>{
+   if(typeof id!=='string'||!uuid.test(id))return null;
+   const row=(await pool.query('SELECT record FROM er_reservations WHERE customer_id=$1 AND id=$2',[customerId,id])).rows[0];
+   return row?validate(row.record):null;
+  }),
   reservationOwner:id=>safe(async()=> (await pool.query('SELECT customer_id FROM er_reservations WHERE id=$1',[id])).rows[0]?.customer_id || null),
   customerTrip:(customerId,id)=>safe(async()=>{
    if(typeof id!=='string'||!uuid.test(id))return null;
@@ -50,4 +60,4 @@ function customerTripsStorage(pool,safe,validate) {
   })
  };
 }
-module.exports={customerTripsStorage,tripQuery,tripDto};
+module.exports={customerTripsStorage,tripQuery,tripDto,paymentVerificationPending};

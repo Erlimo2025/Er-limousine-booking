@@ -138,6 +138,7 @@ function renderBooking(b) {
         <div>
           <span class="badge">${esc(b.status)}</span>
           <span class="badge">${esc(b.paymentStatus)}</span>
+          ${b.paymentReviewRequired ? '<span class="badge">Payment review required</span>' : ''}
         </div>
       </div>
 

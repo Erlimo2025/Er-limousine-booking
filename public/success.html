@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="no-referrer">
-  <title>Reservation Confirmed | ER Limousine Service</title>
+  <title>Reservation Status | ER Limousine Service</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
@@ -22,6 +22,8 @@
         <h2 style="margin-top:10px">Thank you.</h2>
         <p id="message">Checking your reservation…</p>
         <div id="details"></div>
+        <button id="completePayment" class="btn btn-primary" type="button" hidden>Complete Payment</button>
+        <button id="refreshReservation" class="btn" type="button">Refresh Reservation Status</button>
         <div class="hero-actions">
           <a class="btn btn-primary" href="/">Book another ride</a>
         </div>
@@ -30,52 +32,42 @@
   </main>
 
   <script>
-    (async function () {
-      const params = new URLSearchParams(location.search);
-      const id = params.get("booking");
-      const message = document.getElementById("message");
-      const details = document.getElementById("details");
-
-      if (!id) {
-        message.textContent = "Reservation reference is missing.";
-        return;
+    (() => {
+      const id=new URLSearchParams(location.search).get('booking');
+      const message=document.getElementById('message'),details=document.getElementById('details');
+      const pay=document.getElementById('completePayment'),refresh=document.getElementById('refreshReservation');
+      let generation=0,busy=false,endpoint=null;
+      const valid=typeof id==='string'&&/^[a-f0-9-]{36}$/i.test(id);
+      const row=(label,value)=>{const r=document.createElement('div');r.className='summary-row';const l=document.createElement('span'),v=document.createElement('strong');l.textContent=label;v.textContent=String(value);r.append(l,v);details.append(r);};
+      async function load(){
+        const g=++generation;details.replaceChildren();pay.hidden=true;endpoint=null;message.textContent='Checking your reservation…';
+        if(!valid){message.textContent='Reservation access unavailable.';return;}
+        try{
+          let response=await fetch('/api/booking/'+encodeURIComponent(id),{credentials:'same-origin',cache:'no-store',referrerPolicy:'no-referrer'});
+          let account=false;
+          if(response.status===401){response=await fetch('/api/customer/trips/'+encodeURIComponent(id),{credentials:'same-origin',cache:'no-store',referrerPolicy:'no-referrer'});account=true;}
+          if(!response.ok)throw Error('unavailable');
+          const data=await response.json();if(g!==generation)return;
+          const b=account?data.trip:data,t=account?b:b.trip,q=account?b:b.quote;
+          const paid=b.paymentStatus==='paid',cancelled=b.status==='cancelled',processing=b.paymentVerificationPending===true;
+          message.textContent=paid&&cancelled?'Payment received for this cancelled reservation. Please contact ER Limousine Service for payment review.':paid?'Payment received. Your reservation is confirmed.':cancelled?'This reservation is cancelled.':processing?'We’re confirming your payment. You do not need to pay again.':'Your trip has been reserved. Payment is still required.';
+          row('Reservation',account?b.reference:b.id);row('Pickup',t.pickup);row('Destination',t.dropoff);row('Date / time',t.date+' '+t.time);
+          row('Vehicle',q.vehicle);row('Total',new Intl.NumberFormat('en-US',{style:'currency',currency:q.currency||'usd'}).format(q.total));
+          row('Payment',paid?'Paid':processing?'Payment verification in progress':'Payment Pending / Unpaid');
+          if(b.paymentHoldExpiresAt&&!paid&&!cancelled)row('Start payment before',new Intl.DateTimeFormat('en-US',{dateStyle:'medium',timeStyle:'short',timeZone:'America/New_York'}).format(new Date(b.paymentHoldExpiresAt))+' (New York time)');
+          if(t.returnDate)row('Return pickup',t.returnDate+' '+t.returnTime);
+          endpoint=account?'/api/customer/trips/'+encodeURIComponent(id)+'/payment':'/api/booking/'+encodeURIComponent(id)+'/checkout';pay.hidden=paid||cancelled||processing;
+        }catch(_){if(g===generation)message.textContent='Unable to load this reservation. Please retry.';}
       }
-
-      try {
-        const response = await fetch("/api/booking/" + encodeURIComponent(id), {
-          credentials: "same-origin", cache: "no-store", referrerPolicy: "no-referrer"
-        });
-        const booking = await response.json();
-        if (!response.ok) throw new Error(booking.error || "Unable to load reservation.");
-
-        message.textContent =
-          booking.paymentStatus === "paid"
-            ? "Payment received. Your reservation is confirmed."
-            : "Payment was submitted. Confirmation may take a few seconds.";
-
-        const q = booking.quote;
-        const t = booking.trip;
-        details.innerHTML = `
-          <div class="summary-row"><span>Reservation</span><strong>${booking.id.slice(0,8).toUpperCase()}</strong></div>
-          <div class="summary-row"><span>Pickup</span><strong>${escapeHtml(t.pickup)}</strong></div>
-          <div class="summary-row"><span>Destination</span><strong>${escapeHtml(t.dropoff)}</strong></div>
-          <div class="summary-row"><span>Date / time</span><strong>${escapeHtml(t.date)} ${escapeHtml(t.time)}</strong></div>
-          <div class="summary-row"><span>Vehicle</span><strong>${escapeHtml(q.vehicle)}</strong></div>
-          <div class="summary-row"><span>Total</span><strong>$${Number(q.total).toFixed(2)}</strong></div>
-          <div class="summary-row"><span>Status</span><strong>${escapeHtml(booking.status)}</strong></div>
-        `;
-      } catch (err) {
-        message.textContent = err.message;
-      }
-
-      function escapeHtml(value) {
-        return String(value || "")
-          .replaceAll("&", "&amp;")
-          .replaceAll("<", "&lt;")
-          .replaceAll(">", "&gt;")
-          .replaceAll('"', "&quot;")
-          .replaceAll("'", "&#039;");
-      }
+      pay.addEventListener('click',async()=>{
+        if(busy||!endpoint)return;const g=generation;busy=true;pay.disabled=true;
+        try{const response=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',cache:'no-store',body:'{}'});if(!response.ok)throw Object.assign(Error('unavailable'),{status:response.status});const data=await response.json();if(g!==generation)return;location.assign(data.url);}
+        catch(error){if(g!==generation)return;if(error.status===409){busy=false;pay.disabled=false;await load();return;}message.textContent='Unable to start payment. Refresh reservation status and try again.';}
+        finally{if(g===generation){busy=false;pay.disabled=false;}}
+      });
+      refresh.addEventListener('click',()=>{if(!busy)load();});
+      window.addEventListener('pagehide',()=>{generation++;details.replaceChildren();pay.hidden=true;endpoint=null;busy=false;pay.disabled=false;});
+      window.addEventListener('pageshow',load);
     })();
   </script>
 </body>

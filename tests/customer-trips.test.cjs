@@ -37,7 +37,7 @@ test('My Trips ownership derives only from a valid server session; cross-account
  assert.equal((await h.request('/api/booking/'+out.body.bookingId,undefined,{cookie:accountCookie(a)})).status,401);
  const combined=JSON.stringify(own.body)+JSON.stringify(detail.body);
  for(const secret of ['customerAccess','tokenHash','stripeSessionId','checkoutFingerprint','checkoutAttempt','dispatch','customer_id',aid,booking.email,booking.phone])assert.ok(!combined.includes(secret),secret);
- assert.deepEqual(Object.keys(detail.body.trip).sort(),['reference','status','paymentStatus','tripType','pickup','dropoff','date','time','timeZone','vehicle','passengers','pickupTerminal','dropoffTerminal','total','currency','createdAt'].sort());
+ assert.deepEqual(Object.keys(detail.body.trip).sort(),['reference','status','paymentStatus','paymentVerificationPending','tripType','pickup','dropoff','date','time','timeZone','vehicle','passengers','pickupTerminal','dropoffTerminal','total','currency','createdAt'].sort());
 });
 
 test('guest email/phone matches and browser ownership fields never claim an account; guest retry stays guest',async t=>{
@@ -194,4 +194,28 @@ test('PostgreSQL My Trips: ownership, legacy migration, schedule indexes, immuta
  const lock=await pool2.connect();await lock.query('BEGIN');await lock.query('SELECT id FROM er_customers WHERE id=$1 FOR UPDATE',[aid]);
  const racing=fixture(),creating=store.createWithBudget(racing,()=>{},association);await lock.query('DELETE FROM er_customer_sessions WHERE customer_id=$1',[aid]);await lock.query('COMMIT');lock.release();await creating;assert.equal(await store.reservationOwner(racing.id),null);
  await Promise.all([store.migrate(),other.migrate()]);assert.equal(await store.reservationOwner(row.id),aid);assert.equal(await store.reservationOwner(legacy.id),null);
+});
+
+test('My Trips renders payment action for unpaid only and scopes full payment record lookup in SQL',async()=>{
+ const {tripDto}=require('../storage/customer-trips');
+ const src=fs.readFileSync(path.join(__dirname,'../public/account.js'),'utf8');
+ const start=src.indexOf('function tripCard('),end=src.indexOf('async function loadTrips',start);
+ const node=tag=>({tag,children:[],textContent:'',append(...x){this.children.push(...x)},addEventListener(){},setAttribute(){}});
+ const ctx={document:{createElement:node},Intl};require('node:vm').createContext(ctx);require('node:vm').runInContext(src.slice(start,end),ctx);
+ const walk=n=>[n,...n.children.flatMap(walk)];
+ const r=fixture();assert.ok(walk(ctx.tripCard(tripDto(r))).some(x=>x.tag==='button'&&x.textContent==='Complete Payment'));
+ r.paymentStatus='paid';assert.ok(!walk(ctx.tripCard(tripDto(r))).some(x=>x.textContent==='Complete Payment'));
+ const calls=[],store=customerTripsStorage({query:async(sql,args)=>{calls.push({sql,args});return {rows:[]};}},fn=>fn(),x=>x);
+ const owner=crypto.randomUUID();await store.customerReservation(owner,crypto.randomUUID());assert.match(calls[0].sql,/WHERE customer_id=\$1 AND id=\$2/);assert.equal(calls[0].args[0],owner);
+});
+
+test('My Trips pending verification hides payment action without claiming Paid or trusting client flags',()=>{
+ const src=fs.readFileSync(path.join(__dirname,'../public/account.js'),'utf8'),start=src.indexOf('function tripCard('),end=src.indexOf('async function loadTrips',start);
+ const node=tag=>({tag,children:[],textContent:'',append(...x){this.children.push(...x)},addEventListener(){},setAttribute(){}}),ctx={document:{createElement:node},Intl};
+ require('node:vm').createContext(ctx);require('node:vm').runInContext(src.slice(start,end),ctx);const walk=n=>[n,...n.children.flatMap(walk)];
+ const r=fixture();r.paymentVerificationPending=true;assert.equal(tripDto(r).paymentVerificationPending,false);
+ r.checkoutAttempt={state:'session_identified',evidence:'verified_paid_awaiting_webhook'};const dto=tripDto(r);assert.equal(dto.paymentStatus,'unpaid');assert.equal(dto.paymentVerificationPending,true);
+ let nodes=walk(ctx.tripCard(dto));assert.ok(!nodes.some(n=>n.textContent==='Complete Payment'));assert.ok(nodes.some(n=>/do not need to pay again/.test(n.textContent)));
+ r.status='cancelled';nodes=walk(ctx.tripCard(tripDto(r)));assert.ok(!nodes.some(n=>n.textContent==='Complete Payment'));assert.ok(!nodes.some(n=>/do not need to pay again/.test(n.textContent)));
+ r.status='confirmed';r.paymentStatus='paid';assert.equal(tripDto(r).paymentVerificationPending,false);assert.ok(!walk(ctx.tripCard(tripDto(r))).some(n=>n.textContent==='Complete Payment'));
 });

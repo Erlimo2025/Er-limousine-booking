@@ -25,7 +25,9 @@ function validateRecord(r) {
   if(r.trip.tripType==='hourly' && ![3,3.5,4,4.5,5,5.5,6,7,8].includes(Number(r.trip.hours)))fail();
   if(r.customerAccess !== undefined && (!plain(r.customerAccess) || typeof r.customerAccess.tokenHash !== 'string' || !/^[a-f0-9]{64}$/.test(r.customerAccess.tokenHash) || !Number.isFinite(r.customerAccess.expiresAt) || Object.keys(r.customerAccess).some(key=>!['tokenHash','expiresAt'].includes(key)))) fail();
   if(r.stripeSessionId !== null && r.stripeSessionId !== undefined && (typeof r.stripeSessionId !== 'string' || !/^cs_[A-Za-z0-9_]+$/.test(r.stripeSessionId))) fail();
+  if(r.deferredPayment!==undefined && typeof r.deferredPayment!=='boolean')fail();
   if(r.checkoutAttempt !== null && r.checkoutAttempt !== undefined && (!plain(r.checkoutAttempt) || typeof r.checkoutAttempt.key !== 'string' || !Number.isFinite(r.checkoutAttempt.expiresAt) || !plain(r.checkoutAttempt.quote) || !Number.isFinite(r.checkoutAttempt.quote.total) || r.checkoutAttempt.quote.total<=0)) fail();
+  if(r.checkoutAttempt && ((r.checkoutAttempt.firstSubmittedAt!==undefined && r.checkoutAttempt.firstSubmittedAt!==null && !Number.isFinite(r.checkoutAttempt.firstSubmittedAt)) || (r.checkoutAttempt.submissionCount!==undefined && (!Number.isSafeInteger(r.checkoutAttempt.submissionCount)||r.checkoutAttempt.submissionCount<0))))fail();
   if(r.checkoutAttempt?.version !== undefined) {
     const a=r.checkoutAttempt;
     if(a.version!==1 || typeof a.correlationId!=='string' || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(a.correlationId) ||
@@ -33,14 +35,14 @@ function validateRecord(r) {
        (a.firstSubmittedAt!==null && !Number.isFinite(a.firstSubmittedAt)) ||
        (a.lastReconciledAt!==null && !Number.isFinite(a.lastReconciledAt)) || !Number.isSafeInteger(a.submissionCount) || a.submissionCount<0)fail();
   }
-  if(r.checkoutAttempt?.version===1 && r.checkoutAttempt.parameters!==undefined) {
+  if(r.checkoutAttempt?.parameters!==undefined) {
     const a=r.checkoutAttempt,p=a.parameters,item=p?.line_items?.[0];
     if(!plain(p) || Object.keys(p).some(k=>!['mode','expires_at','customer_email','line_items','metadata','success_url','cancel_url'].includes(k)) ||
        p.mode!=='payment' || p.expires_at!==a.expiresAt || p.customer_email!==r.customer.email ||
        !Array.isArray(p.line_items) || p.line_items.length!==1 || item.quantity!==1 ||
        item.price_data?.unit_amount!==Math.round(a.quote.total*100) || item.price_data?.currency!==a.quote.currency ||
-       p.metadata?.bookingId!==r.id || p.metadata?.attemptReference!==a.correlationId ||
-       p.metadata?.promoCode!=='FIRST15' || p.metadata?.discount!==String(a.quote.discount || 0))fail();
+       p.metadata?.bookingId!==r.id || (a.version===1 && (p.metadata?.attemptReference!==a.correlationId ||
+       p.metadata?.promoCode!=='FIRST15' || p.metadata?.discount!==String(a.quote.discount || 0))))fail();
   }
   for(const key of ['driver','driverPhone','vehicle','plate'])if(typeof r.dispatch[key] !== 'string' || r.dispatch[key].length>200)fail();
   return r;
@@ -70,7 +72,7 @@ function connectionOptions(env) {
 function createStore(env = process.env, suppliedPool) {
   if (!env.DATABASE_URL && !suppliedPool) throw new StorageError();
   const options=suppliedPool ? {} : connectionOptions(env);
-  const scope=new AsyncLocalStorage();
+  const scope=new AsyncLocalStorage(),actionScope=new AsyncLocalStorage();
   const pool=suppliedPool || new Pool({...options,max:10,connectionTimeoutMillis:5000,idleTimeoutMillis:30000,statement_timeout:15000,application_name:'er-limousine'});
   pool.on?.('error',()=>console.error('Reservation storage connection unavailable.'));
   const safe = async fn => {try{return await fn();}catch(error){
@@ -120,10 +122,16 @@ function createStore(env = process.env, suppliedPool) {
       await client.query('SELECT pg_advisory_xact_lock($1)',[730903]);
       const rows=(await client.query('SELECT id, record FROM er_reservations WHERE id = $1 FOR UPDATE',[id])).rows;
       const record=decode(rows)[0];if(!record)return null;
-      const result=await fn(record,client);validateRecord(record);
+      const priorStatus=record.status;
+      const result=await fn(record,client);
+      if(priorStatus!=='cancelled' && record.status==='cancelled' && actionScope.getStore()!==(record.checkoutFingerprint || 'reservation:'+record.id))throw Object.assign(new Error('Checkout is already processing. Please try again.'),{status:409});
+      validateRecord(record);
       await client.query('UPDATE er_reservations SET record = $2::jsonb, version = version + 1, updated_at = now() WHERE id = $1',[id,JSON.stringify(record)]);
       await recordPaid(client,record);
-      if(record.paymentStatus==='paid' || record.checkoutAttempt?.state==='confirmed_unpaid' || (!record.checkoutAttempt && !record.stripeSessionId))await client.query('DELETE FROM er_first_ride_claims WHERE booking_id=$1',[id]);
+      const cancelledWithoutPaymentAuthority=record.deferredPayment && record.status==='cancelled' &&
+        (record.checkoutAttempt?.state==='confirmed_unpaid' || (!record.stripeSessionId && (!record.checkoutAttempt ||
+          record.checkoutAttempt.version===1 && record.checkoutAttempt.firstSubmittedAt===null && record.checkoutAttempt.submissionCount===0)));
+      if(record.paymentStatus==='paid' || cancelledWithoutPaymentAuthority || (!record.deferredPayment && (record.checkoutAttempt?.state==='confirmed_unpaid' || (!record.checkoutAttempt && !record.stripeSessionId))))await client.query('DELETE FROM er_first_ride_claims WHERE booking_id=$1',[id]);
       return result === undefined ? record : result;
     });
   }
@@ -131,7 +139,7 @@ function createStore(env = process.env, suppliedPool) {
     return transaction(async client=>{
       // Atomic budget/read/create across processes, held only for database operations.
       await client.query('SELECT pg_advisory_xact_lock($1)',[730901]);
-      const records=await list(client);await check(records);await insert(record,client,false,association);return record;
+      const records=await list(client);await check(records);await insert(record,client,false,association);if(record.deferredPayment && record.quote.promotion?.code==='FIRST15')await claimFirstRideWithClient(record,client);return record;
     });
   }
   async function withActionLock(fingerprint,fn) {
@@ -142,7 +150,7 @@ function createStore(env = process.env, suppliedPool) {
         // A nonblocking lock prevents waiting requests from exhausting the pool.
         locked=(await client.query('SELECT pg_try_advisory_lock($1::bigint) AS locked',[key])).rows[0].locked;
         if(!locked)throw Object.assign(new Error('Checkout is already processing. Please try again.'),{status:409});
-        try {return await scope.run(client,fn);} catch(error) {if(!error.storageFailure && !error.status)error.status=400;throw error;}
+        try {return await scope.run(client,()=>actionScope.run(fingerprint,fn));} catch(error) {if(!error.storageFailure && !error.status)error.status=400;throw error;}
       } finally {
         if(locked)try{await client.query('SELECT pg_advisory_unlock($1::bigint)',[key]);}catch(_){broken=true;}
         client.release(broken);
@@ -153,8 +161,7 @@ function createStore(env = process.env, suppliedPool) {
   async function firstRideConflicts(record) {
     return safe(async()=>decode((await (scope.getStore() || pool).query('SELECT DISTINCT r.id,r.record FROM er_first_ride_claims c JOIN er_reservations r ON r.id=c.booking_id WHERE c.identity_hash=ANY($1::text[]) AND c.booking_id<>$2',[identityHashes(record.customer),record.id])).rows));
   }
-  async function claimFirstRide(record) {
-    return transaction(async client=>{
+  async function claimFirstRideWithClient(record,client) {
       await client.query('SELECT pg_advisory_xact_lock($1)',[730903]);
       const hashes=identityHashes(record.customer);
       const paid=await client.query('SELECT 1 FROM er_paid_ride_eligibility WHERE email_hash=$1 OR phone_hash=$2 LIMIT 1',hashes);
@@ -162,17 +169,20 @@ function createStore(env = process.env, suppliedPool) {
       const conflict=await client.query('SELECT 1 FROM er_first_ride_claims WHERE identity_hash=ANY($1::text[]) AND booking_id<>$2 LIMIT 1',[hashes,record.id]);
       if(conflict.rows.length)throw Object.assign(new Error('A first-ride Checkout is already pending. Please complete or retry that booking.'),{status:409});
       for(const hash of [...new Set(hashes)].sort())await client.query('INSERT INTO er_first_ride_claims (identity_hash,booking_id) VALUES ($1,$2) ON CONFLICT (identity_hash) DO NOTHING',[hash,record.id]);
-    });
   }
+  const claimFirstRide=record=>transaction(client=>claimFirstRideWithClient(record,client));
   async function releaseExpiredFirstRide(id,sessionId) {
     return transaction(async client=>{
       await client.query('SELECT pg_advisory_xact_lock($1)',[730903]);
       const record=await get(id,client);
-      if(record && record.paymentStatus!=='paid' && record.stripeSessionId===sessionId)await client.query('DELETE FROM er_first_ride_claims WHERE booking_id=$1',[id]);
+      if(record && !record.deferredPayment && record.paymentStatus!=='paid' && record.stripeSessionId===sessionId)await client.query('DELETE FROM er_first_ride_claims WHERE booking_id=$1',[id]);
     });
   }
   async function reconciliationCandidates(limit=10) {
-    return safe(async()=>decode((await pool.query("SELECT r.id,r.record FROM er_reservations r WHERE r.record->>'paymentStatus'<>'paid' AND EXISTS (SELECT 1 FROM er_first_ride_claims c WHERE c.booking_id=r.id) ORDER BY (r.record #>> '{checkoutAttempt,lastReconciledAt}')::bigint NULLS FIRST,r.created_at LIMIT $1",[limit])).rows));
+    return safe(async()=>decode((await pool.query("SELECT r.id,r.record FROM er_reservations r WHERE r.record->>'paymentStatus'<>'paid' AND (NOT COALESCE((r.record->>'deferredPayment')::boolean,false) OR r.record->>'stripeSessionId' IS NOT NULL OR r.record #>> '{checkoutAttempt,firstSubmittedAt}' IS NOT NULL) AND EXISTS (SELECT 1 FROM er_first_ride_claims c WHERE c.booking_id=r.id) ORDER BY (r.record #>> '{checkoutAttempt,lastReconciledAt}')::bigint NULLS FIRST,r.created_at LIMIT $1",[limit])).rows));
+  }
+  async function abandonedDeferredCandidates(now,limit=10){
+    return safe(async()=>decode((await pool.query("SELECT id,record FROM er_reservations WHERE record->>'deferredPayment'='true' AND record->>'paymentStatus'<>'paid' AND record->>'status'<>'cancelled' AND record #>> '{quote,promotion,code}'='FIRST15' AND (record #>> '{checkoutAttempt,state}'='confirmed_unpaid' OR (record->>'stripeSessionId' IS NULL AND (record->>'checkoutAttempt' IS NULL OR (record #>> '{checkoutAttempt,firstSubmittedAt}' IS NULL AND record #>> '{checkoutAttempt,submissionCount}'='0')))) AND created_at <= $1 ORDER BY created_at,id LIMIT $2",[new Date(now-24*3600000),limit])).rows));
   }
   async function finalizeReconciliation(snapshot,outcome) {
     return update(snapshot.id,async(record,client)=>{
@@ -192,9 +202,7 @@ function createStore(env = process.env, suppliedPool) {
       }
       if(outcome.sessionId)record.stripeSessionId=outcome.sessionId;
       Object.assign(attempt,{state:outcome.state,evidence:outcome.evidence,lastReconciledAt:outcome.at});
-      if(outcome.state==='confirmed_paid') {
-        record.paymentStatus='paid';if(record.status==='awaiting_payment')record.status='confirmed';record.paidAt=new Date(outcome.at).toISOString();
-      }
+      if(outcome.state==='confirmed_paid')Object.assign(attempt,{state:'session_identified',evidence:'verified_paid_awaiting_webhook'});
       return true;
     });
   }
@@ -219,6 +227,6 @@ function createStore(env = process.env, suppliedPool) {
       return {inserted,skipped};
     });
   }
-  return {...require('./customer-payments').customerPaymentStorage(pool,transaction,safe),...require('./customer-trips').customerTripsStorage(pool,safe,validateRecord),...require('./recovery').recoveryStorage(pool,transaction,safe),...require('./customers').customerStorage(pool,transaction,safe),list,get,hasPaidRide,update,createWithBudget,withActionLock,firstRideConflicts,claimFirstRide,releaseExpiredFirstRide,reconciliationCandidates,finalizeReconciliation,migrate,importLegacy,close:()=>pool.end()};
+  return {...require('./customer-payments').customerPaymentStorage(pool,transaction,safe),...require('./customer-trips').customerTripsStorage(pool,safe,validateRecord),...require('./recovery').recoveryStorage(pool,transaction,safe),...require('./customers').customerStorage(pool,transaction,safe),list,get,hasPaidRide,update,createWithBudget,withActionLock,firstRideConflicts,claimFirstRide,releaseExpiredFirstRide,reconciliationCandidates,abandonedDeferredCandidates,finalizeReconciliation,migrate,importLegacy,close:()=>pool.end()};
 }
 module.exports={createStore,StorageError,validateRecord,validateRecords,connectionOptions};

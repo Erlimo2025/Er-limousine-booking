@@ -76,6 +76,7 @@ for(const label of ['pickup','return'])for(const ending of ['date or time.','dat
 for(const message of ['This reservation has already been paid.','Checkout is already processing for this reservation.',
  'Checkout is already processing. Please try again.','A first-ride Checkout is already pending. Please complete or retry that booking.',
  'A first-ride Checkout is already pending.'])customerErrorMessages.set(message,{message,status:409});
+for(const message of ['Please log in to continue.','Reservation access unavailable.'])customerErrorMessages.set(message,{message,status:401});
 customerErrorMessages.set('Too many requests. Please try again later.',{message:'Too many requests. Please try again later.',status:429});
 function sendSafeError(req,res,error,fallbackStatus=500) {
   if(res.headersSent) {
@@ -130,7 +131,7 @@ app.set("trust proxy", process.env.TRUSTED_PROXY_CIDRS
 const productionHttps = process.env.NODE_ENV === "production" || process.env.RENDER === "true";
 const contentSecurityPolicy = [
   "default-src 'self'",
-  "script-src 'self' 'sha256-knh3QyEQuoTnqEVTOqmmc3xn6M3YYA4iVj76wcUWmeE='",
+  "script-src 'self' 'sha256-u9Z1p2J0zGK6qEsH405CC/qo/SGRqk+E15haR9wFNoA='",
   "script-src-attr 'none'",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data:",
@@ -1606,6 +1607,7 @@ app.post(
           booking.paymentStatus = "paid";
           if (booking.status === "awaiting_payment") booking.status = "confirmed";
           booking.paidAt = new Date().toISOString();
+          if(booking.status==='cancelled')booking.paymentReviewRequired=true;
           if(booking.checkoutAttempt?.version===1) {booking.checkoutAttempt.state="confirmed_paid";booking.checkoutAttempt.evidence="verified_webhook";}
         } else if (
           event.type === "checkout.session.async_payment_failed" &&
@@ -1613,6 +1615,9 @@ app.post(
         ) {
           booking.paymentStatus = "failed";
           booking.paymentFailedAt = new Date().toISOString();
+          if(booking.checkoutAttempt)booking.checkoutAttempt.evidence='verified_payment_failed';
+        } else if(event.type==='checkout.session.completed' && session.status==='complete' && session.payment_status==='unpaid' && booking.checkoutAttempt){
+          Object.assign(booking.checkoutAttempt,{state:'session_identified',evidence:'payment_pending'});
         }
       }
       });
@@ -1938,6 +1943,8 @@ function enforceBookingBudget(bookings, body, ip) {
 
 async function saveCheckoutBooking(booking) {
   const result=await reservationStore.update(booking.id, stored => {
+    if(stored.status==='cancelled' && booking.status!=='cancelled')throw Object.assign(new Error('Reservation unavailable.'),{status:409});
+    if(stored.paymentStatus==='paid' && booking.paymentStatus!=='paid')throw Object.assign(new Error('This reservation has already been paid.'),{status:409});
     Object.assign(stored,{quote:booking.quote,stripeSessionId:booking.stripeSessionId,checkoutAttempt:booking.checkoutAttempt});
     if(stored.paymentStatus === "paid" && stored.checkoutAttempt?.version===1)stored.checkoutAttempt.state="confirmed_paid";
   });
@@ -1962,6 +1969,7 @@ async function reconcileFirstRide(id) {
     const booking=await reservationStore.get(id),a=booking?.checkoutAttempt;
     if(!a || a.quote.promotion?.code!=='FIRST15' || booking.paymentStatus==='paid' || a.state==='confirmed_unpaid')return;
     let outcome={state:'review_required',evidence:'no_conclusive_evidence',at:Date.now()},session,expectedSessionId=booking.stripeSessionId;
+    if(booking.deferredPayment && !booking.stripeSessionId && a.firstSubmittedAt===null)return;
     if(a.version===1 && a.state==='prepared' && a.firstSubmittedAt===null && a.submissionCount===0 && !booking.stripeSessionId) {
       outcome={...outcome,state:'confirmed_unpaid',evidence:'not_submitted'};
     } else {
@@ -1991,7 +1999,7 @@ async function reconcileFirstRide(id) {
           if(!matchesFirstRideSession(session,booking) || session.id!==expectedSessionId)outcome.evidence='session_mismatch';
           else {
             outcome.sessionId=session.id;
-            if(session.payment_status==='paid')Object.assign(outcome,{state:'confirmed_paid',evidence:'verified_paid'});
+            if(session.payment_status==='paid')Object.assign(outcome,{state:'session_identified',evidence:'verified_paid_awaiting_webhook'});
             else if(session.status==='expired' && session.payment_status==='unpaid')Object.assign(outcome,{state:'confirmed_unpaid',evidence:'verified_expired_unpaid'});
             else Object.assign(outcome,{state:'session_identified',evidence:session.status==='open' ? 'open_session' : 'payment_pending'});
           }
@@ -2007,6 +2015,9 @@ async function runFirstRideReconciliation() {
   reconciliationRunning=true;
   try {
     await storageReady;
+    for(const booking of await reservationStore.abandonedDeferredCandidates(Date.now(),10)){
+      try{await reservationStore.withActionLock(paymentActionKey(booking),async()=>{const fresh=await reservationStore.get(booking.id);if(fresh)await expireDeferredUnderLock(fresh);});}catch(error){if(error.status!==409)logDiagnostic({referenceId:crypto.randomUUID()},503,'provider_error','stripe');}
+    }
     for(const booking of await reservationStore.reconciliationCandidates(10)) {
       try {await reconcileFirstRide(booking.id);} catch(error) {
         if(error.status!==409)logDiagnostic({referenceId:crypto.randomUUID(),route:{path:'/api/checkout'}},503,'storage_unavailable','postgresql');
@@ -2023,26 +2034,74 @@ app.post('/api/bookings/:id/reconcile',requireAdmin,rateLimit('admin-reconciliat
   await reconcileFirstRide(req.params.id);res.json({ok:true});
 }));
 
+
+const paymentActionKey=booking=>booking.checkoutFingerprint || 'reservation:'+booking.id;
+const DEFERRED_DISCOUNT_HOLD=24*60*MINUTE;
+const deferredDeadline=booking=>booking.deferredPayment && booking.quote.promotion?.code==='FIRST15'?Date.parse(booking.createdAt)+DEFERRED_DISCOUNT_HOLD:null;
+function validStoredSession(session,booking){
+ return !!session && session.id===booking.stripeSessionId && session.mode==='payment' && session.metadata?.bookingId===booking.id &&
+ session.amount_total===Math.round(booking.quote.total*100) && session.currency===booking.quote.currency;
+}
+async function cancelUnderLock(booking,abandoned=false){
+ if(booking.status==='cancelled')return true;
+ const a=booking.checkoutAttempt;
+ let safe=!booking.stripeSessionId && (!a || a.firstSubmittedAt===null && a.submissionCount===0),review=false;
+ if(booking.stripeSessionId){
+  if(!stripe)throw Object.assign(new Error('Checkout is temporarily unavailable. Please try again.'),{status:503});
+  let session;
+  try{
+   session=await stripe.checkout.sessions.retrieve(booking.stripeSessionId,{}, {timeout:10000,maxNetworkRetries:0});
+   if(!validStoredSession(session,booking))throw Error('mismatch');
+   if(session.status==='open' && session.payment_status==='unpaid'){
+    session=await stripe.checkout.sessions.expire(session.id,{}, {timeout:10000,maxNetworkRetries:0});
+    if(!validStoredSession(session,booking))throw Error('mismatch');
+   }
+  }catch(_){throw Object.assign(new Error('Checkout is temporarily unavailable. Please try again.'),{status:503});}
+  safe=session.status==='expired' && session.payment_status==='unpaid';
+  review=!safe;
+  if(abandoned && !safe)return false;
+ }else if(!safe){if(abandoned)return false;review=true;}
+ if(booking.paymentStatus==='paid'){if(abandoned)return false;review=true;}
+ await reservationStore.update(booking.id,r=>{
+  if(abandoned && r.paymentStatus==='paid')return;
+  r.status='cancelled';r.cancellationReason=abandoned?'first15_hold_expired':'admin_cancelled';
+  if(review || r.paymentStatus==='paid')r.paymentReviewRequired=true;
+  if(safe && r.checkoutAttempt && r.paymentStatus!=='paid')Object.assign(r.checkoutAttempt,{state:'confirmed_unpaid',evidence:'verified_cancelled_unpaid',lastReconciledAt:Date.now()});
+ });
+ return true;
+}
+async function expireDeferredUnderLock(booking){
+ const deadline=deferredDeadline(booking);
+ if(deadline===null || Date.now()<deadline || booking.paymentStatus==='paid' || booking.status==='cancelled')return false;
+ const a=booking.checkoutAttempt;
+ if((booking.stripeSessionId || a && (a.firstSubmittedAt!==null || a.submissionCount!==0)) && a?.state!=='confirmed_unpaid')return false;
+ return cancelUnderLock(booking,true);
+}
 async function createCheckout(body, ip, fingerprint, req, res) {
-  if (!stripe) {
+  const payLater=body.paymentChoice==='later';
+  if (!stripe && !payLater) {
     throw Object.assign(new Error("Stripe is not configured. Add STRIPE_SECRET_KEY before accepting payments."), {status: 503});
   }
 
   let booking = (await readBookings()).find(item =>
-    item.checkoutFingerprint === fingerprint && item.status !== "cancelled" &&
-    (Date.now() - Date.parse(item.createdAt) < 24 * 60 * MINUTE ||
-      item.checkoutAttempt?.quote.promotion?.code==='FIRST15'));
+    item.checkoutFingerprint === fingerprint && item.status !== "cancelled");
   // Matching booking data is only a lookup key, never an ownership credential.
   // This check runs under the database action lock, before provider calls or mutations.
   if (booking && !hasCustomerAccess(req,booking,true)) {
     throw Object.assign(new Error("Checkout is temporarily unavailable. Please try again."),{status:503});
   }
 
+  if(booking)req.paymentCredentialRequired=true;
   if(booking && req.customer){
     const owner=await reservationStore.reservationOwner(booking.id);
     if(owner && owner!==req.customer.id)throw Object.assign(new Error('Checkout is temporarily unavailable. Please try again.'),{status:503});
   }
 
+  if(booking?.deferredPayment){
+    if(await expireDeferredUnderLock(booking))throw Object.assign(new Error('Reservation unavailable.'),{status:409});
+    if(payLater){if(booking.paymentStatus==='paid')throw Object.assign(new Error('Reservation unavailable.'),{status:409});return {url:`${SITE_URL}/success.html?booking=${booking.id}`,bookingId:booking.id};}
+    return checkoutStoredBooking(booking.trip,booking,req);
+  }
   /*
     IMPORTANT:
     The price is calculated again
@@ -2057,6 +2116,7 @@ async function createCheckout(body, ip, fingerprint, req, res) {
       body,req
     );
 
+  if(booking)quote=booking.quote;
   // Independently validate the final server quote before storing a booking
   // or creating a Stripe session, even if quote calculation changes later.
   await validateCheckoutQuote(body, quote);
@@ -2068,31 +2128,11 @@ async function createCheckout(body, ip, fingerprint, req, res) {
     throw new Error("Calculated Checkout amount is invalid.");
   }
 
-  // Google work may have taken long enough for a near-term pickup to pass.
   validateBookingInput(body);
-  if (booking?.paymentStatus === "paid") {
-    throw Object.assign(new Error("This reservation has already been paid."), {status: 409});
-  }
-  if (booking?.stripeSessionId) {
-    await validateCheckoutQuote(body, booking.quote);
-    let existing;
-    try {
-      existing = await stripe.checkout.sessions.retrieve(booking.stripeSessionId);
-    } catch (_) {
-      throw Object.assign(new Error("Checkout is temporarily unavailable. Please try again."), {status: 503});
-    }
-    if (existing.status === "open" && existing.url) {
-      return checkoutCustomerResult(existing.url, booking.id);
-    }
-    if (existing.status !== "expired") {
-      throw Object.assign(new Error("Checkout is already processing for this reservation."), {status: 409});
-    }
-    if(booking.quote.promotion?.code==='FIRST15' && existing.payment_status!=='unpaid')throw Object.assign(new Error("Checkout is already processing for this reservation."),{status:409});
-    booking.stripeSessionId = null;
-    booking.checkoutAttempt = null;
-  }
+  if(booking?.paymentStatus==='paid')throw Object.assign(new Error('This reservation has already been paid.'),{status:409});
   if (!booking) {
     booking = createBookingRecord(body, quote);
+    if(payLater)booking.deferredPayment=true;
     const token=crypto.randomBytes(32).toString("base64url");
     booking.customerAccess = newCustomerAccess(body,token);
     booking.checkoutFingerprint = fingerprint;
@@ -2107,13 +2147,61 @@ async function createCheckout(body, ip, fingerprint, req, res) {
     // Also delivered on a safe error response, allowing ownership-proven ambiguous retries.
     issueCustomerAccessCookies(res,booking,token);
   }
+
+  if(payLater){
+    if(booking.paymentStatus==='paid' || booking.status==='cancelled')throw Object.assign(new Error('Reservation unavailable.'),{status:409});
+    return {url:`${SITE_URL}/success.html?booking=${booking.id}`,bookingId:booking.id};
+  }
+  return checkoutStoredBooking(body,booking,req,false);
+}
+async function verifyPaymentAuthority(req,booking){
+  if(req.customer){const active=await reservationStore.resolveCustomerSession(req.customerSessionHash,Date.now());if(!active || active.id!==req.customer.id)throw Object.assign(new Error('Please log in to continue.'),{status:401});}
+  if(req.paymentCredentialRequired && !hasCustomerAccess(req,booking,true) && !hasCustomerAccess(req,booking))throw Object.assign(new Error('Reservation access unavailable.'),{status:401});
+}
+async function checkoutStoredBooking(body,booking,req,storedOnly=true){
+  if(await expireDeferredUnderLock(booking))throw Object.assign(new Error('Reservation unavailable.'),{status:409});
+  if(!stripe)throw Object.assign(new Error('Checkout is temporarily unavailable. Please try again.'),{status:503});
+  if(booking.status==='cancelled')throw Object.assign(new Error('Reservation unavailable.'),{status:409});
+  let quote=booking.quote;
+  // Google work may have taken long enough for a near-term pickup to pass.
+  if(!storedOnly)validateBookingInput(body);
+  if (booking?.paymentStatus === "paid") {
+    throw Object.assign(new Error("This reservation has already been paid."), {status: 409});
+  }
+  if (booking?.stripeSessionId) {
+    if(!storedOnly)await validateCheckoutQuote(body, booking.quote);
+    let existing;
+    try {
+      existing = await stripe.checkout.sessions.retrieve(booking.stripeSessionId,{}, {timeout:10000,maxNetworkRetries:0});
+    } catch (_) {
+      throw Object.assign(new Error("Checkout is temporarily unavailable. Please try again."), {status: 503});
+    }
+    if(!existing || existing.id!==booking.stripeSessionId || existing.mode!=='payment' || existing.metadata?.bookingId!==booking.id ||
+      existing.amount_total!==Math.round(booking.quote.total*100) || existing.currency!==booking.quote.currency)throw Object.assign(new Error('Checkout is temporarily unavailable. Please try again.'),{status:503});
+    if (existing.status === "open" && existing.payment_status==='unpaid' && existing.url) {
+      await verifyPaymentAuthority(req,booking);
+      return checkoutCustomerResult(existing.url, booking.id);
+    }
+    if (existing.status !== "expired" || existing.payment_status!=='unpaid') {
+      if(booking.checkoutAttempt && existing.status==='complete' && ['paid','unpaid'].includes(existing.payment_status)){
+        Object.assign(booking.checkoutAttempt,{state:'session_identified',evidence:existing.payment_status==='paid'?'verified_paid_awaiting_webhook':'payment_pending'});
+        await saveCheckoutBooking(booking);
+      }
+      throw Object.assign(new Error("Checkout is already processing for this reservation."), {status: 409});
+    }
+    if(booking.quote.promotion?.code==='FIRST15' && existing.payment_status!=='unpaid')throw Object.assign(new Error("Checkout is already processing for this reservation."),{status:409});
+    if(deferredDeadline(booking)!==null && Date.now()>=deferredDeadline(booking)){await cancelUnderLock(booking,true);throw Object.assign(new Error('Reservation unavailable.'),{status:409});}
+    booking.stripeSessionId = null;
+    booking.checkoutAttempt = null;
+  }
   const resumingFirstRideAttempt=!!booking.checkoutAttempt;
   // Persist the attempt before contacting Stripe. Network failures retry the same
   // key/reservation, including after a process restart, rather than double-create.
+  if(booking.checkoutAttempt && booking.checkoutAttempt.expiresAt<=Math.floor(Date.now()/1000) && !booking.stripeSessionId && booking.checkoutAttempt.state!=='confirmed_unpaid' && booking.checkoutAttempt.quote.promotion?.code!=='FIRST15')throw Object.assign(new Error('Checkout is temporarily unavailable. Please try again.'),{status:503});
   if (!booking.checkoutAttempt || booking.checkoutAttempt.state==='confirmed_unpaid' || (booking.checkoutAttempt.expiresAt <= Math.floor(Date.now() / 1000) &&
       booking.checkoutAttempt.quote.promotion?.code !== 'FIRST15')) {
     booking.checkoutAttempt = {
-      key: crypto.randomUUID(),
+      key: crypto.randomUUID(),firstSubmittedAt:null,submissionCount:0,
       ...(quote.promotion?.code==='FIRST15' ? {version:1,correlationId:crypto.randomUUID(),state:'prepared',
         firstSubmittedAt:null,lastReconciledAt:null,submissionCount:0,evidence:'not_submitted'} : {}),
       // Retain Stripe's normal 24-hour Checkout window.
@@ -2123,7 +2211,7 @@ async function createCheckout(body, ip, fingerprint, req, res) {
   }
   // Retry with identical server quote and parameters used for this attempt.
   quote = booking.checkoutAttempt.quote;
-  await validateCheckoutQuote(body, quote);
+  if(!storedOnly)await validateCheckoutQuote(body, quote);
   if (quote.vehicleKey !== body.vehicle || !Number.isSafeInteger(Math.round(quote.total * 100)) ||
       Math.round(quote.total * 100) <= 0) {
     throw new Error("Calculated Checkout amount is invalid.");
@@ -2149,7 +2237,7 @@ async function createCheckout(body, ip, fingerprint, req, res) {
 
 
   // Recheck after asynchronous Google/Stripe lookups before payment creation.
-  try {validateBookingInput(body);} catch(error) {
+  try {if(!storedOnly)validateBookingInput(body);await verifyPaymentAuthority(req,booking);} catch(error) {
     // No Stripe call has been made in this action. Clear only a newly prepared,
     // unclaimed attempt; a previous ambiguous attempt must remain reconcilable.
     if(quote.promotion?.code==='FIRST15' && !booking.stripeSessionId && !resumingFirstRideAttempt) {
@@ -2217,10 +2305,10 @@ async function createCheckout(body, ip, fingerprint, req, res) {
           `${SITE_URL}/success.html?booking=${booking.id}&session_id={CHECKOUT_SESSION_ID}`,
 
         cancel_url:
-          `${SITE_URL}/?cancelled=1`
+          `${SITE_URL}/success.html?booking=${booking.id}&cancelled=1`
   };
   const firstRide=quote.promotion?.code==='FIRST15';
-  const earlierSubmission=firstRide && (booking.checkoutAttempt.version!==1 || booking.checkoutAttempt.firstSubmittedAt!==null);
+  const earlierSubmission=firstRide?(booking.checkoutAttempt.version!==1 || booking.checkoutAttempt.firstSubmittedAt!==null):booking.checkoutAttempt.firstSubmittedAt!==null;
   if(firstRide && (booking.checkoutAttempt.version!==1 ||
     (earlierSubmission && (booking.checkoutAttempt.expiresAt<=Math.floor(Date.now()/1000) ||
       booking.checkoutAttempt.firstSubmittedAt+24*60*MINUTE<=Date.now())) ||
@@ -2237,10 +2325,17 @@ async function createCheckout(body, ip, fingerprint, req, res) {
     booking.checkoutAttempt.state='submitted_unknown';booking.checkoutAttempt.evidence='submission_indeterminate';
     await saveCheckoutBooking(booking);
   }
+  if(!firstRide){
+    booking.checkoutAttempt.parameters ||= parameters;
+    booking.checkoutAttempt.firstSubmittedAt ??= Date.now();
+    booking.checkoutAttempt.submissionCount=(booking.checkoutAttempt.submissionCount||0)+1;
+    booking.checkoutAttempt.state='submitted_unknown';
+    await saveCheckoutBooking(booking);
+  }
   let session;
   try {
-    session=await stripe.checkout.sessions.create(firstRide ? booking.checkoutAttempt.parameters : parameters,
-      {idempotencyKey:`er-checkout-${booking.id}-${booking.checkoutAttempt.key}`,
+    session=await stripe.checkout.sessions.create(booking.checkoutAttempt.parameters,
+      {idempotencyKey:`er-checkout-${booking.id}-${booking.checkoutAttempt.key}`,timeout:10000,
         ...(firstRide ? {maxNetworkRetries:0} : {})});
   } catch(error) {
     // Only a first submission's explicit pre-execution parameter rejection is definitive.
@@ -2254,23 +2349,25 @@ async function createCheckout(body, ip, fingerprint, req, res) {
         booking.checkoutAttempt.state='submitted_unknown';booking.checkoutAttempt.evidence='submission_indeterminate';
         await saveCheckoutBooking(booking);
       }
-    } else if(['StripeInvalidRequestError','StripeCardError'].includes(error.type)) {
+    } else if(!earlierSubmission && rejectedBeforeExecution) {
       booking.checkoutAttempt=null;await saveCheckoutBooking(booking);
     }
     throw Object.assign(new Error("Checkout is temporarily unavailable. Please try again."),{status:503});
   }
-  if(firstRide) {booking.checkoutAttempt.state='session_identified';booking.checkoutAttempt.evidence='creation_response';}
+  booking.checkoutAttempt.state='session_identified';if(firstRide)booking.checkoutAttempt.evidence='creation_response';
 
   booking.stripeSessionId =
     session.id;
 
   await saveCheckoutBooking(booking);
 
+  await verifyPaymentAuthority(req,booking);
   return checkoutCustomerResult(session.url, booking.id);
 }
 
 app.post("/api/checkout", async (req, res) => {
   try {
+    if(req.body.paymentChoice!==undefined && !['now','later'].includes(req.body.paymentChoice))throw new Error('Invalid request.');
     validateBookingInput(req.body);
     await storageReady;
     await customerAuth.resolve(req,res);
@@ -2306,6 +2403,31 @@ app.post("/api/checkout", async (req, res) => {
 });
 
 
+
+function paymentMutation(req,res,next){
+  if(req.get('origin')!==new URL(SITE_URL).origin || (req.get('sec-fetch-site') && !['same-origin','none'].includes(req.get('sec-fetch-site'))) || !req.is('application/json') ||
+    !req.body || Array.isArray(req.body) || Object.keys(req.body).length)return res.status(403).json({error:'Invalid request.'});
+  next();
+}
+async function completeReservationPayment(req,res,account){
+  if(!account)req.paymentCredentialRequired=true;
+  const lookup=()=>account?reservationStore.customerReservation(req.customer.id,req.params.id):reservationStore.get(req.params.id);
+  const initial=await lookup();
+  if(!initial || (!account && !hasCustomerAccess(req,initial)))return res.status(404).json({error:'Reservation unavailable.'});
+  const result=await reservationStore.withActionLock(paymentActionKey(initial),async()=>{
+    const booking=await lookup();
+    if(!booking || (!account && !hasCustomerAccess(req,booking)))throw Object.assign(new Error('Reservation unavailable.'),{status:404});
+    return checkoutStoredBooking(booking.trip,booking,req);
+  });
+  res.json(result);
+}
+app.post('/api/customer/trips/:id/payment',customerPrivateResponse,rateLimit('trip-payment',15),route(customerAuth.requireCustomer),paymentMutation,route((req,res)=>completeReservationPayment(req,res,true)));
+app.post('/api/booking/:id/checkout',rateLimit('booking-payment',15),paymentMutation,route(async(req,res)=>{
+  await customerAuth.resolve(req,res);
+  const booking=await reservationStore.get(req.params.id);
+  if(booking && req.customer){const owner=await reservationStore.reservationOwner(booking.id);if(owner && owner!==req.customer.id)return res.status(404).json({error:'Reservation unavailable.'});}
+  return completeReservationPayment(req,res,false);
+}));
 /* =========================================
    ADMIN — GET BOOKINGS
 ========================================= */
@@ -2341,7 +2463,11 @@ app.patch(
       "cancelled"
     ];
 
-    const booking = await reservationStore.update(req.params.id, async booking => {
+    const initial=await reservationStore.get(req.params.id);
+    if(!initial)return res.status(404).json({error:'Booking not found.'});
+    const mutate=async()=>{
+    if(req.body.status==='cancelled')await cancelUnderLock(await reservationStore.get(req.params.id));
+    return reservationStore.update(req.params.id, async booking => {
     if (req.body.status) {
       if (
         !allowedStatuses.includes(
@@ -2396,6 +2522,8 @@ app.patch(
         .toISOString();
 
     });
+    };
+    const booking=req.body.status?await reservationStore.withActionLock(paymentActionKey(initial),mutate):await mutate();
     if (!booking) return res.status(404).json({error:"Booking not found."});
 
     res.json(
@@ -2423,11 +2551,14 @@ app.get(
       id: booking.id,
       status: booking.status,
       paymentStatus: booking.paymentStatus,
+      paymentVerificationPending: require('./storage/customer-trips').paymentVerificationPending(booking),
+      ...(booking.deferredPayment && booking.quote.promotion?.code==='FIRST15' && !booking.stripeSessionId && (!booking.checkoutAttempt || booking.checkoutAttempt.firstSubmittedAt===null)?{paymentHoldExpiresAt:new Date(deferredDeadline(booking)).toISOString()}:{}),
       trip: {
         pickup: booking.trip.pickup, dropoff: booking.trip.dropoff,
-        date: booking.trip.date, time: booking.trip.time
+        date: booking.trip.date, time: booking.trip.time,
+        ...(booking.trip.tripType==='roundtrip'?{returnDate:booking.trip.returnDate,returnTime:booking.trip.returnTime}:{})
       },
-      quote: {vehicle: booking.quote.vehicle, total: booking.quote.total},
+      quote: {vehicle: booking.trip.vehicle==='suv'?'Luxury SUV':booking.quote.vehicle, total: booking.quote.total,currency:booking.quote.currency},
       dispatch: driverVisible ? {
         driver: booking.dispatch?.driver || "", driverPhone: booking.dispatch?.driverPhone || "",
         vehicle: booking.dispatch?.vehicle || "", plate: booking.dispatch?.plate || ""

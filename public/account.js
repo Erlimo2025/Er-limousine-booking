@@ -95,8 +95,9 @@ function clearPrivateAccount(){
 function tripCard(trip){
  const node=(tag,cls,text)=>{const n=document.createElement(tag);if(cls)n.className=cls;if(text!==undefined)n.textContent=text;return n;};
  const card=node('section','trip-card'),heading=node('h3','trip-route',trip.pickup+' → '+trip.dropoff);
- const labels={awaiting_payment:'Awaiting payment',confirmed:'Confirmed',assigned:'Assigned',driver_en_route:'Driver en route',passenger_on_board:'Passenger on board',completed:'Completed',cancelled:'Cancelled',unpaid:'Unpaid',paid:'Paid',failed:'Failed'};
- const badges=node('div','trip-badges');badges.append(node('span','trip-badge',labels[trip.status]||trip.status),node('span','trip-badge',labels[trip.paymentStatus]||trip.paymentStatus));
+ const labels={awaiting_payment:'Payment Pending',confirmed:'Confirmed',assigned:'Assigned',driver_en_route:'Driver en route',passenger_on_board:'Passenger on board',completed:'Completed',cancelled:'Cancelled',unpaid:'Unpaid',paid:'Paid',failed:'Failed'};
+ const processing=trip.paymentVerificationPending===true;
+ const badges=node('div','trip-badges');badges.append(node('span','trip-badge',processing&&trip.status!=='cancelled'?'Payment verification in progress':labels[trip.status]||trip.status),node('span','trip-badge',processing?'Payment verification in progress':labels[trip.paymentStatus]||trip.paymentStatus));
  const money=new Intl.NumberFormat('en-US',{style:'currency',currency:trip.currency}).format(trip.total);
  const dateTime=(date,time)=>date+' · '+time+' (New York time)';
  card.append(badges,heading,node('p','trip-date',dateTime(trip.date,trip.time)),node('p','trip-vehicle',trip.vehicle),node('p','trip-total',money));
@@ -108,7 +109,19 @@ function tripCard(trip){
  if(trip.pickupTerminal)add('Pickup terminal',trip.pickupTerminal);
  if(trip.dropoffTerminal)add('Drop-off terminal',trip.dropoffTerminal);
  add('Booked on',new Intl.DateTimeFormat('en-US',{dateStyle:'medium',timeZone:'America/New_York'}).format(new Date(trip.createdAt)));
- details.append(summary,list);card.append(details);return card;
+ details.append(summary,list);card.append(details);
+ if(trip.status==='cancelled'&&trip.paymentStatus==='paid')card.append(node('p','trip-payment-review','Payment received for this cancelled trip. Please contact ER Limousine Service for payment review.'));
+ if(processing&&trip.status!=='cancelled')card.append(node('p','trip-payment-review','We’re confirming your payment. You do not need to pay again.'));
+ if(trip.paymentStatus!=='paid' && trip.status!=='cancelled' && !processing){
+  const pay=node('button','primary trip-payment','Complete Payment');pay.type='button';
+  pay.addEventListener('click',async()=>{
+   if(pay.disabled)return;const generation=accountGeneration,tripGeneration=tripsGeneration;pay.disabled=true;
+   try{const result=await api('trips/'+encodeURIComponent(trip.reference)+'/payment',{});if(generation!==accountGeneration||tripGeneration!==tripsGeneration)return;location.assign(result.url);}
+   catch(error){if(generation!==accountGeneration||tripGeneration!==tripsGeneration)return;if(error.status===401){clearPrivateAccount();show('login');return;}if(error.status===409){await loadTrips(false);return;}el('tripsStatus').textContent='Unable to start payment. Please refresh your trips and try again.';}
+   finally{if(generation===accountGeneration&&tripGeneration===tripsGeneration)pay.disabled=false;}
+  });card.append(pay);
+ }
+ return card;
 }
 async function loadTrips(more){
  if(!el('tripsPanel'))return;

@@ -57,6 +57,7 @@ async function harness(t, env = {}, saved = "[]", injectedStore) {
           const start=params.starting_after ? all.findIndex(x=>x.id===params.starting_after)+1 : 0;
           return {data:all.slice(start,start+params.limit),has_more:start+params.limit<all.length};
         },
+        expire:async id=>{const session=state.sessions.get(id);if(!session || session.status!=='open')throw new Error('mock expiry unavailable');session.status='expired';return session;},
         retrieve: async id => {
           if (state.retrieveError) throw new Error("private provider detail");
           return state.sessions.get(id);
@@ -259,7 +260,7 @@ test("ambiguous Stripe failure retries same key, including restart; definitive f
   const key = h.state.creates[0].options.idempotencyKey;
   assert.equal((await h.request("/api/checkout", booking)).status, 200);
   assert.equal(h.state.creates[1].options.idempotencyKey, key);
-  assert.deepEqual(h.state.creates[0].params, h.state.creates[1].params);
+  assert.deepEqual(JSON.parse(JSON.stringify(h.state.creates[0].params)), JSON.parse(JSON.stringify(h.state.creates[1].params)));
   assert.equal(h.records().length, 1);
   const failure = await harness(t); failure.state.fail = new Error("mock network timeout");
   await failure.request("/api/checkout", booking);
@@ -780,9 +781,9 @@ test("reservation response whitelists fields and preserves driver visibility rul
     h.testStore.fixtures(h.context.fixtureRecords);
     const result = await h.request(`/api/booking/${record.id}`, undefined, {cookie});
     assert.equal(result.status, 200);
-    assert.deepEqual(Object.keys(result.body).sort(), ["dispatch", "id", "paymentStatus", "quote", "status", "trip"]);
+    assert.deepEqual(Object.keys(result.body).sort(), ["dispatch", "id", "paymentStatus", "paymentVerificationPending", "quote", "status", "trip"]);
     assert.deepEqual(Object.keys(result.body.trip).sort(), ["date", "dropoff", "pickup", "time"]);
-    assert.deepEqual(Object.keys(result.body.quote).sort(), ["total", "vehicle"]);
+    assert.deepEqual(Object.keys(result.body.quote).sort(), ["currency", "total", "vehicle"]);
     assert.equal(result.headers.get("cache-control"), "no-store");
     assert.equal(result.headers.get("referrer-policy"), "no-referrer");
     if (visible.includes(status)) {
@@ -843,7 +844,7 @@ test("customer cookie and confirmation page prevent browser/script/referrer leak
   assert.equal(page.headers.get("cache-control"), "no-store");
   assert.equal(page.headers.get("referrer-policy"), "no-referrer");
   assert.match(page.body, /<meta name="referrer" content="no-referrer">/);
-  assert.match(page.body, /credentials: "same-origin", cache: "no-store", referrerPolicy: "no-referrer"/);
+  assert.match(page.body, /credentials:\s*['"]same-origin['"],\s*cache:\s*['"]no-store['"],\s*referrerPolicy:\s*['"]no-referrer['"]/);
 });
 
 
@@ -1177,7 +1178,8 @@ test('New audit 2: saved open/processing sessions retain claims; paid state esta
     await h.context.reconcileFirstRide(first.body.bookingId);
     const saved=h.records()[0];
     if(status==='paid') {
-      assert.equal(saved.paymentStatus,'paid');assert.equal(saved.checkoutAttempt.state,'confirmed_paid');
+      assert.equal(saved.paymentStatus,'unpaid');assert.equal(saved.checkoutAttempt.evidence,'verified_paid_awaiting_webhook');
+      assert.equal((await h.webhook(session)).status,200);
       assert.equal(h.testStore.shared.claims.size,0);
       assert.equal((await h.request('/api/quote',{...body,time:'13:00'})).status,400);
     }else {assert.equal(saved.checkoutAttempt.state,'session_identified');assert.equal(h.testStore.shared.claims.size,2);}

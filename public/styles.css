@@ -2090,3 +2090,5 @@ textarea:focus {
     line-height: 1.4;
   }
 }
+
+.btn-pay-later{width:100%;min-height:48px;border:1px solid #c9a44c;background:#102633;color:#f0d78a;font-weight:700;white-space:normal}.payment-choice-description{font-size:13px;line-height:1.5;color:#c7d1da;text-align:center;margin:8px 0 18px}.btn-pay-later:focus-visible{outline:3px solid #d9b75a;outline-offset:3px}

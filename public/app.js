@@ -1,6 +1,8 @@
 const form = document.getElementById("bookingForm");
 const quoteBtn = document.getElementById("quoteBtn");
 const payBtn = document.getElementById("payBtn");
+const payLaterBtn=document.getElementById("payLaterBtn");
+let reservationBusy=false;
 const notice = document.getElementById("notice");
 
 const tripTypeInput = document.getElementById("tripType");
@@ -1189,6 +1191,9 @@ form.addEventListener(
   async (event) => {
 
     event.preventDefault();
+    if(reservationBusy)return;
+    reservationBusy=true;
+    const paymentChoice=event.submitter?.id==='payLaterBtn'?'later':'now';
 
     clearNotice();
 
@@ -1198,6 +1203,7 @@ form.addEventListener(
         await requestQuote();
 
       if (!quote) {
+        reservationBusy=false;
         return;
       }
     }
@@ -1206,7 +1212,8 @@ form.addEventListener(
       true;
 
     payBtn.textContent =
-      "Opening secure checkout…";
+      paymentChoice==='later'?'Reserving your trip…':"Opening secure checkout…";
+    if(payLaterBtn)payLaterBtn.disabled=true;
 
     try {
 
@@ -1234,7 +1241,7 @@ form.addEventListener(
 
             body:
               JSON.stringify(
-                bookingData
+                {...bookingData,paymentChoice}
               )
           }
         );
@@ -1271,7 +1278,9 @@ form.addEventListener(
         false;
 
       payBtn.textContent =
-        "Reserve & Pay";
+        "RESERVE & PAY NOW";
+      reservationBusy=false;
+      if(payLaterBtn)payLaterBtn.disabled=false;
     }
   }
 );
@@ -1418,3 +1427,13 @@ async function initialize() {
 
 
 initialize();
+
+// Keep both reservation choices synchronized with authoritative quote readiness.
+if(payLaterBtn){const paymentObserver=new MutationObserver(()=>{payLaterBtn.disabled=payBtn.disabled||reservationBusy;});paymentObserver.observe(payBtn,{attributes:true,attributeFilter:['disabled']});}
+
+// Restore booking controls after browser Back; payment status is never inferred here.
+window.addEventListener('pageshow',event=>{
+ if(!event.persisted)return;
+ reservationBusy=false;payBtn.textContent='RESERVE & PAY NOW';payBtn.disabled=!currentQuote;
+ if(payLaterBtn)payLaterBtn.disabled=!currentQuote;
+});
