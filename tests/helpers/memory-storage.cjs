@@ -40,7 +40,7 @@ function memoryStore(initial=[], shared={records:clone(initial),locks:new Map(),
   reservationOwner:async id=>{fail('read');return shared.tripRows.get(id)?.customer_id || null;},
   customerTrip:async(customerId,id)=>{fail('read');const r=shared.records.find(x=>x.id===id);return r && shared.tripRows.get(id)?.customer_id===customerId?tripDto(clone(r)):null;},
   customerTrips:async(customerId,q)=>{fail('read');const upcoming=q.view==='upcoming';
-    const rows=shared.records.filter(r=>{const m=shared.tripRows.get(r.id);if(m?.customer_id!==customerId||!m.end)return false;const future=m.end>q.at&&!['completed','cancelled'].includes(r.status);return upcoming?future:!future;})
+    const rows=shared.records.filter(r=>{const m=shared.tripRows.get(r.id);if(m?.customer_id!==customerId||!m.end)return false;const future=m.end>q.at;return upcoming?future:!future;})
       .map(r=>({r,end:shared.tripRows.get(r.id).end})).sort((a,b)=>(a.end.localeCompare(b.end)||a.r.id.localeCompare(b.r.id))*(upcoming?1:-1))
       .filter(({r,end})=>!q.cursor || (upcoming?end>q.cursor.schedule || end===q.cursor.schedule&&r.id>q.cursor.id:end<q.cursor.schedule || end===q.cursor.schedule&&r.id<q.cursor.id));
     const page=rows.slice(0,q.limit),last=page.at(-1);return {trips:page.map(x=>tripDto(clone(x.r))),nextCursor:rows.length>q.limit?Buffer.from(JSON.stringify({view:q.view,at:q.at,schedule:last.end,id:last.r.id})).toString('base64url'):null};},

@@ -50,7 +50,8 @@ function customerTripsStorage(pool,safe,validate) {
   }),
   customerTrips:(customerId,q)=>safe(async()=>{
    const upcoming=q.view==='upcoming',op=upcoming?'>':'<',order=upcoming?'ASC':'DESC';
-   const predicate=upcoming?"scheduled_end_at>$2 AND record->>'status' NOT IN ('completed','cancelled')":"(scheduled_end_at<=$2 OR record->>'status' IN ('completed','cancelled'))";
+   // Tabs describe the New York service schedule, not booking/payment status.
+   const predicate=upcoming?'scheduled_end_at>$2':'scheduled_end_at<=$2';
    const values=[customerId,q.at,q.limit+1];
    let cursor='';
    if(q.cursor){values.push(q.cursor.schedule,q.cursor.id);cursor=` AND (scheduled_end_at,id) ${op} ($4::timestamptz,$5::uuid)`;}

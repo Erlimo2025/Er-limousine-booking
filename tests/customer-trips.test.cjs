@@ -91,7 +91,9 @@ test('upcoming/past classification, terminal projection, keyset ties and strict 
  const records=[];
  for(let i=0;i<55;i++){
   const r=fixture({status:i===0?'completed':i===1?'cancelled':'awaiting_payment'});records.push(r);
-  h.testStore.shared.tripRows.set(r.id,{customer_id:owner,start:'2026-11-10T17:00:00.000Z',end:'2026-11-10T17:00:00.000Z'});
+  if(i<2)r.trip.date='2026-09-30';
+  const schedule=i<2?'2026-09-30T16:00:00.000Z':'2026-11-10T17:00:00.000Z';
+  h.testStore.shared.tripRows.set(r.id,{customer_id:owner,start:schedule,end:schedule});
  }
  const round=fixture();round.trip={...round.trip,tripType:'roundtrip',returnDate:'2026-11-11',returnTime:'12:00',pickupPlaceId:'ChIJ2dQDPZNSwokRVJr9XE2SPt0',dropoffPlaceId:'ChIJMYEleJSwokRawcDBeH8NVg'};
  records.push(round);h.testStore.shared.tripRows.set(round.id,{customer_id:owner,start:'2026-09-30T17:00:00.000Z',end:'2026-11-11T17:00:00.000Z'});h.testStore.fixtures(records);
@@ -188,6 +190,18 @@ test('PostgreSQL My Trips: ownership, legacy migration, schedule indexes, immuta
  const fixtureRows=[];for(let i=0;i<23;i++){const f=fixture();fixtureRows.push(f);await store.createWithBudget(f,()=>{},association);}
  const page=await store.customerTrips(aid,tripQuery({limit:'20'},association.now));assert.equal(page.trips.length,20);assert.ok(page.nextCursor);
  const page2=await other.customerTrips(aid,tripQuery({limit:'20',cursor:page.nextCursor},association.now));assert.equal(page2.trips.length,4);assert.equal(new Set([...page.trips,...page2.trips].map(x=>x.reference)).size,24);
+ // Future terminal-status trips must remain Upcoming in the real SQL query.
+ const calendar=[];
+ for(const [date,status]of [['2026-10-15','completed'],['2026-10-21','cancelled'],['2026-10-05','awaiting_payment']]){
+  const f=fixture({status});f.trip.date=date;calendar.push(f);
+  const instant=new Date(h.context.parseServiceDateTime(date,'12:00','pickup'));
+  await store.createWithBudget(f,()=>{},{...association,start:instant,end:instant});
+ }
+ const snapshot=Date.parse('2026-10-06T16:00:00Z');
+ const futureIds=(await store.customerTrips(aid,tripQuery({limit:'50'},snapshot))).trips.map(x=>x.reference);
+ const pastIds=(await store.customerTrips(aid,tripQuery({view:'past',limit:'50'},snapshot))).trips.map(x=>x.reference);
+ assert.ok(futureIds.includes(calendar[0].id));assert.ok(futureIds.includes(calendar[1].id));assert.ok(!futureIds.includes(calendar[2].id));
+ assert.ok(pastIds.includes(calendar[2].id));assert.ok(!pastIds.includes(calendar[0].id));assert.ok(!pastIds.includes(calendar[1].id));
  assert.equal(await store.customerTrip(bid,fixtureRows[0].id),null);
  const failing=fixture();await pool.query("CREATE FUNCTION reject_trip() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic private failure'; END $$");await pool.query('CREATE TRIGGER reject_trip BEFORE INSERT ON er_reservations FOR EACH ROW EXECUTE FUNCTION reject_trip()');
  await assert.rejects(store.createWithBudget(failing,()=>{},association),e=>e.storageFailure);assert.equal(await store.get(failing.id),null);await pool.query('DROP TRIGGER reject_trip ON er_reservations');
@@ -218,4 +232,33 @@ test('My Trips pending verification hides payment action without claiming Paid o
  let nodes=walk(ctx.tripCard(dto));assert.ok(!nodes.some(n=>n.textContent==='Complete Payment'));assert.ok(nodes.some(n=>/do not need to pay again/.test(n.textContent)));
  r.status='cancelled';nodes=walk(ctx.tripCard(tripDto(r)));assert.ok(!nodes.some(n=>n.textContent==='Complete Payment'));assert.ok(!nodes.some(n=>/do not need to pay again/.test(n.textContent)));
  r.status='confirmed';r.paymentStatus='paid';assert.equal(tripDto(r).paymentVerificationPending,false);assert.ok(!walk(ctx.tripCard(tripDto(r))).some(n=>n.textContent==='Complete Payment'));
+});
+
+test('Oct 15 and Oct 21 future trips stay Upcoming regardless of status; New York boundaries determine Past',async t=>{
+ const h=await harness(t),a=await register(h),owner=[...h.testStore.shared.customers.keys()][0];
+ h.advance(4.5*24*3600000); // Oct 6, 00:00 America/New_York, still EDT.
+ const records=[];
+ for(const [date,time,status]of [['2026-10-15','12:00','confirmed'],['2026-10-21','12:00','cancelled'],['2026-10-21','13:00','completed'],['2026-10-05','23:59','awaiting_payment'],['2026-10-06','00:01','awaiting_payment']]){
+  const r=fixture({status});r.trip.date=date;r.trip.time=time;records.push(r);
+  const instant=new Date(h.context.parseServiceDateTime(date,time,'pickup')).toISOString();
+  h.testStore.shared.tripRows.set(r.id,{customer_id:owner,start:instant,end:instant});
+ }
+ h.testStore.fixtures(records);const headers={cookie:accountCookie(a)};
+ let upcoming=(await h.request('/api/customer/trips?limit=50',undefined,headers)).body.trips;
+ let past=(await h.request('/api/customer/trips?view=past',undefined,headers)).body.trips;
+ assert.deepEqual(new Set(upcoming.map(x=>x.reference)),new Set([records[0].id,records[1].id,records[2].id,records[4].id]));
+ assert.deepEqual(past.map(x=>x.reference),[records[3].id]);
+ assert.equal(upcoming.find(x=>x.reference===records[1].id).status,'cancelled');assert.ok(upcoming.every(x=>x.paymentStatus==='unpaid'));
+ h.advance(60000); // At pickup equality, that trip moves to Past.
+ upcoming=(await h.request('/api/customer/trips?limit=50',undefined,headers)).body.trips;
+ past=(await h.request('/api/customer/trips?view=past',undefined,headers)).body.trips;
+ assert.ok(!upcoming.some(x=>x.reference===records[4].id));assert.ok(past.some(x=>x.reference===records[4].id));
+ h.advance(16*24*3600000); // Oct 22 New York: both screenshot dates are now past.
+ past=(await h.request('/api/customer/trips?view=past&limit=50',undefined,headers)).body.trips;
+ assert.equal(past.length,records.length);
+ const calls=[],store=customerTripsStorage({query:async(sql,args)=>{calls.push({sql,args});return {rows:[]};}},fn=>fn(),x=>x);
+ await store.customerTrips(owner,tripQuery({},Date.parse('2026-10-06T04:00:00Z')));
+ await store.customerTrips(owner,tripQuery({view:'past'},Date.parse('2026-10-06T04:00:00Z')));
+ assert.match(calls[0].sql,/customer_id=\$1 AND scheduled_end_at>\$2/);assert.match(calls[1].sql,/customer_id=\$1 AND scheduled_end_at<=\$2/);
+ assert.ok(calls.every(c=>!c.sql.includes("record->>'status'")));
 });
