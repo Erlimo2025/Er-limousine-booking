@@ -33,6 +33,7 @@ async function harness(t, env = {}, saved = "[]", injectedStore) {
   class MockStripe {
     constructor() {
       Object.assign(this,require('./helpers/stripe-payments.cjs').stripePaymentMock(state));
+      Object.assign(this,require('./helpers/stripe-refunds.cjs').stripeRefundMock(state));
       this.webhooks = signatureSdk.webhooks;
       this.checkout = {sessions: {
         create: async (params, options) => {
@@ -42,6 +43,7 @@ async function harness(t, env = {}, saved = "[]", injectedStore) {
           const previous = [...state.sessions.values()].find(item => item.key === options.idempotencyKey);
           if (previous) return previous;
           const session = {id: `cs_mock_${state.sessions.size}`, url: "https://checkout.example.test/mock",
+            payment_intent:'pi_mock_'+state.sessions.size,
             customer:params.customer || null,
             status: "open", payment_status: "unpaid", key: options.idempotencyKey,
             mode:params.mode,amount_total:params.line_items[0].price_data.unit_amount,currency:params.line_items[0].price_data.currency,
@@ -123,10 +125,13 @@ async function harness(t, env = {}, saved = "[]", injectedStore) {
       if (name === "stripe") return MockStripe;
       if (name === "./services/email") return {createEmailProvider:options=>{if(env.TEST_VALIDATE_EMAIL_CONFIG)require('../services/email').createEmailProvider(options);if(env.TEST_RECOVERY_CONFIG_FAILURE)throw new Error('synthetic provider configuration');return {enabled:options.enabled,sendBookingEmail:async message=>{if(state.bookingOnCall)await state.bookingOnCall();state.bookingCalls.push({...message});if(state.emailFail)throw new Error('synthetic email secret marker');if(!state.bookingKeys.has(message.idempotencyKey)){state.bookingKeys.add(message.idempotencyKey);state.bookingMessages.push({...message});}if(state.bookingLoseResponse){state.bookingLoseResponse=false;throw new Error('synthetic lost email response');}},sendResetLink:async message=>{if(state.emailFail)throw new Error('synthetic email secret marker');state.emailMessages.push({...message});}};}};
       if (name === "./services/booking-emails") return require("../services/booking-emails");
+      if (name === "./services/reservation-refunds") return require("../services/reservation-refunds");
+      if (name === "./services/trip-management") return require("../services/trip-management");
       if (name === "./storage/customer-trips") return require("../storage/customer-trips");
       if (name === "./auth/customers") return require("../auth/customers");
       if (name === "./auth/recovery") return require("../auth/recovery");
       if (name === "./routes/customer-payment-methods") return require("../routes/customer-payment-methods");
+      if (name === "./routes/customer-trip-management") return require("../routes/customer-trip-management");
       if (name === "./pricing") return testPricing;
       if (name === "./ewr-pickups") return require("../ewr-pickups");
       if (name === "./storage/postgres") return {createStore: () => {if(injectedStore instanceof Error)throw injectedStore;return testStore;}, StorageError: require("../storage/postgres").StorageError};

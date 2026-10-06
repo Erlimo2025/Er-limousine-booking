@@ -78,6 +78,8 @@ for(const message of ['This reservation has already been paid.','Checkout is alr
  'Checkout is already processing. Please try again.','A first-ride Checkout is already pending. Please complete or retry that booking.',
  'A first-ride Checkout is already pending.'])customerErrorMessages.set(message,{message,status:409});
 for(const message of ['Please log in to continue.','Reservation access unavailable.'])customerErrorMessages.set(message,{message,status:401});
+customerErrorMessages.set('Authentication required.',{message:'Please log in to continue.',status:401});
+customerErrorMessages.set('Customer trip unavailable.',{message:'Reservation unavailable.',status:404});
 customerErrorMessages.set('Too many requests. Please try again later.',{message:'Too many requests. Please try again later.',status:429});
 function sendSafeError(req,res,error,fallbackStatus=500) {
   if(res.headersSent) {
@@ -132,7 +134,7 @@ app.set("trust proxy", process.env.TRUSTED_PROXY_CIDRS
 const productionHttps = process.env.NODE_ENV === "production" || process.env.RENDER === "true";
 const contentSecurityPolicy = [
   "default-src 'self'",
-  "script-src 'self' 'sha256-u9Z1p2J0zGK6qEsH405CC/qo/SGRqk+E15haR9wFNoA='",
+  "script-src 'self' 'sha256-y+CcCOcuYiyX0j8FOryCRopbap8acZTqH4e9ZFjdFZM='",
   "script-src-attr 'none'",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data:",
@@ -1640,6 +1642,10 @@ app.post(
       if (!changed) return res.status(400).json({error:`Webhook request rejected. Reference: ${req.referenceId}`});
     }
 
+    const refundEvent=reservationRefundService.webhook(event);
+    if(refundEvent && typeof refundEvent.attemptId==='string' && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(refundEvent.attemptId)){
+      if(!await reservationRefundService.receive(refundEvent))return res.status(400).json({error:'Webhook request rejected.'});
+    }
     res.json({
       received: true
     });
@@ -1673,14 +1679,17 @@ const customerPaymentService=require('./routes/customer-payment-methods').instal
   enabled:process.env.CUSTOMER_PAYMENT_METHODS_ENABLED==='true',siteUrl:SITE_URL,publishableKey:process.env.STRIPE_PUBLISHABLE_KEY,production:adminCookieSecure,clientKey,
   reportFailure:(req,status,provider)=>logDiagnostic(req,status,'provider_error',provider),now:()=>Date.now()});
 const {tripQuery,reusableTrip}=require('./storage/customer-trips');
+const tripCompanyContact={phone:process.env.COMPANY_PHONE || '(973) 555-0100',email:process.env.COMPANY_EMAIL || 'bookings@erlimousineservice.com'};
+const {withCompanyContact}=require('./routes/customer-trip-management');
 app.get('/api/customer/trips',route(customerAuth.requireCustomer),route(async(req,res)=>{
   const query=tripQuery(req.query,Date.now());
-  res.json(await reservationStore.customerTrips(req.customer.id,query));
+  const result=await reservationStore.customerTrips(req.customer.id,query,Date.now());
+  result.trips.forEach(trip=>withCompanyContact(trip,tripCompanyContact));res.json(result);
 }));
 app.get('/api/customer/trips/:id',route(customerAuth.requireCustomer),route(async(req,res)=>{
-  const trip=await reservationStore.customerTrip(req.customer.id,req.params.id);
+  const trip=await reservationStore.customerTrip(req.customer.id,req.params.id,Date.now());
   if(!trip)return res.status(404).json({error:'Trip not found.'});
-  res.json({trip});
+  res.json({trip:withCompanyContact(trip,tripCompanyContact)});
 }));
 
 function bookAgainFlow(req,reference){
@@ -2070,22 +2079,38 @@ function validStoredSession(session,booking){
  return !!session && session.id===booking.stripeSessionId && session.mode==='payment' && session.metadata?.bookingId===booking.id &&
  session.amount_total===Math.round(booking.quote.total*100) && session.currency===booking.quote.currency;
 }
+// Shared provider verification; never marks Paid or performs a refund.
+async function cancellationPaymentProof(booking){
+ if(!booking.stripeSessionId){const a=booking.checkoutAttempt;return {safe:!a || a.firstSubmittedAt===null && a.submissionCount===0,sessionId:null};}
+ if(!stripe)throw Object.assign(new Error('Checkout is temporarily unavailable. Please try again.'),{status:503});
+ let session;
+ try{
+  session=await stripe.checkout.sessions.retrieve(booking.stripeSessionId,{}, {timeout:10000,maxNetworkRetries:0});
+  if(!validStoredSession(session,booking))throw Error('mismatch');
+  if(session.status==='open' && session.payment_status==='unpaid'){
+   session=await stripe.checkout.sessions.expire(session.id,{}, {timeout:10000,maxNetworkRetries:0});
+   if(!validStoredSession(session,booking))throw Error('mismatch');
+  }
+ }catch(_){throw Object.assign(new Error('Checkout is temporarily unavailable. Please try again.'),{status:503});}
+ return {safe:session.status==='expired' && session.payment_status==='unpaid',sessionId:session.id};
+}
+async function pickupTimePaymentProof(booking){
+ if(booking.paymentStatus==='paid')return {safe:true,sessionId:booking.stripeSessionId || null};
+ if(require('./services/trip-management').paymentActionPending(booking))return {safe:false};
+ if(booking.stripeSessionId)return {...await cancellationPaymentProof(booking),invalidateCheckout:true};
+ const attempt=booking.checkoutAttempt;
+ const safe=!attempt || attempt.state==='confirmed_unpaid' || attempt.firstSubmittedAt===null && attempt.submissionCount===0;
+ return {safe,sessionId:null,invalidateCheckout:safe && !!attempt};
+}
+const reservationRefundService=require('./services/reservation-refunds').reservationRefunds({store:reservationStore,stripe,now:()=>Date.now(),reportFailure:()=>logDiagnostic({referenceId:crypto.randomUUID()},503,'provider_error','stripe')});
+async function runReservationRefunds(){await storageReady;await reservationRefundService.run();await runBookingEmails();}
+const refundTimer=setInterval(()=>{void runReservationRefunds().catch(()=>logDiagnostic({referenceId:crypto.randomUUID()},503,'provider_error','stripe'));},60000);refundTimer.unref();
 async function cancelUnderLock(booking,abandoned=false){
  if(booking.status==='cancelled')return true;
  const a=booking.checkoutAttempt;
  let safe=!booking.stripeSessionId && (!a || a.firstSubmittedAt===null && a.submissionCount===0),review=false;
  if(booking.stripeSessionId){
-  if(!stripe)throw Object.assign(new Error('Checkout is temporarily unavailable. Please try again.'),{status:503});
-  let session;
-  try{
-   session=await stripe.checkout.sessions.retrieve(booking.stripeSessionId,{}, {timeout:10000,maxNetworkRetries:0});
-   if(!validStoredSession(session,booking))throw Error('mismatch');
-   if(session.status==='open' && session.payment_status==='unpaid'){
-    session=await stripe.checkout.sessions.expire(session.id,{}, {timeout:10000,maxNetworkRetries:0});
-    if(!validStoredSession(session,booking))throw Error('mismatch');
-   }
-  }catch(_){throw Object.assign(new Error('Checkout is temporarily unavailable. Please try again.'),{status:503});}
-  safe=session.status==='expired' && session.payment_status==='unpaid';
+  safe=(await cancellationPaymentProof(booking)).safe;
   review=!safe;
   if(abandoned && !safe)return false;
  }else if(!safe){if(abandoned)return false;review=true;}
@@ -2264,10 +2289,10 @@ async function checkoutStoredBooking(body,booking,req,storedOnly=true){
 
   if (quote.fixedOffer) {
     description =
-      `${booking.trip.pickup} → ${booking.trip.dropoff} | EWR → Manhattan $150 Flat Rate`;
+      `${booking.trip.pickup} → ${booking.trip.dropoff} | EWR → Manhattan $150 Flat Rate | ${booking.trip.date} ${booking.trip.time}`;
   } else if (quote.promotion) {
     description =
-      `${booking.trip.pickup} → ${booking.trip.dropoff} | ${quote.promotion.code} applied`;
+      `${booking.trip.pickup} → ${booking.trip.dropoff} | ${quote.promotion.code} applied | ${booking.trip.date} ${booking.trip.time}`;
   }
 
 
@@ -2479,6 +2504,8 @@ app.post('/api/booking/:id/checkout',rateLimit('booking-payment',15),paymentMuta
   if(booking && req.customer){const owner=await reservationStore.reservationOwner(booking.id);if(owner && owner!==req.customer.id)return res.status(404).json({error:'Reservation unavailable.'});}
   return completeReservationPayment(req,res,false);
 }));
+require('./routes/customer-trip-management').installCustomerTripManagement(app,{store:reservationStore,customerAuth,route,rateLimit,siteUrl:SITE_URL,contact:tripCompanyContact,parseServiceDateTime,cancellationProof:cancellationPaymentProof,timeChangeProof:pickupTimePaymentProof,refundService:reservationRefundService,runEmails:runBookingEmails,now:()=>Date.now()});
+
 /* =========================================
    ADMIN — GET BOOKINGS
 ========================================= */
@@ -2602,6 +2629,7 @@ app.get(
       id: booking.id,
       status: booking.status,
       paymentStatus: booking.paymentStatus,
+      ...(['processing','review_required','confirmed','failed'].includes(booking.refundStatus)?{refundStatus:booking.refundStatus}:{}),
       paymentVerificationPending: require('./storage/customer-trips').paymentVerificationPending(booking),
       ...(booking.deferredPayment && booking.quote.promotion?.code==='FIRST15' && !booking.stripeSessionId && (!booking.checkoutAttempt || booking.checkoutAttempt.firstSubmittedAt===null)?{paymentHoldExpiresAt:new Date(deferredDeadline(booking)).toISOString()}:{}),
       trip: {
@@ -2629,6 +2657,7 @@ app.use((error,req,res,next)=> {
 
 storageReady.then(() => {
 void runBookingEmails().catch(reportBookingEmailFailure);
+void runReservationRefunds().catch(()=>logDiagnostic({referenceId:crypto.randomUUID()},503,'provider_error','stripe'));
 app.listen(
   PORT,
   () => {

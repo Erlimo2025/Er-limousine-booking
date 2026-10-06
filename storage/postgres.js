@@ -27,6 +27,8 @@ function validateRecord(r) {
   if(r.customerAccess !== undefined && (!plain(r.customerAccess) || typeof r.customerAccess.tokenHash !== 'string' || !/^[a-f0-9]{64}$/.test(r.customerAccess.tokenHash) || !Number.isFinite(r.customerAccess.expiresAt) || Object.keys(r.customerAccess).some(key=>!['tokenHash','expiresAt'].includes(key)))) fail();
   if(r.stripeSessionId !== null && r.stripeSessionId !== undefined && (typeof r.stripeSessionId !== 'string' || !/^cs_[A-Za-z0-9_]+$/.test(r.stripeSessionId))) fail();
   if(r.deferredPayment!==undefined && typeof r.deferredPayment!=='boolean')fail();
+  if(r.refundStatus!==undefined && (!['processing','review_required','confirmed','failed'].includes(r.refundStatus) || r.status!=='cancelled' || r.paymentStatus!=='paid'))fail();
+  if(r.refundConfirmedAt!==undefined && (r.refundStatus!=='confirmed' || !Number.isFinite(Date.parse(r.refundConfirmedAt))))fail();
   if(r.checkoutAttempt !== null && r.checkoutAttempt !== undefined && (!plain(r.checkoutAttempt) || typeof r.checkoutAttempt.key !== 'string' || !Number.isFinite(r.checkoutAttempt.expiresAt) || !plain(r.checkoutAttempt.quote) || !Number.isFinite(r.checkoutAttempt.quote.total) || r.checkoutAttempt.quote.total<=0)) fail();
   if(r.checkoutAttempt && ((r.checkoutAttempt.firstSubmittedAt!==undefined && r.checkoutAttempt.firstSubmittedAt!==null && !Number.isFinite(r.checkoutAttempt.firstSubmittedAt)) || (r.checkoutAttempt.submissionCount!==undefined && (!Number.isSafeInteger(r.checkoutAttempt.submissionCount)||r.checkoutAttempt.submissionCount<0))))fail();
   if(r.checkoutAttempt?.version !== undefined) {
@@ -222,7 +224,9 @@ function createStore(env = process.env, suppliedPool) {
       await client.query(fs.readFileSync(path.join(__dirname,'../migrations/005-email-recovery.sql'),'utf8'));
       await client.query(fs.readFileSync(path.join(__dirname,'../migrations/006-customer-trips.sql'),'utf8'));
       await client.query(fs.readFileSync(path.join(__dirname,'../migrations/007-customer-payment-methods.sql'),'utf8'));
-      await client.query(fs.readFileSync(path.join(__dirname,'../migrations/008-booking-emails.sql'),'utf8'));
+      // Migration 008's old event constraint must not be reapplied after expansion in 009.
+      if(!(await client.query('SELECT 1 FROM er_schema_migrations WHERE version=8')).rowCount)await client.query(fs.readFileSync(path.join(__dirname,'../migrations/008-booking-emails.sql'),'utf8'));
+      await client.query(fs.readFileSync(path.join(__dirname,'../migrations/009-customer-trip-management.sql'),'utf8'));
     });
   }
   async function importLegacy(records) {
@@ -235,6 +239,7 @@ function createStore(env = process.env, suppliedPool) {
       return {inserted,skipped};
     });
   }
-  return {...bookingEmailStorage(pool,transaction,safe),...require('./customer-payments').customerPaymentStorage(pool,transaction,safe),...require('./customer-trips').customerTripsStorage(pool,safe,validateRecord),...require('./recovery').recoveryStorage(pool,transaction,safe),...require('./customers').customerStorage(pool,transaction,safe),list,get,hasPaidRide,update,createWithBudget,withActionLock,firstRideConflicts,claimFirstRide,releaseExpiredFirstRide,reconciliationCandidates,abandonedDeferredCandidates,finalizeReconciliation,migrate,importLegacy,close:()=>pool.end()};
+  const assertActionLock=key=>{if(actionScope.getStore()!==key)throw Object.assign(new Error('Reservation action is already processing. Please try again.'),{status:409});};
+  return {...require('./refunds').refundStorage(pool,transaction,validateRecord,assertActionLock,()=>scope.getStore() || pool),...require('./trip-management').tripManagementStorage(pool,transaction,validateRecord,assertActionLock,()=>scope.getStore() || pool),...bookingEmailStorage(pool,transaction,safe),...require('./customer-payments').customerPaymentStorage(pool,transaction,safe),...require('./customer-trips').customerTripsStorage(pool,safe,validateRecord),...require('./recovery').recoveryStorage(pool,transaction,safe),...require('./customers').customerStorage(pool,transaction,safe),list,get,hasPaidRide,update,createWithBudget,withActionLock,firstRideConflicts,claimFirstRide,releaseExpiredFirstRide,reconciliationCandidates,abandonedDeferredCandidates,finalizeReconciliation,migrate,importLegacy,close:()=>pool.end()};
 }
 module.exports={createStore,StorageError,validateRecord,validateRecords,connectionOptions};

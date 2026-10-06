@@ -1,8 +1,9 @@
 const crypto=require('node:crypto');
 const RETRY_WINDOW=23*3600000,LEASE=60000;
-async function enqueueBookingEmail(client,record,kind){
- const at=new Date(['payment_confirmed','admin_payment_confirmed'].includes(kind)?record.paidAt:record.createdAt);
- await client.query('INSERT INTO er_booking_email_outbox(id,booking_id,kind,next_attempt_at,created_at,updated_at) VALUES($1,$2,$3,$4,$4,$4) ON CONFLICT(booking_id,kind) DO NOTHING',[crypto.randomUUID(),record.id,kind,at]);
+async function enqueueBookingEmail(client,record,kind,event=null){
+ const at=new Date(event?event.created_at:['payment_confirmed','admin_payment_confirmed'].includes(kind)?record.paidAt:record.createdAt);
+ const conflict=event?'(event_id,kind) WHERE event_id IS NOT NULL':'(booking_id,kind) WHERE event_id IS NULL';
+ await client.query('INSERT INTO er_booking_email_outbox(id,booking_id,kind,event_id,next_attempt_at,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$5,$5) ON CONFLICT '+conflict+' DO NOTHING',[crypto.randomUUID(),record.id,kind,event?.id || null,at]);
 }
 function bookingEmailStorage(pool,transaction,safe){
  return {

@@ -2,10 +2,10 @@ const crypto=require('node:crypto');
 const clone=x=>JSON.parse(JSON.stringify(x));
 function bookingEmailMemory(shared,fail){
  shared.bookingEmails ||=new Map();
- const enqueue=(r,kind)=>{
-  const key=r.id+'|'+kind;if(shared.bookingEmails.has(key))return;
-  const at=['payment_confirmed','admin_payment_confirmed'].includes(kind)?r.paidAt:r.createdAt;
-  shared.bookingEmails.set(key,{id:crypto.randomUUID(),booking_id:r.id,kind,state:'pending',payload:null,attempts:0,claim_token:null,lease_until:null,first_submitted_at:null,next_attempt_at:at,created_at:at,updated_at:at,sent_at:null});
+ const enqueue=(r,kind,event=null)=>{
+  const key=(event?event.id:r.id)+'|'+kind;if(shared.bookingEmails.has(key))return;
+  const at=event?new Date(event.created_at).toISOString():['payment_confirmed','admin_payment_confirmed'].includes(kind)?r.paidAt:r.createdAt;
+  shared.bookingEmails.set(key,{id:crypto.randomUUID(),booking_id:r.id,kind,event_id:event?.id || null,state:'pending',payload:null,attempts:0,claim_token:null,lease_until:null,first_submitted_at:null,next_attempt_at:at,created_at:at,updated_at:at,sent_at:null});
  };
  const find=id=>[...shared.bookingEmails.values()].find(x=>x.id===id);
  return {enqueue,methods:{
