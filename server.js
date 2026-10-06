@@ -1672,7 +1672,7 @@ const customerAuth=require('./auth/customers').installCustomerAuth(app,{store:re
 const customerPaymentService=require('./routes/customer-payment-methods').installCustomerPaymentMethods(app,{store:reservationStore,stripe,customerAuth,route,
   enabled:process.env.CUSTOMER_PAYMENT_METHODS_ENABLED==='true',siteUrl:SITE_URL,publishableKey:process.env.STRIPE_PUBLISHABLE_KEY,production:adminCookieSecure,clientKey,
   reportFailure:(req,status,provider)=>logDiagnostic(req,status,'provider_error',provider),now:()=>Date.now()});
-const {tripQuery}=require('./storage/customer-trips');
+const {tripQuery,reusableTrip}=require('./storage/customer-trips');
 app.get('/api/customer/trips',route(customerAuth.requireCustomer),route(async(req,res)=>{
   const query=tripQuery(req.query,Date.now());
   res.json(await reservationStore.customerTrips(req.customer.id,query));
@@ -1681,6 +1681,16 @@ app.get('/api/customer/trips/:id',route(customerAuth.requireCustomer),route(asyn
   const trip=await reservationStore.customerTrip(req.customer.id,req.params.id);
   if(!trip)return res.status(404).json({error:'Trip not found.'});
   res.json({trip});
+}));
+
+function bookAgainFlow(req,reference){
+ return reference+'.'+crypto.createHmac('sha256',req.customerSessionHash).update('book-again|'+req.customer.id+'|'+reference).digest('hex');
+}
+app.get('/api/customer/trips/:id/book-again',customerPrivateResponse,rateLimit('trip-template',30),route(customerAuth.requireCustomer),route(async(req,res)=>{
+ const source=await reservationStore.customerReservation(req.customer.id,req.params.id);
+ const template=source && reusableTrip(source);
+ if(!template)return res.status(404).json({error:'Trip unavailable for booking again.'});
+ res.json({template,flowReference:bookAgainFlow(req,crypto.randomUUID())});
 }));
 
 require('./auth/recovery').installPasswordRecovery(app,{store:reservationStore,emailProvider:recoveryEmailProvider,route,rateLimit,
@@ -1931,13 +1941,14 @@ function checkoutHash(value) {
   return crypto.createHash("sha256").update(value).digest("hex");
 }
 
-function checkoutFingerprint(body) {
+function checkoutFingerprint(body,flow=null) {
   // Only accepted booking fields matter. Arbitrary browser totals/nonce fields
-  // cannot bypass protection. Include the pricing revision.
+  // cannot bypass protection. A verified Book Again flow separates a new booking
+  // from its source, while retries retain the same fingerprint and pricing revision.
   const record = createBookingRecord(body, null);
   record.customer.email = normalizeEmail(body.email);
   record.customer.phone = normalizePhone(body.phone);
-  return checkoutHash(JSON.stringify({customer: record.customer, trip: record.trip, pricing,
+  return checkoutHash(JSON.stringify({customer: record.customer, trip: record.trip, pricing,...(flow?{bookingFlow:flow}:{}),
     ...(body.tripType === "roundtrip" ? {roundTripPricingVersion: 1} : {})}));
 }
 
@@ -2415,7 +2426,14 @@ app.post("/api/checkout", async (req, res) => {
         consumeLimit(`checkout-${kind}-daily`, key, 100, 24 * 60 * MINUTE);
       if (retryAfter) return tooManyRequests(res, retryAfter);
     }
-    const fingerprint = checkoutFingerprint(req.body);
+    let flow=null;
+    if(req.body.bookingFlow!==undefined){
+      const candidate=req.body.bookingFlow;
+      if(!req.customer || typeof candidate!=='string' || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\.[a-f0-9]{64}$/.test(candidate) ||
+        !crypto.timingSafeEqual(Buffer.from(candidate),Buffer.from(bookAgainFlow(req,candidate.slice(0,36)))))throw new Error('Invalid booking flow.');
+      flow=candidate;
+    }
+    const fingerprint = checkoutFingerprint(req.body,flow);
     // Do not share authenticated results with overlapping anonymous requests.
     if (checkoutActions.size >= 1000) return tooManyRequests(res);
     const actionKey=crypto.randomUUID();

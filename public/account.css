@@ -27,3 +27,5 @@ form{display:grid;gap:18px}.form-field{display:grid;gap:7px;min-width:0}label{fo
 /* Compact mobile tabs/routes only; retain heading, fare, badges and payment action. */
 @media(max-width:700px){.trip-tabs{margin:14px 0}.trip-tabs button{min-height:44px;padding:7px 8px;font-size:12px;line-height:1.2}.trip-route{font-size:16px;line-height:1.35;margin:8px 0}}
 @media(max-width:350px){.trip-route{font-size:15px}}
+
+.trip-book-again{display:inline-flex;align-items:center;min-height:44px;margin:8px 12px 0 0;font-size:13px}

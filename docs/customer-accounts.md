@@ -42,3 +42,26 @@ Phase 1A adds disabled-by-default, authenticated backend APIs only. Account UI
 and booking payments are unchanged; saved cards cannot yet pay for a booking.
 See [customer-payment-methods.md](customer-payment-methods.md) for migration 007,
 session-derived ownership, provisioning/retry safety and local test coverage.
+
+## My Trips Book Again
+
+Book Again opens the normal booking page without creating a reservation. The authenticated,
+no-store GET /api/customer/trips/:id/book-again reads the source with customer_id + reservation ID.
+Foreign, missing and unusable sources receive the same 404; guests receive 401.
+Only pickup, destination, internal vehicle, passenger count, trip type, supported hourly duration
+and usable pickup/drop-off Place IDs are returned as template fields. Existing EWR selection
+and manual-edit invalidation are retained; all provider identities are verified again by normal quoting.
+The template contains no old dates/times, fare, coupon/offer state, payment data, customer details,
+flight number, notes, dispatch information or reservation ID. Valid cancelled/unpaid/paid/past trips
+can serve as route templates; incomplete/unsupported route data cannot.
+
+A fresh opaque flow reference, bound to the current account session, separates the new booking
+from its source even when manually re-entered details match. It is not an ownership or payment
+credential. It remains only in page memory and is checked before including it in the normal
+retry fingerprint. Existing action locks, booking budgets and FIRST15 claim protections still apply.
+The source query parameter is removed after reading; no trip data or flow reference is persisted
+in browser storage. New pickup/return dates and times must be chosen; the customer reviews a
+fresh server quote and uses the unchanged Pay Now / Pay Later actions. No old fare is copied,
+and no old coupon or EWR offer is automatically reactivated.
+
+Browser Back/bfcache restoration re-fetches an unfinished template through the authenticated endpoint. Only the source UUID is retained in page memory while loading. Stale responses cannot overwrite a restored page; success or terminal failure clears the pending source, and a failed restore leaves manual booking usable. No reservation is created by restoration.

@@ -231,6 +231,7 @@ function getFormData() {
     data.dropoffPlaceId = dropoff.dataset.placeId;
     data.dropoffTerminal = dropoffTerminal.value || "general";
   }
+  if(bookAgainFlowReference)data.bookingFlow=bookAgainFlowReference;
   return data;
 }
 
@@ -1384,6 +1385,46 @@ async function loadPublicConfig() {
    INITIALIZE WEBSITE
 ========================================= */
 
+let bookAgainGeneration=0,bookAgainFlowReference=null,bookAgainPendingSource=null;
+function applyBookAgainTemplate(template,flowReference){
+ if(typeof flowReference!=='string' || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\.[a-f0-9]{64}$/.test(flowReference))throw new Error('Template unavailable.');
+ if(!template || !['oneway','airport','roundtrip','hourly'].includes(template.tripType) || !['suv','escalade'].includes(template.vehicle) ||
+  typeof template.pickup!=='string' || !template.pickup.trim() || typeof template.dropoff!=='string' || !template.dropoff.trim() || !Number.isInteger(template.passengers) || template.passengers<1 || template.passengers>6 ||
+  template.tripType==='hourly' && ![3,3.5,4,4.5,5,5.5,6,7,8].includes(template.hours))throw new Error('Template unavailable.');
+ form.reset();bookAgainFlowReference=flowReference;clearSpecialOffer();selectTripType(template.tripType);
+ pickup.value=template.pickup;dropoff.value=template.dropoff;
+ delete pickup.dataset.placeId;delete dropoff.dataset.placeId;
+ for(const [input,key] of [[pickup,'pickupPlaceId'],[dropoff,'dropoffPlaceId']])if(typeof template[key]==='string' && /^[A-Za-z0-9_-]{1,255}$/.test(template[key]))input.dataset.placeId=template[key];
+ vehicle.disabled=false;vehicle.value=template.vehicle;resetPassengerOptions();passengers.value=String(template.passengers);
+ if(template.tripType==='hourly')hours.value=String(template.hours);
+ for(const input of [dateInput,timeInput,returnDate,returnTime])input.value='';
+ dateInput.required=true;timeInput.required=true;
+ // form.reset also clears customer details, old flight/notes and all payment intent.
+ if(promoCode)promoCode.value='';if(offerCode)offerCode.value='';
+ syncPickupTerminal();syncDropoffTerminal();updateHourlyRates();resetQuote();showBookingStep(1);
+ showNotice('Trip details copied. Choose a new pickup date and time, review your trip, then get a new quote.','success');
+ dateInput.focus();
+}
+async function loadBookAgainTemplate(sourceOverride=null){
+ const params=new URLSearchParams(window.location.search),source=sourceOverride || params.get('bookAgain');if(source===null)return;
+ params.delete('bookAgain');const query=params.toString();window.history.replaceState(null,'',window.location.pathname+(query?'?'+query:'')+window.location.hash);
+ const generation=++bookAgainGeneration;bookAgainPendingSource=source;resetQuote();quoteBtn.disabled=true;
+ try{
+  if(!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(source))throw new Error('Template unavailable.');
+  const response=await fetch('/api/customer/trips/'+encodeURIComponent(source)+'/book-again',{credentials:'same-origin',cache:'no-store',referrerPolicy:'no-referrer'});
+  if(generation!==bookAgainGeneration)return;
+  if(response.status===401){bookAgainPendingSource=null;window.location.assign('/account.html');return;}
+  if(!response.ok)throw new Error('Template unavailable.');
+  const result=await response.json();if(generation!==bookAgainGeneration)return;applyBookAgainTemplate(result.template,result.flowReference);bookAgainPendingSource=null;
+ }catch(_){if(generation===bookAgainGeneration){bookAgainPendingSource=null;showNotice('Unable to reuse this trip. Please enter your trip details to start a new booking.');}}
+ finally{if(generation===bookAgainGeneration)quoteBtn.disabled=false;}
+}
+window.addEventListener('pagehide',()=>{bookAgainGeneration++;});
+// Recover only an unfinished template read; never create a reservation on restore.
+window.addEventListener('pageshow',event=>{
+ if(event.persisted && (bookAgainPendingSource || !bookAgainFlowReference && new URLSearchParams(window.location.search).has('bookAgain')))void loadBookAgainTemplate(bookAgainPendingSource);
+});
+
 async function initialize() {
 
   configureDates();
@@ -1408,7 +1449,9 @@ async function initialize() {
     "dropoff"
   );
 
+  const initialBookingGeneration=bookAgainGeneration;
   await loadPublicConfig();
+  if(initialBookingGeneration===bookAgainGeneration)await loadBookAgainTemplate();
 
   const params =
     new URLSearchParams(

@@ -112,6 +112,9 @@ function tripCard(trip){
  if(trip.dropoffTerminal)add('Drop-off terminal',trip.dropoffTerminal);
  add('Booked on',new Intl.DateTimeFormat('en-US',{dateStyle:'medium',timeZone:'America/New_York'}).format(new Date(trip.createdAt)));
  details.append(summary,list);card.append(details);
+ if(trip.canBookAgain===true){
+  const again=node('a','text-button trip-book-again','Book Again');again.href='/?bookAgain='+encodeURIComponent(trip.reference)+'#book';card.append(again);
+ }
  if(trip.status==='cancelled'&&trip.paymentStatus==='paid')card.append(node('p','trip-payment-review','Payment received for this cancelled trip. Please contact ER Limousine Service for payment review.'));
  if(processing&&trip.status!=='cancelled')card.append(node('p','trip-payment-review','We’re confirming your payment. You do not need to pay again.'));
  if(trip.paymentStatus!=='paid' && trip.status!=='cancelled' && !processing){

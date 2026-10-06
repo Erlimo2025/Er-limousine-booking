@@ -24,10 +24,25 @@ function paymentVerificationPending(record) {
  return record.paymentStatus!=='paid' && record.checkoutAttempt?.state==='session_identified' &&
   ['verified_paid_awaiting_webhook','payment_pending'].includes(record.checkoutAttempt.evidence);
 }
+// Read-only template; never carries reservation/payment/quote/customer authority.
+function reusableTrip(record){
+ const t=record?.trip,location=value=>typeof value==='string' && value.trim().length>0 && value.length<=400;
+ if(!t || !location(t.pickup) || !location(t.dropoff) || !['oneway','airport','roundtrip','hourly'].includes(t.tripType) || !['suv','escalade'].includes(t.vehicle) || !Number.isInteger(Number(t.passengers)) || Number(t.passengers)<1 || Number(t.passengers)>6)return null;
+ if(t.tripType==='hourly' && ![3,3.5,4,4.5,5,5.5,6,7,8].includes(Number(t.hours)))return null;
+ const template={pickup:t.pickup,dropoff:t.dropoff,vehicle:t.vehicle,passengers:Number(t.passengers),tripType:t.tripType};
+ if(t.tripType==='hourly')template.hours=Number(t.hours);
+ for(const [key,field] of [['pickupPlaceId','pickup'],['dropoffPlaceId','dropoff']])if(typeof t[key]==='string' && /^[A-Za-z0-9_-]{1,255}$/.test(t[key])){
+  template[key]=t[key];
+  // Reuse the existing approved selection wording, not provider-formatted text
+  // that may include repeated labels or the Terminal C General-airport suffix.
+  if(Object.hasOwn(ewr,t[key]))template[field]=ewr[t[key]].kind==='airport'?'Newark Liberty International Airport (EWR)':'Newark Liberty International Airport '+ewr[t[key]].label;
+ }
+ return template;
+}
 function tripDto(record) {
  const t=record.trip;
  const terminal=id=>typeof id==='string'&&Object.hasOwn(ewr,id)?ewr[id].label:null;
- return {reference:record.id,status:record.status,paymentStatus:record.paymentStatus,paymentVerificationPending:paymentVerificationPending(record),tripType:t.tripType,
+ return {canBookAgain:reusableTrip(record)!==null,reference:record.id,status:record.status,paymentStatus:record.paymentStatus,paymentVerificationPending:paymentVerificationPending(record),tripType:t.tripType,
   pickup:t.pickup,dropoff:t.dropoff,date:t.date,time:t.time,timeZone:'America/New_York',
   ...(t.tripType==='roundtrip'?{returnDate:t.returnDate,returnTime:t.returnTime}:{}),
   ...(t.tripType==='hourly'?{hours:Number(t.hours)}:{}),vehicle:t.vehicle==='suv'?'Luxury SUV':record.quote.vehicle,passengers:t.passengers,
@@ -61,4 +76,4 @@ function customerTripsStorage(pool,safe,validate) {
   })
  };
 }
-module.exports={customerTripsStorage,tripQuery,tripDto,paymentVerificationPending};
+module.exports={reusableTrip,customerTripsStorage,tripQuery,tripDto,paymentVerificationPending};
