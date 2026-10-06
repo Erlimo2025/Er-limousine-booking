@@ -2,6 +2,13 @@ const escape=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;'
 // Remove only adjacent repeated terminal labels in the rendered customer address.
 // The stored address and distinct terminal information remain untouched.
 const customerPickup=value=>value.replace(/(^|,\s*)(Terminal\s+([ABC]))\s*,\s*(?:Terminal\s+\3\s*,\s*)+/gi,'$1$2, ');
+function customerSupportHtml(contact){
+ const email=typeof contact.email==='string' && contact.email.length<=200 && /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(contact.email)?'<a href="mailto:'+escape(encodeURIComponent(contact.email))+'">'+escape(contact.email)+'</a>':escape(contact.email);
+ const phone=contact.phone,digits=typeof phone==='string'?phone.replace(/\D/g,''):'';
+ const safePhone=typeof phone==='string' && /^\+?[0-9 ().-]{7,40}$/.test(phone) && /^[0-9]{7,15}$/.test(digits);
+ const dial=safePhone?(digits.length===10?'+1'+digits:phone.startsWith('+') || digits.length===11 && digits.startsWith('1')?'+'+digits:digits):null;
+ return 'Contact ER Limousine Service: '+email+(phone?' | '+(dial?'<a href="tel:'+dial+'" style="color:#008000;text-decoration:underline;">'+escape(phone)+'</a>':escape(phone)):'');
+}
 function bookingMessage(record,kind,contact,myTripsUrl=null){
  const reservation=['reservation_created','customer_reservation_created'].includes(kind),admin=['reservation_created','admin_payment_confirmed'].includes(kind);
  if(!['reservation_created','customer_reservation_created','payment_confirmed','admin_payment_confirmed'].includes(kind))throw Error('Email unavailable.');
@@ -30,7 +37,7 @@ function bookingMessage(record,kind,contact,myTripsUrl=null){
  return {to:admin?contact.email:customer.email,
   subject:(reservation?(admin?'New reservation':cancelled?'Reservation Cancelled':paid?'Reservation Confirmed':'Reservation Confirmed — Payment Due'):'Payment Confirmed')+(admin?' — '+record.id:' | ER Limousine Service'),
   text:'ER Limousine Service\n\n'+intro+'\n\n'+rows.map(([k,v])=>k+': '+v).join('\n')+(action?'\n\n'+action:'')+'\n\n'+support,
-  html:'<h1>ER Limousine Service</h1><p>'+escape(intro)+'</p><table>'+rows.map(([k,v])=>'<tr><th align="left">'+escape(k)+'</th><td>'+escape(v)+'</td></tr>').join('')+'</table>'+(action?'<p><a href="'+escape(link)+'">Open My Trips'+(!paid?' / Complete Payment':'')+'</a></p>':'')+'<p>'+escape(support)+'</p>'};
+  html:'<h1>ER Limousine Service</h1><p>'+escape(intro)+'</p><table>'+rows.map(([k,v])=>'<tr><th align="left">'+escape(k)+'</th><td>'+escape(v)+'</td></tr>').join('')+'</table>'+(action?'<p><a href="'+escape(link)+'">Open My Trips'+(!paid?' / Complete Payment':'')+'</a></p>':'')+'<p>'+(admin?escape(support):customerSupportHtml(contact))+'</p>'};
 }
 function createBookingEmails({store,provider,contact,siteUrl,now=Date.now,reportFailure=()=>{}}){
  let running=null,myTripsUrl=null;

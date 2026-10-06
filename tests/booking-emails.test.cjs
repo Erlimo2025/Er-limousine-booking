@@ -106,7 +106,7 @@ test('PostgreSQL booking emails: atomic outbox, cross-worker dedup, delivery fau
  const owned=await h.request('/api/checkout',{...booking,paymentChoice:'later'},{cookie});assert.equal(owned.status,200);await flush(h);
  const mail=h.state.bookingMessages.find(x=>x.to===booking.email&&x.text.includes(owned.body.bookingId));assert.match(mail.text,/http:\/\/localhost:3000\/account\/dashboard/);assert.match(mail.html,/Open My Trips \/ Complete Payment/);
  const guest=await h.request('/api/checkout',{...booking,time:'14:00',paymentChoice:'later'});assert.equal(guest.status,200);await flush(h);
- const guestMail=h.state.bookingMessages.find(x=>x.to===booking.email&&x.text.includes(guest.body.bookingId));assert.doesNotMatch(guestMail.text,/https?:|tokenHash|er_booking_access/);assert.doesNotMatch(guestMail.html,/href=/);
+ const guestMail=h.state.bookingMessages.find(x=>x.to===booking.email&&x.text.includes(guest.body.bookingId));assert.doesNotMatch(guestMail.text,/https?:|tokenHash|er_booking_access/);assert.doesNotMatch(guestMail.html,/href="https?:|er_booking_access|tokenHash/);
  });
 
 const presentationRecord=()=>({id:crypto.randomUUID(),status:'awaiting_payment',paymentStatus:'unpaid',customer:{firstName:'Test',lastName:'Customer',email:'person@example.test',phone:'2025550101'},trip:{pickup:'Terminal A, Terminal A, 3 Brewster Rd, Newark, NJ 07114, USA',dropoff:'Manhattan',date:'2026-11-10',time:'12:00',returnDate:'2026-11-12',returnTime:'18:00',vehicle:'suv',passengers:3},quote:{total:150,currency:'usd'},deferredPayment:true});
@@ -133,4 +133,17 @@ test('customer payment and terminal reservation subjects stay concise while body
  const paid=bookingMessage(r,'payment_confirmed',envContact());assert.equal(paid.subject,'Payment Confirmed | ER Limousine Service');assert.ok(!paid.subject.includes(r.id));assert.ok(paid.text.includes(r.id));assert.match(paid.text,/Amount paid: \$150\.00/);assert.match(paid.text,/New York time/);
  assert.equal(bookingMessage(r,'admin_payment_confirmed',envContact()).subject,'Payment Confirmed — '+r.id);
  assert.equal(bookingMessage(r,'customer_reservation_created',envContact()).subject,'Reservation Confirmed | ER Limousine Service');r.status='cancelled';assert.equal(bookingMessage(r,'customer_reservation_created',envContact()).subject,'Reservation Cancelled | ER Limousine Service');assert.match(bookingMessage(r,'payment_confirmed',envContact()).text,/cancelled.*payment review/);
+});
+
+test('customer booking and payment contact phone is a safe green tel link from configured contact, with clickable email',()=>{
+ const {bookingMessage}=require('../services/booking-emails'),r=presentationRecord(),contact={email:'bookings@example.test',phone:'(973) 847-4128'};
+ for(const kind of ['customer_reservation_created','payment_confirmed']){
+  if(kind==='payment_confirmed')r.paymentStatus='paid';const before=JSON.stringify(r),m=bookingMessage(r,kind,contact);
+  assert.ok(m.html.includes('<a href="tel:+19738474128" style="color:#008000;text-decoration:underline;">(973) 847-4128</a>'));
+  assert.ok(m.html.includes('<a href="mailto:bookings%40example.test">bookings@example.test</a>'));assert.ok(m.text.includes('(973) 847-4128'));assert.equal(JSON.stringify(r),before);
+  const other=bookingMessage(r,kind,{...contact,phone:'+44 20 7946 0958'});assert.ok(other.html.includes('href="tel:+442079460958"'));assert.ok(other.html.includes('>+44 20 7946 0958</a>'));assert.ok(!other.html.includes('19738474128'));
+ }
+ for(const phone of ['javascript:alert(1)','(973) 847-4128" onclick="bad','123\r\nBad: content','123','',null]){
+  const m=bookingMessage(r,'customer_reservation_created',{...contact,phone});assert.doesNotMatch(m.html,/href="tel:|onclick="bad|href="javascript:/);
+ }
 });
