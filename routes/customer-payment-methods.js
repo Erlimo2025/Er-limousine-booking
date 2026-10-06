@@ -50,5 +50,6 @@ function installCustomerPaymentMethods(app,{store,stripe,customerAuth,route,enab
   if(!providerId(req.params.id,'pm'))return res.status(400).json({error:'Invalid request.'});
   return send(req,res,'remove',async auth=>res.json(await service.remove(auth,req.params.id)));
  }));
+ return service;
 }
 module.exports={installCustomerPaymentMethods};

@@ -37,8 +37,12 @@ function validateRecord(r) {
   }
   if(r.checkoutAttempt?.parameters!==undefined) {
     const a=r.checkoutAttempt,p=a.parameters,item=p?.line_items?.[0];
-    if(!plain(p) || Object.keys(p).some(k=>!['mode','expires_at','customer_email','line_items','metadata','success_url','cancel_url'].includes(k)) ||
-       p.mode!=='payment' || p.expires_at!==a.expiresAt || p.customer_email!==r.customer.email ||
+    const customerBound=p?.customer!==undefined;
+    const customerValid=customerBound ? typeof p.customer==='string' && /^cus_[A-Za-z0-9_]{1,120}$/.test(p.customer) && !Object.hasOwn(p,'customer_email') &&
+      plain(p.saved_payment_method_options) && Object.keys(p.saved_payment_method_options).join(',')==='payment_method_save' && p.saved_payment_method_options.payment_method_save==='enabled' :
+      p?.customer_email===r.customer.email && !Object.hasOwn(p || {},'saved_payment_method_options');
+    if(!plain(p) || Object.keys(p).some(k=>!['mode','expires_at','customer_email','customer','saved_payment_method_options','line_items','metadata','success_url','cancel_url'].includes(k)) ||
+       p.mode!=='payment' || p.expires_at!==a.expiresAt || !customerValid ||
        !Array.isArray(p.line_items) || p.line_items.length!==1 || item.quantity!==1 ||
        item.price_data?.unit_amount!==Math.round(a.quote.total*100) || item.price_data?.currency!==a.quote.currency ||
        p.metadata?.bookingId!==r.id || (a.version===1 && (p.metadata?.attemptReference!==a.correlationId ||

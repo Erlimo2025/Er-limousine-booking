@@ -54,7 +54,8 @@ test('owned retry requires booking credential and never transfers ownership to a
  assert.equal((await h.request('/api/checkout',booking,{cookie:accountCookie(a)})).status,503);
  assert.equal((await h.request('/api/checkout',booking,{cookie:bookCookies(h,accountCookie(b))})).status,503);
  assert.equal((await h.request('/api/checkout',booking,{cookie:bookCookies(h,accountCookie(a))})).status,200);
- assert.equal((await h.request('/api/checkout',booking,{cookie:h.checkoutCookies()})).status,200);
+ // Booking credentials alone cannot expose the owner's save-enabled Stripe Customer.
+ assert.equal((await h.request('/api/checkout',booking,{cookie:h.checkoutCookies()})).status,401);
  assert.equal(await h.testStore.reservationOwner(out.body.bookingId),owner);assert.equal(h.state.creates.length,1);
  const session=[...h.state.sessions.values()][0];session.metadata.customer_id=[...h.testStore.shared.customers.keys()].find(id=>id!==owner);session.payment_status='paid';
  assert.equal((await h.webhook(session)).status,200);assert.equal((await h.webhook(session)).status,200);assert.equal(await h.testStore.reservationOwner(out.body.bookingId),owner);

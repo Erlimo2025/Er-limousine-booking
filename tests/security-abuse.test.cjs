@@ -42,6 +42,7 @@ async function harness(t, env = {}, saved = "[]", injectedStore) {
           const previous = [...state.sessions.values()].find(item => item.key === options.idempotencyKey);
           if (previous) return previous;
           const session = {id: `cs_mock_${state.sessions.size}`, url: "https://checkout.example.test/mock",
+            customer:params.customer || null,
             status: "open", payment_status: "unpaid", key: options.idempotencyKey,
             mode:params.mode,amount_total:params.line_items[0].price_data.unit_amount,currency:params.line_items[0].price_data.currency,
             metadata:params.metadata,expires_at:params.expires_at,created:Math.floor(clock/1000)};

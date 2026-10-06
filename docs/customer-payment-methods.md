@@ -1,8 +1,9 @@
 # Customer saved payment methods — Phases 1A and 1B
 
 Phase 1A is the backend foundation; Phase 1B adds a dedicated authenticated
-payment-method page. No saved-card booking, off-session charging, Checkout
-integration or payment webhook change is included.
+payment-method page. Authenticated booking Checkout now reuses this Customer
+mapping for Stripe's optional save-card checkbox. No automatic/off-session
+charging or payment webhook change is included.
 Stripe alone collects card data in Stripe.js/Elements. Application
 APIs must never accept card numbers, CVC or billing addresses.
 

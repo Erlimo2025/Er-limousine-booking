@@ -1652,7 +1652,7 @@ app.use(
 
 const customerAuth=require('./auth/customers').installCustomerAuth(app,{store:reservationStore,route,rateLimit,
   validOrigin:validAdminOrigin,secure:adminCookieSecure,now:()=>Date.now()});
-require('./routes/customer-payment-methods').installCustomerPaymentMethods(app,{store:reservationStore,stripe,customerAuth,route,
+const customerPaymentService=require('./routes/customer-payment-methods').installCustomerPaymentMethods(app,{store:reservationStore,stripe,customerAuth,route,
   enabled:process.env.CUSTOMER_PAYMENT_METHODS_ENABLED==='true',siteUrl:SITE_URL,publishableKey:process.env.STRIPE_PUBLISHABLE_KEY,production:adminCookieSecure,clientKey,
   reportFailure:(req,status,provider)=>logDiagnostic(req,status,'provider_error',provider),now:()=>Date.now()});
 const {tripQuery}=require('./storage/customer-trips');
@@ -2157,6 +2157,12 @@ async function createCheckout(body, ip, fingerprint, req, res) {
 async function verifyPaymentAuthority(req,booking){
   if(req.customer){const active=await reservationStore.resolveCustomerSession(req.customerSessionHash,Date.now());if(!active || active.id!==req.customer.id)throw Object.assign(new Error('Please log in to continue.'),{status:401});}
   if(req.paymentCredentialRequired && !hasCustomerAccess(req,booking,true) && !hasCustomerAccess(req,booking))throw Object.assign(new Error('Reservation access unavailable.'),{status:401});
+  const customer=booking.checkoutAttempt?.parameters?.customer;
+  if(customer){
+    if(!req.customer || await reservationStore.reservationOwner(booking.id)!==req.customer.id)throw Object.assign(new Error('Please log in to continue.'),{status:401});
+    const mapping=await reservationStore.paymentMapping(req.customer.id);
+    if(mapping?.state!=='ready' || mapping.stripe_customer_id!==customer)throw Object.assign(new Error('Checkout is temporarily unavailable. Please try again.'),{status:503});
+  }
 }
 async function checkoutStoredBooking(body,booking,req,storedOnly=true){
   if(await expireDeferredUnderLock(booking))throw Object.assign(new Error('Reservation unavailable.'),{status:409});
@@ -2178,6 +2184,7 @@ async function checkoutStoredBooking(body,booking,req,storedOnly=true){
     }
     if(!existing || existing.id!==booking.stripeSessionId || existing.mode!=='payment' || existing.metadata?.bookingId!==booking.id ||
       existing.amount_total!==Math.round(booking.quote.total*100) || existing.currency!==booking.quote.currency)throw Object.assign(new Error('Checkout is temporarily unavailable. Please try again.'),{status:503});
+    if(booking.checkoutAttempt?.parameters?.customer && (existing.customer?.id || existing.customer)!==booking.checkoutAttempt.parameters.customer)throw Object.assign(new Error('Checkout is temporarily unavailable. Please try again.'),{status:503});
     if (existing.status === "open" && existing.payment_status==='unpaid' && existing.url) {
       await verifyPaymentAuthority(req,booking);
       return checkoutCustomerResult(existing.url, booking.id);
@@ -2307,6 +2314,14 @@ async function checkoutStoredBooking(body,booking,req,storedOnly=true){
         cancel_url:
           `${SITE_URL}/success.html?booking=${booking.id}&cancelled=1`
   };
+  // Never modify frozen parameters on retries, including legacy/guest attempts.
+  if(!booking.checkoutAttempt.parameters && req.customer && await reservationStore.reservationOwner(booking.id)===req.customer.id){
+    try{parameters.customer=await customerPaymentService.checkoutCustomer({id:req.customer.id,sessionHash:req.customerSessionHash});}
+    catch(error){if(error.paymentFailure && error.status===401)throw Object.assign(new Error('Please log in to continue.'),{status:401});throw error;}
+    delete parameters.customer_email;
+    parameters.saved_payment_method_options={payment_method_save:'enabled'};
+  }
+  await verifyPaymentAuthority(req,booking);
   const firstRide=quote.promotion?.code==='FIRST15';
   const earlierSubmission=firstRide?(booking.checkoutAttempt.version!==1 || booking.checkoutAttempt.firstSubmittedAt!==null):booking.checkoutAttempt.firstSubmittedAt!==null;
   if(firstRide && (booking.checkoutAttempt.version!==1 ||
@@ -2354,6 +2369,7 @@ async function checkoutStoredBooking(body,booking,req,storedOnly=true){
     }
     throw Object.assign(new Error("Checkout is temporarily unavailable. Please try again."),{status:503});
   }
+  if(booking.checkoutAttempt.parameters.customer && (session.customer?.id || session.customer)!==booking.checkoutAttempt.parameters.customer)throw Object.assign(new Error('Checkout is temporarily unavailable. Please try again.'),{status:503});
   booking.checkoutAttempt.state='session_identified';if(firstRide)booking.checkoutAttempt.evidence='creation_response';
 
   booking.stripeSessionId =

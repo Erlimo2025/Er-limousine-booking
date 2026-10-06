@@ -102,6 +102,10 @@ test('PostgreSQL Pay Later: atomic FIRST15 creation, owner SQL, payment reuse an
  const own=(await pool.query('SELECT customer_id FROM er_reservations WHERE id=$1',[id])).rows[0].customer_id;
  assert.ok(await store.customerReservation(own,id));assert.equal(await store.customerReservation(crypto.randomUUID(),id),null);
  const completed=await payment(worker,id,cookie(a));assert.equal(completed.status,200);assert.equal(worker.state.creates[0].params.line_items[0].price_data.unit_amount,8500);
+ const mapping=(await pool.query('SELECT stripe_customer_id FROM er_customer_payment_mappings WHERE customer_id=$1',[own])).rows[0];
+ assert.equal(worker.state.creates[0].params.customer,mapping.stripe_customer_id);
+ assert.equal(worker.state.creates[0].params.saved_payment_method_options.payment_method_save,'enabled');
+ assert.equal((await pool.query('SELECT count(*)::int AS n FROM er_customer_payment_mappings')).rows[0].n,1);
  assert.equal((await payment(h,id,cookie(a))).status,200);assert.equal(h.state.creates.length+worker.state.creates.length,1);
  const si=[...h.state.sessions.values()][0];si.status='complete';si.payment_status='paid';assert.equal((await h.webhook(si)).status,200);
  assert.equal((await store.get(id)).paymentStatus,'paid');assert.equal((await payment(worker,id,cookie(a))).status,409);
@@ -306,4 +310,79 @@ test('payment conflict refreshes authoritative status and removes repeat payment
  for(const id of ['message','details','completePayment','refreshReservation'])elements[id]=node();let reads=0;
  const ctx={document:{getElementById:id=>elements[id],createElement:node},URLSearchParams,Intl,window:{addEventListener:(e,f)=>events[e]=f},location:{search:'?booking=11111111-1111-4111-8111-111111111111',assign(){assert.fail('Processing payment must not redirect to another Checkout');}},fetch:async(url,options)=>{calls.push(options?.method||'GET');if(options?.method==='POST')return {ok:false,status:409};reads++;return {ok:true,status:200,json:async()=>({id:'fixture',status:'awaiting_payment',paymentStatus:'unpaid',paymentVerificationPending:reads>1,trip:{pickup:'Pickup',dropoff:'Destination',date:'2026-11-10',time:'12:00'},quote:{vehicle:'Luxury SUV',total:80,currency:'usd'}})};}};
  vm.createContext(ctx);vm.runInContext(script,ctx);await events.pageshow();assert.equal(elements.completePayment.hidden,false);await elements.completePayment.click();assert.deepEqual(calls,['GET','POST','GET']);assert.equal(elements.completePayment.hidden,true);assert.match(elements.message.textContent,/do not need to pay again/);
+});
+
+test('authenticated Checkout reuses saved-card Customer and optional consent; provider-saved cards appear in the existing list',async t=>{
+ for(const checked of [false,true]){
+ const h=await harness(t,{CUSTOMER_PAYMENT_METHODS_ENABLED:'true'}),a=await register(h),auth={...headers,cookie:cookie(a)},base='/api/customer/payment-methods';
+ const setup=await h.request(base+'/setup',{consent:true},auth);assert.equal(setup.status,200);
+ const mapped=[...h.testStore.shared.paymentMappings.values()][0].stripe_customer_id;
+ const r=await h.request('/api/checkout',{...booking,vehicle:'suv',customer:'cus_forged',stripeCustomerId:'cus_forged',amount:1,setup_future_usage:'off_session'},auth);assert.equal(r.status,200);
+ const p=h.state.creates[0].params;assert.equal(p.customer,mapped);assert.deepEqual(JSON.parse(JSON.stringify(p.saved_payment_method_options)),{payment_method_save:'enabled'});
+ assert.ok(!Object.hasOwn(p,'customer_email'));assert.ok(!Object.hasOwn(p,'payment_intent_data'));assert.ok(!Object.hasOwn(p,'setup_future_usage'));assert.equal(p.line_items[0].price_data.unit_amount,8000);
+ assert.equal(h.state.payments.customers.size,1);assert.equal(h.state.payments.setups.size,1);
+ // Stripe controls checkbox consent and card attachment; the application never collects card data.
+ if(checked)h.state.payments.cards.set('pm_checkout',{id:'pm_checkout',type:'card',customer:mapped,livemode:false,card:{brand:'visa',last4:'4242',exp_month:6,exp_year:2030}});
+ const session=[...h.state.sessions.values()][0];session.status='complete';session.payment_status='paid';await h.webhook(session);
+ const list=await h.request(base,undefined,auth);assert.equal(list.status,200);assert.equal(list.body.length,checked?1:0);
+ if(checked)assert.deepEqual(Object.keys(list.body[0]).sort(),['id','brand','last4','expMonth','expYear'].sort());
+ assert.ok(!h.state.logs.join(' ').includes(mapped));assert.equal(h.records()[0].paymentStatus,'paid');assert.equal((await payment(h,r.body.bookingId,cookie(a))).status,409);
+ }
+});
+
+test('Pay Now and Complete Payment provision one shared Customer; open session reuse never adds a duplicate',async t=>{
+ const h=await harness(t),a=await register(h),r=await h.request('/api/checkout',booking,{cookie:cookie(a)});assert.equal(r.status,200);
+ const owner=await h.testStore.reservationOwner(r.body.bookingId),mapped=h.testStore.shared.paymentMappings.get(owner).stripe_customer_id;
+ assert.equal(h.state.creates[0].params.customer,mapped);assert.equal((await payment(h,r.body.bookingId,cookie(a))).status,200);assert.equal(h.state.creates.length,1);
+ const later=await reserve(h,{time:'13:00'},{cookie:cookie(a)});assert.equal(later.status,200);assert.equal(h.state.creates.length,1);
+ assert.equal((await payment(h,later.body.bookingId,cookie(a))).status,200);assert.equal(h.state.creates[1].params.customer,mapped);assert.equal(h.state.payments.customers.size,1);
+ assert.equal(h.state.payments.calls.filter(x=>x.op==='createCustomer').length,1);assert.equal(h.state.payments.setups.size,0);
+ assert.equal(h.state.creates[1].params.line_items[0].price_data.unit_amount,10000);
+});
+
+test('guest and later-login guest retries cannot save into an account; anonymous access cannot reuse an account-bound Checkout',async t=>{
+ const h=await harness(t),a=await register(h),guest=await reserve(h,{customer:'cus_forged',customer_id:[...h.testStore.shared.customers.keys()][0],saved_payment_method_options:{payment_method_save:'enabled'}});
+ const access=guest.headers.getSetCookie().find(x=>x.includes('er_booking_access')).split(';')[0];
+ assert.equal((await h.request('/api/booking/'+guest.body.bookingId+'/checkout',{}, {...headers,cookie:access+'; '+cookie(a)})).status,200);
+ const p=h.state.creates[0].params;assert.ok(!Object.hasOwn(p,'customer'));assert.ok(!Object.hasOwn(p,'saved_payment_method_options'));assert.equal(h.state.payments.customers.size,0);assert.equal(await h.testStore.reservationOwner(guest.body.bookingId),null);
+ const owned=await reserve(h,{time:'13:00'},{cookie:cookie(a)});assert.equal((await payment(h,owned.body.bookingId,cookie(a))).status,200);
+ const ownAccess=owned.headers.getSetCookie().find(x=>x.includes('er_booking_access')).split(';')[0],before=h.state.creates.length;
+ assert.equal((await h.request('/api/booking/'+owned.body.bookingId+'/checkout',{}, {...headers,cookie:ownAccess})).status,401);
+ const b=await register(h,{email:'save-other@example.test',phone:'2035550179'});assert.equal((await payment(h,owned.body.bookingId,cookie(b))).status,404);
+ assert.equal(h.state.creates.length,before);assert.equal(h.state.payments.customers.size,1);
+});
+
+test('lost Customer and Checkout responses retain durable Customer mapping and frozen payment parameters',async t=>{
+ const h=await harness(t),a=await register(h);h.state.payments.loseCustomer=true;
+ const first=await h.request('/api/checkout',booking,{cookie:cookie(a)});assert.equal(first.status,503);const id=h.records()[0].id;
+ assert.equal(h.state.payments.customers.size,1);assert.equal(h.state.creates.length,0);
+ h.state.loseResponse=true;assert.equal((await payment(h,id,cookie(a))).status,503);const frozen=JSON.stringify(h.records()[0].checkoutAttempt.parameters),key=h.state.creates[0].options.idempotencyKey;
+ assert.equal((await payment(h,id,cookie(a))).status,200);assert.equal(h.state.payments.customers.size,1);assert.equal(h.state.sessions.size,1);
+ assert.equal(JSON.stringify(h.records()[0].checkoutAttempt.parameters),frozen);assert.equal(h.state.creates[1].options.idempotencyKey,key);assert.equal(h.state.creates[0].params.customer,h.state.creates[1].params.customer);
+});
+
+test('concurrent owned payments and save-card setup cannot provision duplicate Stripe Customers',async t=>{
+ const h=await harness(t,{CUSTOMER_PAYMENT_METHODS_ENABLED:'true'}),a=await register(h),r=await reserve(h,{}, {cookie:cookie(a)});h.state.payments.delay=30;
+ const results=await Promise.all([payment(h,r.body.bookingId,cookie(a)),h.request('/api/customer/payment-methods/setup',{consent:true},{...headers,cookie:cookie(a)})]);
+ assert.ok(results.some(x=>x.status===200));assert.equal(h.state.payments.customers.size,1);
+ assert.equal((await payment(h,r.body.bookingId,cookie(a))).status,200);
+ const setup=await h.request('/api/customer/payment-methods/setup',{consent:true},{...headers,cookie:cookie(a)});assert.equal(setup.status,200);
+ const mapped=[...h.testStore.shared.paymentMappings.values()][0].stripe_customer_id;
+ assert.equal(h.state.creates[0].params.customer,mapped);assert.equal([...h.state.payments.setups.values()][0].customer,mapped);assert.equal(h.state.sessions.size,1);
+});
+
+test('mapped Checkout never returns a mismatched provider Customer or a revoked-session save option',async t=>{
+ const h=await harness(t),a=await register(h),r=await h.request('/api/checkout',booking,{cookie:cookie(a)});assert.equal(r.status,200);
+ const session=[...h.state.sessions.values()][0];session.customer='cus_foreign';assert.equal((await payment(h,r.body.bookingId,cookie(a))).status,503);assert.equal(h.state.creates.length,1);
+ const other=await harness(t),b=await register(other);other.state.payments.onCall=async()=>other.testStore.shared.customerSessions.clear();
+ assert.equal((await other.request('/api/checkout',booking,{cookie:cookie(b)})).status,401);assert.equal(other.state.creates.length,0);
+});
+
+test('legacy open Checkout and frozen retries are reused without retrofitting save-card parameters',async t=>{
+ const h=await harness(t),a=await register(h),r=await h.request('/api/checkout',booking,{cookie:cookie(a)});assert.equal(r.status,200);
+ await h.testStore.update(r.body.bookingId,b=>{delete b.checkoutAttempt.parameters.customer;delete b.checkoutAttempt.parameters.saved_payment_method_options;b.checkoutAttempt.parameters.customer_email=b.customer.email;});
+ const session=[...h.state.sessions.values()][0];session.customer=null;
+ const original=JSON.stringify(h.records()[0].checkoutAttempt.parameters),calls=h.state.payments.calls.length;
+ assert.equal((await payment(h,r.body.bookingId,cookie(a))).status,200);assert.equal(h.state.creates.length,1);
+ assert.equal(JSON.stringify(h.records()[0].checkoutAttempt.parameters),original);assert.equal(h.state.payments.calls.length,calls);
 });

@@ -1,6 +1,6 @@
 # Reservation payment choices
 
-Reservations use the existing PostgreSQL row ownership, booking access credentials and server quote calculation. Saved cards are not selectable or charged.
+Reservations use the existing PostgreSQL row ownership, booking access credentials and server quote calculation. The application never automatically charges saved cards; actual trip payment remains customer-confirmed Stripe Checkout.
 
 ## Booking and payment
 The final booking step offers Reserve & Pay Now and Reserve & Pay Later with the quoted total visible. Both use /api/checkout and the same booking fingerprint/action lock. paymentChoice is only an intent (now or later), never price authority.
@@ -46,3 +46,10 @@ Status and My Trips responses expose only paymentVerificationPending, derived fr
 The supported `npm test` command serializes test files. PostgreSQL integration files share one ER_TEST_DATABASE_URL and use separate schemas, but the production advisory locks (migration, FIRST15 and booking action locks) are database-wide, not schema-scoped. Identical synthetic bookings in different schemas can therefore conflict, and concurrent migration/claim work can contend. Do not change production locking to accommodate test fixtures.
 
 A concurrent full-suite run is useful diagnostically, but passing one run does not establish isolation. Use `node --test tests/*.test.cjs` for that optional check. Each file still exercises explicit concurrent workers/requests internally under the supported serial command. The concurrent-only storage/teardown failures reproduced once in a two-file PostgreSQL/payment group (EWR storage errors followed by an already-ended-pool teardown error), but three repeats and the current full concurrent suite passed. Their exact initiating error has not been established. A direct two-search-path action-lock probe did confirm a 409 conflict across schemas; serialization avoids that demonstrated isolation limitation without changing production code.
+
+## Optional card saving in authenticated Checkout
+New Pay Now and Complete Payment sessions for the authenticated reservation owner use the same durable Stripe Customer mapping as Payment Methods, with saved_payment_method_options.payment_method_save=enabled. Stripe hosts the optional consent checkbox and handles card attachment. No setup_future_usage or automatic/off-session charge is added. Checkout does not create a SetupIntent. No card number/CVC is stored locally.
+
+Provisioning reuses the customer-payment-methods lock, durable provisioning reference and provider idempotency key. Guest/unowned bookings are not mapped by email or phone, including retries after login. Existing open/ambiguous sessions keep their frozen parameters; older sessions do not gain a checkbox mid-attempt. An account-bound save-enabled session requires the owner's active session even if a booking cookie is available. Cancel/retry locks, authoritative stored fare and signed-webhook Paid authority are unchanged.
+
+Payment Methods routes/page retain their existing feature flag; no configuration is enabled by this change. Once enabled, cards Stripe saves to the shared Customer are available through the existing safe listing/removal API. Stripe may display eligible saved methods within its hosted UI, but the application does not submit a stored PaymentMethod or create a charge without customer interaction.

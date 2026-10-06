@@ -47,6 +47,10 @@ function customerPayments({store,provider,now=Date.now}) {
   return true;
  }
  return {
+  // Internal Checkout integration: never accepts a provider customer from the browser.
+  checkoutCustomer:auth=>lock(auth,async()=>{
+   await authority(auth);const m=await mapping(auth);await authority(auth);return m.stripe_customer_id;
+  }),
   setup:auth=>lock(auth,async()=>{
    await authority(auth);const m=await mapping(auth);
    // At most one existing attempt is reconciled before creating/reusing its replacement.
