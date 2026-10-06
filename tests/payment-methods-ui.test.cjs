@@ -61,7 +61,7 @@ test('logout and bfcache restoration clear private UI and revalidate config/list
 });
 test('payment page uses local assets, accessible consent/status/controls, responsive CSS and no persistent storage or logging',()=>{
  assert.doesNotMatch(source,/localStorage|indexedDB|console\.|innerHTML|return_url/);assert.doesNotMatch(html,/https:\/\/|analytics|type="(?:text|number)"/);assert.match(html,/role="status" aria-live="polite"/);assert.match(html,/type="checkbox" required/);assert.match(html,/ER Limousine Service does not store your full card number or CVC/);assert.match(html,/not yet available for booking payments/);
- const css=fs.readFileSync(path.join(__dirname,'../public/payment-methods.css'),'utf8');assert.match(css,/@media\(max-width:700px\)/);assert.match(css,/@media\(max-width:350px\)/);assert.match(css,/overflow-wrap:anywhere/);assert.match(fs.readFileSync(path.join(__dirname,'../public/account.html'),'utf8'),/href="\/payment-methods.html"/);
+ const css=fs.readFileSync(path.join(__dirname,'../public/payment-methods.css'),'utf8');assert.match(css,/@media\(max-width:700px\)/);assert.match(css,/@media\(max-width:350px\)/);assert.match(css,/overflow-wrap:anywhere/);assert.doesNotMatch(fs.readFileSync(path.join(__dirname,'../public/account.html'),'utf8'),/href="\/payment-methods.html"/);
 });
 
 test('stale 401 cannot clear a newer setup, while current 401 clears recovery and redirects',async()=>{
@@ -95,4 +95,11 @@ test('logout clears persisted attempt; stale resumed verification cannot alter n
  h.context.fetch=async(u,o)=>u.endsWith('/verify')?new Promise(r=>release=r):f(u,o);
  const old=h.load();while(!release)await new Promise(r=>setImmediate(r));await h.click('paymentLogout');release({ok:true,status:200,json:async()=>({ok:true}),headers:{get:()=>null}});await old;
  assert.equal(h.storage.size,0);assert.equal(h.state.redirect,'/account.html');assert.doesNotMatch(h.elements.paymentStatus.textContent,/saved successfully/);
+});
+
+test('account UI has no Payment Methods management entry or obsolete navigation, while booking and My Trips remain',()=>{
+ const account=fs.readFileSync(path.join(__dirname,'../public/account.html'),'utf8');
+ assert.doesNotMatch(account,/Payment Methods|Manage cards securely saved with Stripe|Manage Payment Methods|payment-methods\.html/);
+ assert.match(account,/id="tripsPanel"/);assert.match(account,/Book a Ride/);assert.match(account,/id="profile"/);
+ for(const name of fs.readdirSync(path.join(__dirname,'../public')).filter(x=>/\.(html|js)$/.test(x)))assert.doesNotMatch(fs.readFileSync(path.join(__dirname,'../public',name),'utf8'),/href=["']\/payment-methods\.html["']/,'Obsolete management-page navigation in '+name);
 });

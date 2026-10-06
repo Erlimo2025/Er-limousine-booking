@@ -333,9 +333,9 @@ test('authenticated Checkout reuses saved-card Customer and optional consent; pr
 test('Pay Now and Complete Payment provision one shared Customer; open session reuse never adds a duplicate',async t=>{
  const h=await harness(t),a=await register(h),r=await h.request('/api/checkout',booking,{cookie:cookie(a)});assert.equal(r.status,200);
  const owner=await h.testStore.reservationOwner(r.body.bookingId),mapped=h.testStore.shared.paymentMappings.get(owner).stripe_customer_id;
- assert.equal(h.state.creates[0].params.customer,mapped);assert.equal((await payment(h,r.body.bookingId,cookie(a))).status,200);assert.equal(h.state.creates.length,1);
+ assert.equal(h.state.creates[0].params.customer,mapped);assert.equal(h.state.creates[0].params.saved_payment_method_options.payment_method_save,'enabled');assert.equal((await payment(h,r.body.bookingId,cookie(a))).status,200);assert.equal(h.state.creates.length,1);
  const later=await reserve(h,{time:'13:00'},{cookie:cookie(a)});assert.equal(later.status,200);assert.equal(h.state.creates.length,1);
- assert.equal((await payment(h,later.body.bookingId,cookie(a))).status,200);assert.equal(h.state.creates[1].params.customer,mapped);assert.equal(h.state.payments.customers.size,1);
+ assert.equal((await payment(h,later.body.bookingId,cookie(a))).status,200);assert.equal(h.state.creates[1].params.customer,mapped);assert.equal(h.state.creates[1].params.saved_payment_method_options.payment_method_save,'enabled');assert.equal(h.state.payments.customers.size,1);
  assert.equal(h.state.payments.calls.filter(x=>x.op==='createCustomer').length,1);assert.equal(h.state.payments.setups.size,0);
  assert.equal(h.state.creates[1].params.line_items[0].price_data.unit_amount,10000);
 });

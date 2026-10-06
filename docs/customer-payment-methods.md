@@ -113,8 +113,11 @@ EWR, pricing, My Trips and existing Checkout/webhook authority are unchanged.
 
 ## Phase 1B customer page
 
-`/payment-methods.html` requires the existing customer session. The dashboard
-links to it. It displays only safe card brand, masked last four digits and expiry;
+`/payment-methods.html` requires the existing customer session. The dashboard no longer includes a Payment Methods card or navigation link.
+The authenticated management page and backend remain available for future saved-card
+work. Optional saving during authenticated Stripe Checkout remains enabled, using
+the same server-owned Customer mapping; no automatic charging is added.
+The retained page displays only safe card brand, masked last four digits and expiry;
 opaque references remain in memory for deliberate, confirmed removal.
 
 Add Card first shows explicit save-card consent. Only after consent does the
