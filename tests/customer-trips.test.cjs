@@ -218,8 +218,12 @@ test('My Trips renders payment action for unpaid only and scopes full payment re
  const node=tag=>({tag,children:[],textContent:'',append(...x){this.children.push(...x)},addEventListener(){},setAttribute(){}});
  const ctx={document:{createElement:node},Intl};require('node:vm').createContext(ctx);require('node:vm').runInContext(src.slice(start,end),ctx);
  const walk=n=>[n,...n.children.flatMap(walk)];
- const r=fixture();assert.ok(walk(ctx.tripCard(tripDto(r))).some(x=>x.tag==='button'&&x.textContent==='Complete Payment'));
- r.paymentStatus='paid';assert.ok(!walk(ctx.tripCard(tripDto(r))).some(x=>x.textContent==='Complete Payment'));
+ const r=fixture(),dto=tripDto(r),original=JSON.stringify(dto),unpaidNodes=walk(ctx.tripCard(dto));
+ assert.deepEqual(unpaidNodes.filter(x=>x.className==='trip-badge').map(x=>x.textContent),['Unpaid']);
+ assert.ok(unpaidNodes.some(x=>x.tag==='button'&&x.textContent==='Complete Payment'));
+ assert.equal(JSON.stringify(dto),original);assert.equal(r.status,'awaiting_payment');assert.equal(r.paymentStatus,'unpaid');
+ r.paymentStatus='paid';const paidNodes=walk(ctx.tripCard(tripDto(r)));
+ assert.ok(!paidNodes.some(x=>x.textContent==='Complete Payment'));assert.ok(paidNodes.some(x=>x.className==='trip-badge'&&x.textContent==='Paid'));
  const calls=[],store=customerTripsStorage({query:async(sql,args)=>{calls.push({sql,args});return {rows:[]};}},fn=>fn(),x=>x);
  const owner=crypto.randomUUID();await store.customerReservation(owner,crypto.randomUUID());assert.match(calls[0].sql,/WHERE customer_id=\$1 AND id=\$2/);assert.equal(calls[0].args[0],owner);
 });
@@ -231,6 +235,7 @@ test('My Trips pending verification hides payment action without claiming Paid o
  const r=fixture();r.paymentVerificationPending=true;assert.equal(tripDto(r).paymentVerificationPending,false);
  r.checkoutAttempt={state:'session_identified',evidence:'verified_paid_awaiting_webhook'};const dto=tripDto(r);assert.equal(dto.paymentStatus,'unpaid');assert.equal(dto.paymentVerificationPending,true);
  let nodes=walk(ctx.tripCard(dto));assert.ok(!nodes.some(n=>n.textContent==='Complete Payment'));assert.ok(nodes.some(n=>/do not need to pay again/.test(n.textContent)));
+ assert.ok(nodes.some(n=>n.className==='trip-badge'&&n.textContent==='Payment verification in progress'));assert.ok(!nodes.some(n=>n.className==='trip-badge'&&n.textContent==='Unpaid'));
  r.status='cancelled';nodes=walk(ctx.tripCard(tripDto(r)));assert.ok(!nodes.some(n=>n.textContent==='Complete Payment'));assert.ok(!nodes.some(n=>/do not need to pay again/.test(n.textContent)));
  r.status='confirmed';r.paymentStatus='paid';assert.equal(tripDto(r).paymentVerificationPending,false);assert.ok(!walk(ctx.tripCard(tripDto(r))).some(n=>n.textContent==='Complete Payment'));
 });

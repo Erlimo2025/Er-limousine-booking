@@ -97,7 +97,9 @@ function tripCard(trip){
  const card=node('section','trip-card'),heading=node('h3','trip-route',trip.pickup+' → '+trip.dropoff);
  const labels={awaiting_payment:'Payment Pending',confirmed:'Confirmed',assigned:'Assigned',driver_en_route:'Driver en route',passenger_on_board:'Passenger on board',completed:'Completed',cancelled:'Cancelled',unpaid:'Unpaid',paid:'Paid',failed:'Failed'};
  const processing=trip.paymentVerificationPending===true;
- const badges=node('div','trip-badges');badges.append(node('span','trip-badge',processing&&trip.status!=='cancelled'?'Payment verification in progress':labels[trip.status]||trip.status),node('span','trip-badge',processing?'Payment verification in progress':labels[trip.paymentStatus]||trip.paymentStatus));
+ const badges=node('div','trip-badges');
+ if(!(trip.status==='awaiting_payment' && trip.paymentStatus==='unpaid' && !processing))badges.append(node('span','trip-badge',processing&&trip.status!=='cancelled'?'Payment verification in progress':labels[trip.status]||trip.status));
+ badges.append(node('span','trip-badge',processing?'Payment verification in progress':labels[trip.paymentStatus]||trip.paymentStatus));
  const money=new Intl.NumberFormat('en-US',{style:'currency',currency:trip.currency}).format(trip.total);
  const dateTime=(date,time)=>date+' · '+time+' (New York time)';
  card.append(badges,heading,node('p','trip-date',dateTime(trip.date,trip.time)),node('p','trip-vehicle',trip.vehicle),node('p','trip-total',money));
