@@ -32,3 +32,20 @@ form{display:grid;gap:18px}.form-field{display:grid;gap:7px;min-width:0}label{fo
 
 .trip-management{margin-top:12px;border-top:1px solid #d6dfe6;padding-top:4px}.trip-management>summary{min-height:44px;padding:10px 0;color:#77530c;font-size:14px;font-weight:bold;cursor:pointer}.trip-management-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}.trip-management-button{min-height:44px;border:1px solid #b6c4d0;border-radius:7px;background:#fff;color:#30495d;padding:10px 12px;font-size:13px;font-weight:bold;cursor:pointer;max-width:100%;white-space:normal}.trip-management-button:disabled{opacity:.6;cursor:wait}.trip-time-form{margin-top:12px;gap:12px}.trip-time-form .primary{font-size:14px;min-height:44px}.trip-management-confirm{display:flex;align-items:flex-start;gap:10px;font-size:13px;font-weight:normal;line-height:1.5}.trip-management-confirm input{width:20px;min-width:20px;min-height:20px;height:20px;padding:0;margin:1px 0}.trip-management-guidance,.trip-management-contact,.trip-management-status,.trip-cancel-confirmation p{font-size:13px;line-height:1.5;color:var(--muted);margin:10px 0}.trip-management-contact a{display:inline-block;min-height:44px;padding:10px 0;margin-right:8px;overflow-wrap:anywhere}.trip-cancel-confirmation{padding:10px 12px;border:1px solid #d6dfe6;border-radius:7px;margin-top:12px}.trip-cancel-confirmation .trip-management-button{margin:4px 4px 0 0}.trip-management-status:empty{display:none}
 @media(max-width:350px){.trip-management-actions{display:grid;grid-template-columns:1fr}.trip-management-button{width:100%}.trip-time-form input{padding:10px 8px}.trip-cancel-confirmation .trip-management-button{margin-right:0}}
+
+/* Upcoming reservations stay stacked; Past Trips keeps its existing layout. */
+.trip-primary-actions,.trip-fare-row{display:contents}
+#tripsStatus:empty{display:none}
+.trips-list[data-view="upcoming"]{grid-template-columns:minmax(0,1fr);gap:12px}
+.trips-list[data-view="upcoming"] .trip-card{padding:15px}
+.trips-list[data-view="upcoming"] .trip-route{margin:9px 0}
+.trips-list[data-view="upcoming"] .trip-date{margin:6px 0}
+.trips-list[data-view="upcoming"] .trip-fare-row{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px 12px;margin:6px 0}
+.trips-list[data-view="upcoming"] .trip-fare-row .trip-vehicle,.trips-list[data-view="upcoming"] .trip-fare-row .trip-total{margin:0}
+.trips-list[data-view="upcoming"] .trip-primary-actions{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;margin-top:6px}
+.trips-list[data-view="upcoming"] .trip-book-again{margin:0;padding:8px 0;min-height:44px}
+.trips-list[data-view="upcoming"] .trip-payment{margin:0;min-height:44px;padding:10px 16px}
+.trips-list[data-view="upcoming"] .trip-management{margin-top:9px}
+.trips-list[data-view="upcoming"] .trip-management-actions{gap:6px;margin-top:8px}
+@media(max-width:700px){.trips-list[data-view="upcoming"] .trip-card{padding:12px}.trips-list[data-view="upcoming"] .trip-route{margin:6px 0}}
+@media(max-width:350px){.trips-list[data-view="upcoming"] .trip-management-actions{gap:6px}.trips-list[data-view="upcoming"] .trip-payment{width:100%}}

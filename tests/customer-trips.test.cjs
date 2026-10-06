@@ -151,6 +151,41 @@ test('My Trips UI uses safe text nodes, wraps long addresses and displays read-o
  const source=fs.readFileSync(path.join(__dirname,'../public/account.js'),'utf8');assert.doesNotMatch(source,/innerHTML|outerHTML|insertAdjacentHTML|localStorage|sessionStorage|indexedDB/);
  assert.match(fs.readFileSync(path.join(__dirname,'../public/account.css'),'utf8'),/overflow-wrap:anywhere/);
 });
+
+test('My Trips collapses repeated A/B/C terminal labels only in displayed route; stored addresses and identities stay intact',()=>{
+ const h=uiHarness(),walk=n=>[n,...(n.children||[]).flatMap(walk)];
+ for(const letter of ['A','B','C']){
+  const r=fixture();r.trip.pickup='Terminal '+letter+', Terminal '+letter+', 3 Brewster Rd, Newark, NJ 07114, USA';
+  r.trip.dropoff='Terminal '+letter+', Terminal '+letter+', Terminal '+letter+', 3 Brewster Rd';r.trip.pickupPlaceId='unchanged-pickup-id';r.trip.dropoffPlaceId='unchanged-dropoff-id';
+  const dto=tripDto(r),recordBefore=JSON.stringify(r),dtoBefore=JSON.stringify(dto),nodes=walk(h.context.tripCard(dto));
+  assert.equal(nodes.find(n=>n.className==='trip-route').textContent,'Terminal '+letter+', 3 Brewster Rd, Newark, NJ 07114, USA → Terminal '+letter+', 3 Brewster Rd');
+  assert.equal(JSON.stringify(r),recordBefore);assert.equal(JSON.stringify(dto),dtoBefore);
+  for(const [address,display]of [['Terminal '+letter+', Terminal '+letter,'Terminal '+letter],['Newark Liberty International Airport Terminal '+letter+', Terminal '+letter+', 3 Brewster Rd','Newark Liberty International Airport Terminal '+letter+', 3 Brewster Rd']]){
+   r.trip.pickup=address;assert.equal(walk(h.context.tripCard(tripDto(r))).find(n=>n.className==='trip-route').textContent,display+' → Terminal '+letter+', 3 Brewster Rd');
+  }
+ }
+ for(const address of ['Terminal A, 3 Brewster Rd','Terminal A, Terminal B, 3 Brewster Rd','Terminal AA, Terminal AA, Main St','Terminal A Annex, Terminal A Annex, Main St','Normal pickup street']){
+  const r=fixture();r.trip.pickup=address;assert.equal(walk(h.context.tripCard(tripDto(r))).find(n=>n.className==='trip-route').textContent,address+' → Destination');
+ }
+});
+
+test('Upcoming layout follows the selected tab through loading and pagination; Past layout remains separate',async()=>{
+ const h=uiHarness();h.elements.dashboardView.hidden=false;h.state.tripResult={trips:[tripDto(fixture())],nextCursor:'fixture-cursor'};
+ await h.context.loadTrips(false);assert.equal(h.elements.tripsList.attributes['data-view'],'upcoming');
+ await h.context.loadTrips(true);assert.equal(h.elements.tripsList.attributes['data-view'],'upcoming');assert.equal(h.elements.tripsList.children.length,2);
+ h.events['pastTrips:click']();await new Promise(r=>setImmediate(r));assert.equal(h.elements.tripsList.attributes['data-view'],'past');assert.ok(h.state.requests.at(-1).url.includes('view=past'));
+ h.events['upcomingTrips:click']();await new Promise(r=>setImmediate(r));assert.equal(h.elements.tripsList.attributes['data-view'],'upcoming');assert.ok(h.state.requests.at(-1).url.includes('view=upcoming'));
+ const css=fs.readFileSync(path.join(__dirname,'../public/account.css'),'utf8');
+ assert.match(css,/\.trips-list\{[^}]*grid-template-columns:1fr 1fr/);
+ assert.match(css,/\.trips-list\[data-view="upcoming"\]\{[^}]*grid-template-columns:minmax\(0,1fr\)/);
+ assert.match(css,/\.trips-list\[data-view="upcoming"\] \.trip-card\{padding:15px\}/);
+ assert.match(css,/@media\(max-width:700px\)\{\.trips-list\[data-view="upcoming"\] \.trip-card\{padding:12px\}/);
+ assert.match(css,/\.trips-list\[data-view="upcoming"\] \.trip-primary-actions\{[^}]*flex-wrap:wrap/);
+ assert.match(css,/\.trips-list\[data-view="upcoming"\] \.trip-payment\{[^}]*min-height:44px/);
+ assert.match(css,/\.trips-list\[data-view="upcoming"\] \.trip-fare-row\{[^}]*justify-content:space-between;flex-wrap:wrap/);
+ const nodes=[];const walk=n=>{nodes.push(n);for(const child of n.children||[])walk(child);};walk(h.elements.tripsList.children[0]);
+ const fareRow=nodes.find(n=>n.className==='trip-fare-row');assert.deepEqual(fareRow.children.map(n=>n.className),['trip-vehicle','trip-total']);assert.equal(fareRow.children[1].textContent,'$100.00');
+});
 test('My Trips UI loading, empty, error/retry and pagination states are explicit',async()=>{
  const h=uiHarness();h.elements.dashboardView.hidden=false;await h.context.loadTrips(false);assert.match(h.elements.tripsStatus.textContent,/Only rides booked while signed into this account/);assert.equal(h.elements.tripsBook.hidden,false);
  h.state.error=true;await h.context.loadTrips(false);assert.equal(h.elements.tripsRetry.hidden,false);assert.match(h.elements.tripsStatus.textContent,/temporarily unavailable/);
