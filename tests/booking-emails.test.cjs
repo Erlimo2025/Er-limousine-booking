@@ -108,3 +108,29 @@ test('PostgreSQL booking emails: atomic outbox, cross-worker dedup, delivery fau
  const guest=await h.request('/api/checkout',{...booking,time:'14:00',paymentChoice:'later'});assert.equal(guest.status,200);await flush(h);
  const guestMail=h.state.bookingMessages.find(x=>x.to===booking.email&&x.text.includes(guest.body.bookingId));assert.doesNotMatch(guestMail.text,/https?:|tokenHash|er_booking_access/);assert.doesNotMatch(guestMail.html,/href=/);
  });
+
+const presentationRecord=()=>({id:crypto.randomUUID(),status:'awaiting_payment',paymentStatus:'unpaid',customer:{firstName:'Test',lastName:'Customer',email:'person@example.test',phone:'2025550101'},trip:{pickup:'Terminal A, Terminal A, 3 Brewster Rd, Newark, NJ 07114, USA',dropoff:'Manhattan',date:'2026-11-10',time:'12:00',returnDate:'2026-11-12',returnTime:'18:00',vehicle:'suv',passengers:3},quote:{total:150,currency:'usd'},deferredPayment:true});
+test('customer reservation presentation uses Total, New York time and concise subject without changing record or admin details',()=>{
+ const {bookingMessage}=require('../services/booking-emails'),r=presentationRecord(),before=JSON.stringify(r),m=bookingMessage(r,'customer_reservation_created',envContact());
+ assert.equal(m.subject,'Reservation Confirmed — Payment Due | ER Limousine Service');assert.ok(!m.subject.includes(r.id));assert.ok(m.text.includes('Reservation ID: '+r.id));assert.ok(m.html.includes(r.id));
+ assert.match(m.text,/Total: \$150\.00/);assert.match(m.html,/>Total<\/th>/);assert.doesNotMatch(m.text+m.html,/Authoritative total|America\/New_York/);
+ for(const dt of ['2026-11-10 12:00 (New York time)','2026-11-12 18:00 (New York time)'])assert.ok(m.text.includes(dt));
+ assert.equal(JSON.stringify(r),before);const admin=bookingMessage(r,'reservation_created',envContact());assert.ok(admin.subject.includes(r.id));assert.match(admin.text,/Authoritative total: \$150\.00/);assert.match(admin.text,/America\/New_York/);assert.ok(admin.text.includes(r.trip.pickup));
+});
+function envContact(){return {email:env.COMPANY_EMAIL,phone:env.COMPANY_PHONE};}
+test('customer emails deduplicate only repeated A/B/C terminal labels and preserve address and stored pickup',()=>{
+ const {bookingMessage}=require('../services/booking-emails');
+ for(const terminal of ['A','B','C'])for(const kind of ['customer_reservation_created','payment_confirmed']){
+  const r=presentationRecord();r.trip.pickup='Terminal '+terminal+', Terminal '+terminal+', 3 Brewster Rd, Newark, NJ 07114, USA';if(kind==='payment_confirmed')r.paymentStatus='paid';const original=r.trip.pickup,m=bookingMessage(r,kind,envContact()),expected='Terminal '+terminal+', 3 Brewster Rd, Newark, NJ 07114, USA';
+  assert.ok(m.text.includes('Pickup: '+expected));assert.ok(m.html.includes(expected));assert.ok(!m.text.includes(original));assert.equal(r.trip.pickup,original);
+ }
+ for(const address of ['Terminal B, 3 Brewster Rd, Newark, NJ 07114, USA','Terminal A, Terminal B, 3 Brewster Rd','123 Terminal Avenue, Newark, NJ','Terminal C, terminal c, Terminal C, 3 Brewster Rd']){
+  const r=presentationRecord();r.trip.pickup=address;const m=bookingMessage(r,'customer_reservation_created',envContact());assert.ok(m.text.includes('Pickup: '+(address.startsWith('Terminal C, terminal')?'Terminal C, 3 Brewster Rd':address)));assert.equal(r.trip.pickup,address);
+ }
+});
+test('customer payment and terminal reservation subjects stay concise while body and admin preserve reservation ID',()=>{
+ const {bookingMessage}=require('../services/booking-emails'),r=presentationRecord();r.paymentStatus='paid';
+ const paid=bookingMessage(r,'payment_confirmed',envContact());assert.equal(paid.subject,'Payment Confirmed | ER Limousine Service');assert.ok(!paid.subject.includes(r.id));assert.ok(paid.text.includes(r.id));assert.match(paid.text,/Amount paid: \$150\.00/);assert.match(paid.text,/New York time/);
+ assert.equal(bookingMessage(r,'admin_payment_confirmed',envContact()).subject,'Payment Confirmed — '+r.id);
+ assert.equal(bookingMessage(r,'customer_reservation_created',envContact()).subject,'Reservation Confirmed | ER Limousine Service');r.status='cancelled';assert.equal(bookingMessage(r,'customer_reservation_created',envContact()).subject,'Reservation Cancelled | ER Limousine Service');assert.match(bookingMessage(r,'payment_confirmed',envContact()).text,/cancelled.*payment review/);
+});
