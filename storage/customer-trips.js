@@ -1,4 +1,5 @@
 const ewr=require('../ewr-pickups');
+const pricing=require('../pricing');
 const uuid=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const iso=value=>typeof value==='string' && Number.isFinite(Date.parse(value)) && new Date(value).toISOString()===value;
 function tripQuery(query,now) {
@@ -37,6 +38,11 @@ function reusableTrip(record){
   // that may include repeated labels or the Terminal C General-airport suffix.
   if(Object.hasOwn(ewr,t[key]))template[field]=ewr[t[key]].kind==='airport'?'Newark Liberty International Airport (EWR)':'Newark Liberty International Airport '+ewr[t[key]].label;
  }
+ // Restore only the public offer selected on a previously verified special.
+ // This is intent, not eligibility or an old price: every new quote verifies it again.
+ const code='EWR_MANHATTAN_SUV',offer=pricing.fixedOffers?.[code];
+ if(record.quote?.fixedOffer?.code===code && offer?.active===true && offer.vehicle==='suv' &&
+  t.vehicle==='suv' && ['oneway','airport'].includes(t.tripType) && Object.hasOwn(ewr,t.pickupPlaceId))template.offerCode=code;
  return template;
 }
 function tripDto(record) {

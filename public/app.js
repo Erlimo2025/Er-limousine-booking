@@ -1388,6 +1388,7 @@ async function loadPublicConfig() {
 let bookAgainGeneration=0,bookAgainFlowReference=null,bookAgainPendingSource=null;
 function applyBookAgainTemplate(template,flowReference){
  if(typeof flowReference!=='string' || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\.[a-f0-9]{64}$/.test(flowReference))throw new Error('Template unavailable.');
+ if(template?.offerCode!==undefined && template.offerCode!=='EWR_MANHATTAN_SUV')throw new Error('Template unavailable.');
  if(!template || !['oneway','airport','roundtrip','hourly'].includes(template.tripType) || !['suv','escalade'].includes(template.vehicle) ||
   typeof template.pickup!=='string' || !template.pickup.trim() || typeof template.dropoff!=='string' || !template.dropoff.trim() || !Number.isInteger(template.passengers) || template.passengers<1 || template.passengers>6 ||
   template.tripType==='hourly' && ![3,3.5,4,4.5,5,5.5,6,7,8].includes(template.hours))throw new Error('Template unavailable.');
@@ -1401,6 +1402,12 @@ function applyBookAgainTemplate(template,flowReference){
  dateInput.required=true;timeInput.required=true;
  // form.reset also clears customer details, old flight/notes and all payment intent.
  if(promoCode)promoCode.value='';if(offerCode)offerCode.value='';
+ // Keep the existing selection without resetting Terminal A/B/C or destination.
+ if(template.offerCode==='EWR_MANHATTAN_SUV'){
+  offerCode.value=template.offerCode;vehicle.disabled=true;
+  if(promoCode)promoCode.disabled=true;if(applyPromoBtn)applyPromoBtn.disabled=true;
+  showSpecialPromoMessage();
+ }
  syncPickupTerminal();syncDropoffTerminal();updateHourlyRates();resetQuote();showBookingStep(1);
  showNotice('Trip details copied. Choose a new pickup date and time, review your trip, then get a new quote.','success');
  dateInput.focus();
