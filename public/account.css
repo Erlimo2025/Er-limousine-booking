@@ -34,6 +34,11 @@ form{display:grid;gap:18px}.form-field{display:grid;gap:7px;min-width:0}label{fo
 @media(max-width:350px){.trip-management-actions{display:grid;grid-template-columns:1fr}.trip-management-button{width:100%}.trip-time-form input{padding:10px 8px}.trip-cancel-confirmation .trip-management-button{margin-right:0}}
 
 /* Upcoming reservations stay stacked; Past Trips keeps its existing layout. */
+.profile-actions{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+#profileForm{margin-top:16px}
+#profileForm input[readonly]{opacity:.8;cursor:default}
+#profileStatus:empty{display:none}
+#profile .profile-actions button,#editProfile{min-height:44px}
 .trip-primary-actions,.trip-fare-row{display:contents}
 #tripsStatus:empty{display:none}
 .trips-list[data-view="upcoming"]{grid-template-columns:minmax(0,1fr);gap:12px}

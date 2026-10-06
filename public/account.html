@@ -48,7 +48,16 @@
   <div class="dashboard-heading"><p class="eyebrow">YOUR ER LIMOUSINE ACCOUNT</p><h1 id="welcome">Welcome</h1><p>Manage your account and book your next ride.</p></div>
   <div class="dashboard-grid">
     <article class="ride-card"><span class="card-icon" aria-hidden="true">↗</span><p class="eyebrow">YOUR NEXT JOURNEY</p><h2>Travel in comfort.</h2><p>Premium private transportation, whenever you need it.</p><a class="primary" href="/#book">Book a Ride <span aria-hidden="true">→</span></a></article>
-    <article class="profile-card" id="profile"><div class="card-heading"><span class="card-icon" aria-hidden="true">♙</span><h2>My Account</h2></div><p class="card-description">Your account details</p><dl><div><dt>Full Name</dt><dd id="profileName"></dd></div><div><dt>Email Address</dt><dd id="profileEmail"></dd></div><div><dt>Phone Number</dt><dd id="profilePhone"></dd></div></dl><button id="logout" class="text-button" type="button">Log Out</button></article>
+    <article class="profile-card" id="profile"><div class="card-heading"><span class="card-icon" aria-hidden="true">♙</span><h2>My Account</h2></div><p class="card-description">Your account details</p><dl><div><dt>Full Name</dt><dd id="profileName"></dd></div><div><dt>Email Address (read-only)</dt><dd id="profileEmail"></dd></div><div><dt>Phone Number</dt><dd id="profilePhone"></dd></div></dl>
+      <button id="editProfile" class="text-button" type="button" aria-expanded="false" aria-controls="profileForm">Edit Profile</button>
+      <form id="profileForm" hidden>
+        <div class="form-field"><label for="editFullName">Full Name</label><input id="editFullName" autocomplete="name" required minlength="2" maxlength="120"></div>
+        <div class="form-field"><label for="editEmail">Email Address (read-only)</label><input id="editEmail" type="email" readonly aria-readonly="true"></div>
+        <div class="form-field"><label for="editPhone">Phone Number</label><input id="editPhone" type="tel" autocomplete="tel" required maxlength="40"></div>
+        <div class="profile-actions"><button id="saveProfile" class="primary" type="submit">Save Changes</button><button id="cancelProfile" class="text-button" type="button">Cancel</button></div>
+      </form>
+      <p id="profileStatus" role="status" aria-live="polite"></p>
+      <button id="logout" class="text-button" type="button">Log Out</button></article>
     <article class="trips-panel" id="tripsPanel" aria-labelledby="tripsHeading">
       <div class="card-heading"><span class="card-icon" aria-hidden="true">◷</span><h2 id="tripsHeading">My Trips</h2></div>
       <p class="card-description">Rides booked while signed into this account.</p>

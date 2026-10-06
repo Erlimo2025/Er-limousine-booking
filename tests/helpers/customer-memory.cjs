@@ -5,6 +5,10 @@ function customerMemory(shared,failures={}) {
  const clone=x=>x?structuredClone(x):null;
  const fail=()=>{if(failures.read||failures.write)throw Object.assign(new Error('private-storage-marker'),{storageFailure:true});};
  return {
+  updateCustomerProfile:async(id,hash,changes,now)=>{fail();const c=shared.customers.get(id),s=shared.customerSessions.get(hash);if(c?.account_status!=='active'||s?.customer_id!==id||s.expires<=now)return null;
+   if(changes.phone&&[...shared.customers.values()].some(x=>x.id!==id&&x.normalized_phone===changes.phone.normalized))throw Object.assign(new Error('Unable to update profile with these details.'),{status:400});
+   if(changes.fullName!==undefined)c.full_name=changes.fullName;if(changes.phone){c.normalized_phone=changes.phone.normalized;c.display_phone=changes.phone.display;}return clone(c);
+  },
   ...require('./recovery-memory.cjs').recoveryMemory(shared,failures),
   customerByEmail:async email=>{fail();return clone([...shared.customers.values()].find(c=>c.normalized_email===email));},
   registerCustomer:async(c,s)=>{fail();if([...shared.customers.values()].some(x=>x.normalized_email===c.normalized_email||x.normalized_phone===c.normalized_phone))return false;shared.customers.set(c.id,{...c,account_status:'active'});shared.customerSessions.set(s.hash,{customer_id:c.id,expires:s.expires.getTime()});return true;},

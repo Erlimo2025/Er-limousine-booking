@@ -102,6 +102,23 @@ function installCustomerAuth(app,{store,route,rateLimit,validOrigin,secure,now=D
   issue(res,s);res.json({customer:profile(c)});
  }));
  app.get('/api/customer/profile',route(auth),route(async(req,res)=>res.json({customer:profile(req.customer)})));
+ app.post('/api/customer/profile',route(auth),mutation,rateLimit('customer-profile',20,15*60*1000),route(async(req,res)=>{
+  res.set('Referrer-Policy','no-referrer');
+  const b=req.body,keys=Object.keys(b);
+  if(!keys.length || keys.some(k=>!['fullName','phone'].includes(k)))return reject(res,400,'Invalid profile update.');
+  const changes={};
+  if(Object.hasOwn(b,'fullName')){
+   if(typeof b.fullName!=='string' || /[\x00-\x1f\x7f<>]/.test(b.fullName))return reject(res,400,'Enter a valid full name.');
+   const value=b.fullName.trim().replace(/\s+/g,' ');
+   if(value.length<2 || value.length>120 || !/\p{L}/u.test(value))return reject(res,400,'Enter a valid full name.');
+   changes.fullName=value;
+  }
+  if(Object.hasOwn(b,'phone')){const p=phone(b.phone);if(!p)return reject(res,400,'Enter a valid U.S. phone number.');changes.phone=p;}
+  if(!await store.customerLoginLimit(hashToken('profile-update|'+req.customer.id),now()))return reject(res,429,'Too many requests. Please try again later.');
+  const updated=await store.updateCustomerProfile(req.customer.id,req.customerSessionHash,changes,now());
+  if(!updated){clear(res);return reject(res,401,'Please log in to continue.');}
+  res.json({customer:profile(updated)});
+ }));
  app.get('/account/dashboard',route(auth),(req,res)=>res.sendFile(require('node:path').join(__dirname,'../public/account.html')));
   app.post('/api/customer/logout',mutation,route(async(req,res)=>{
   const raw=token(req);if(raw)await store.revokeCustomerSession(hashToken(raw));clear(res);res.json({ok:true});

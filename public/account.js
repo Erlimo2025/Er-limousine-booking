@@ -20,10 +20,42 @@ function displayFirstName(fullName){
   return characters.length?characters[0].toLocaleUpperCase()+characters.slice(1).join(''):'';
 }
 function dashboard(customer){
-  el('welcome').textContent='Welcome, '+displayFirstName(customer.fullName);
-  el('profileName').textContent=customer.fullName;el('profileEmail').textContent=customer.email;el('profilePhone').textContent=customer.phone;
+  displayProfile(customer);
   show('dashboard');
   if(el('tripsPanel'))loadTrips(false);
+}
+function displayProfile(customer){
+  el('welcome').textContent='Welcome, '+displayFirstName(customer.fullName);
+  el('profileName').textContent=customer.fullName;el('profileEmail').textContent=customer.email;el('profilePhone').textContent=customer.phone;
+}
+function closeProfileEditor(){
+ if(!el('profileForm'))return;
+ el('profileForm').hidden=true;el('editProfile').setAttribute('aria-expanded','false');
+ for(const id of ['editFullName','editEmail','editPhone'])el(id).value='';
+ el('saveProfile').disabled=false;el('cancelProfile').disabled=false;el('editProfile').disabled=false;
+ el('profileStatus').textContent='';
+}
+if(el('profileForm')){
+ el('editProfile').addEventListener('click',()=>{
+  el('editFullName').value=el('profileName').textContent;el('editEmail').value=el('profileEmail').textContent;el('editPhone').value=el('profilePhone').textContent;
+  el('profileForm').hidden=false;el('editProfile').setAttribute('aria-expanded','true');el('profileStatus').textContent='';el('editFullName').focus();
+ });
+ el('cancelProfile').addEventListener('click',closeProfileEditor);
+ el('profileForm').addEventListener('submit',async event=>{
+  event.preventDefault();if(el('saveProfile').disabled)return;
+  const generation=accountGeneration;
+  for(const id of ['saveProfile','cancelProfile','editProfile'])el(id).disabled=true;
+  el('profileStatus').textContent='Saving profile…';
+  try{
+   const result=await api('profile',{fullName:el('editFullName').value,phone:el('editPhone').value});
+   if(generation!==accountGeneration)return;
+   displayProfile(result.customer);closeProfileEditor();el('profileStatus').textContent='Profile updated successfully.';el('editProfile').focus();
+  }catch(error){
+   if(generation!==accountGeneration)return;
+   if(error.status===401){accountGeneration++;clearPrivateAccount();show('login');history.replaceState(null,'','/account.html');el('message').textContent='Please log in to continue.';}
+   else el('profileStatus').textContent=error.message;
+  }finally{if(generation===accountGeneration)for(const id of ['saveProfile','cancelProfile','editProfile'])el(id).disabled=false;}
+ });
 }
 async function api(path,data){
   const response=await fetch('/api/customer/'+path,{method:data?'POST':'GET',headers:data?{'Content-Type':'application/json'}:{},credentials:'same-origin',cache:'no-store',body:data?JSON.stringify(data):undefined});
@@ -52,7 +84,7 @@ for(const button of document.querySelectorAll('[data-password-toggle]')){
   });
 }
 async function logout(){
-  accountGeneration++;clearTrips();
+  accountGeneration++;clearTrips();closeProfileEditor();
   const buttons=[el('logout'),el('navLogout')];for(const button of buttons)button.disabled=true;
   try{
     await api('logout',{});clearPrivateAccount();
@@ -89,6 +121,7 @@ function clearTrips(){
  el('tripsMore').hidden=true;el('tripsRetry').hidden=true;el('tripsBook').hidden=true;
 }
 function clearPrivateAccount(){
+ closeProfileEditor();
  clearTrips();for(const id of ['profileName','profileEmail','profilePhone','welcome'])el(id).textContent='';
  el('dashboardView').hidden=true;el('accountNavigation').hidden=true;
 }

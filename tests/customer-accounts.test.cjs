@@ -9,6 +9,58 @@ const {harness}=new Function('require','__dirname',source.slice(0,source.indexOf
 const account={fullName:'Zoë García',email:'Customer@Example.test',phone:'(201) 555-0199',password:'A comfortable test passphrase'};
 const cookie=r=>r.headers.getSetCookie().find(x=>x.includes('er_customer_session'))?.split(';')[0];
 const register=h=>h.request('/api/customer/register',account);
+const profileUpdate=(h,c,body,extra={})=>h.request('/api/customer/profile',body,{cookie:c,origin:'http://localhost:3000','sec-fetch-site':'same-origin',...extra});
+
+test('profile edits use the session owner, preserve historical bookings/payment mapping and keep the session valid',async t=>{
+ const h=await harness(t),a=await register(h),c=cookie(a),stored=[...h.testStore.shared.customers.values()][0],id=stored.id;
+ const b=await h.request('/api/customer/register',{...account,email:'other-profile@example.test',phone:'2025550188',fullName:'Other Owner'});
+ const foreign=[...h.testStore.shared.customers.values()].find(x=>x.id!==id),beforeForeign=structuredClone(foreign);
+ const mapping=await h.testStore.paymentMapping(id);assert.equal(mapping,null);
+ await h.testStore.preparePaymentMapping(id,auth.hashToken(c.split('=')[1]),Date.now());
+ const beforeMapping=await h.testStore.paymentMapping(id);
+ const booking=await h.request('/api/checkout',{pickup:'EWR',pickupPlaceId:'ChIJ7wzsxeFSwokRhvLXxTe087M',dropoff:'Manhattan',date:'2026-11-10',time:'12:00',vehicle:'suv',passengers:2,tripType:'oneway',firstName:'Original',lastName:'Snapshot',email:account.email,phone:account.phone,paymentChoice:'later'},{cookie:c});
+ assert.equal(booking.status,200);const snapshots=h.records(),owner=await h.testStore.reservationOwner(booking.body.bookingId);
+ for(const [body,expected] of [[{fullName:'  Zoë   Updated  '},{fullName:'Zoë Updated',phone:account.phone}],[{phone:'+1 (973) 555-0123'},{fullName:'Zoë Updated',phone:'+1 (973) 555-0123'}],[{fullName:'Final Owner',phone:'973-555-0190'},{fullName:'Final Owner',phone:'973-555-0190'}]]){
+  const r=await profileUpdate(h,c,body);assert.equal(r.status,200);assert.deepEqual(r.body.customer,{...expected,email:account.email});assert.match(r.headers.get('cache-control'),/no-store/);assert.equal(r.headers.get('referrer-policy'),'no-referrer');
+ }
+ assert.equal(stored.id,id);assert.equal(stored.normalized_phone,'+19735550190');assert.deepEqual(foreign,beforeForeign);
+ assert.deepEqual(await h.testStore.paymentMapping(id),beforeMapping);assert.deepEqual(h.records(),snapshots);assert.equal(await h.testStore.reservationOwner(booking.body.bookingId),owner);assert.equal(owner,id);
+ assert.equal((await h.request('/api/customer/profile',undefined,{cookie:c})).body.customer.fullName,'Final Owner');
+ assert.equal((await h.request('/api/customer/profile',undefined,{cookie:cookie(b)})).body.customer.fullName,'Other Owner');
+});
+
+test('profile forbids email/owner/provider fields, invalid input, foreign-phone collisions and CSRF',async t=>{
+ const h=await harness(t),a=await register(h),c=cookie(a);
+ const other=await h.request('/api/customer/register',{...account,email:'profile-second@example.test',phone:'2025550188'});
+ for(const body of [{email:'new@example.test'},{fullName:'Changed',customer_id:require('node:crypto').randomUUID()},{customerId:require('node:crypto').randomUUID(),phone:'9735550123'},{stripeCustomerId:'cus_forged',fullName:'Changed'},{},[],{fullName:''},{fullName:' '},{fullName:'1'},{fullName:'12345'},{fullName:'x'.repeat(121)},{fullName:'<script>'},{fullName:'Name\nInjected'},{phone:'letters'},{phone:'201+5550199'},{phone:'1111111111'},{phone:'+442071234567'},{phone:null},{phone:'202-555-0188'}]){
+  assert.equal((await profileUpdate(h,c,body)).status,400,JSON.stringify(body));
+ }
+ assert.equal((await profileUpdate(h,c,{fullName:'Changed'},{origin:'https://attacker.example.test'})).status,403);
+ assert.equal((await profileUpdate(h,c,{fullName:'Changed'},{'sec-fetch-site':'same-site'})).status,403);
+ assert.equal((await profileUpdate(h,c,{fullName:'Changed'},{'content-type':'text/plain'})).status,403);
+ assert.equal((await h.request('/api/customer/profile',undefined,{cookie:c})).body.customer.fullName,account.fullName);
+ assert.equal((await h.request('/api/customer/profile',undefined,{cookie:cookie(other)})).body.customer.phone,'2025550188');
+});
+
+test('profile update denies guests, revoked/expired/disabled sessions and storage rechecks ownership',async t=>{
+ const h=await harness(t),a=await register(h),c=cookie(a),owner=[...h.testStore.shared.customers.values()][0];
+ assert.equal((await profileUpdate(h,'',{fullName:'Guest'})).status,401);
+ const sessionHash=auth.hashToken(c.split('=')[1]);
+ assert.equal(await h.testStore.updateCustomerProfile(require('node:crypto').randomUUID(),sessionHash,{fullName:'Foreign'},Date.now()),null);
+ assert.equal(await h.testStore.updateCustomerProfile(owner.id,'0'.repeat(64),{fullName:'Foreign'},Date.now()),null);
+ owner.account_status='disabled';assert.equal((await profileUpdate(h,c,{fullName:'Disabled'})).status,401);owner.account_status='active';
+ await h.request('/api/customer/logout',{},{cookie:c});assert.equal((await profileUpdate(h,c,{fullName:'Revoked'})).status,401);
+ const login=await h.request('/api/customer/login',{email:account.email,password:account.password});h.advance(auth.SESSION_MS+1);
+ assert.equal((await profileUpdate(h,cookie(login),{fullName:'Expired'})).status,401);assert.equal(owner.full_name,account.fullName);
+});
+
+test('profile storage failures are sanitized and account update throttling is shared',async t=>{
+ const h=await harness(t),a=await register(h),c=cookie(a),second=await harness(t,{},'[]',h.testStore);
+ for(let i=0;i<20;i++)assert.equal((await profileUpdate(i%2?h:second,c,{fullName:'Updated Owner'})).status,200);
+ assert.equal((await profileUpdate(second,c,{fullName:'Blocked Owner'})).status,429);
+ h.advance(16*60000);assert.equal((await profileUpdate(h,c,{fullName:'Allowed Owner'})).status,200);
+ h.storageFailures.write=true;const result=await profileUpdate(h,c,{fullName:'Private Name'});assert.equal(result.status,503);assert.doesNotMatch(JSON.stringify(result.body)+h.state.logs.join(''),/Private Name|private-storage-marker/);
+});
 
 test('customer registration stores only salted scrypt and session hashes; profile is minimal',async t=>{
  const h=await harness(t),r=await register(h);assert.equal(r.status,201);assert.deepEqual(Object.keys(r.body.customer).sort(),['email','fullName','phone']);
@@ -102,6 +154,16 @@ test('PostgreSQL customer integration: atomic registration, unique identities, p
  const c={...stored,id:require('node:crypto').randomUUID(),normalized_email:'rollback@example.test',normalized_phone:'+12025550199'};
  await assert.rejects(store.registerCustomer(c,{hash:'invalid',created:new Date(),expires:new Date(Date.now()+1000)}));
  assert.equal((await pool.query('SELECT 1 FROM er_customers WHERE id=$1',[c.id])).rowCount,0);
+ const mapping=await store.preparePaymentMapping(stored.id,auth.hashToken(raw),Date.now());
+ const before=(await pool.query('SELECT * FROM er_customers WHERE id=$1',[stored.id])).rows[0];
+ const updated=await profileUpdate(h2,cookie(winner),{fullName:'Updated PostgreSQL Owner',phone:'973-555-0123'});assert.equal(updated.status,200);
+ const after=(await pool.query('SELECT * FROM er_customers WHERE id=$1',[stored.id])).rows[0];
+ for(const field of ['id','normalized_email','display_email','password_hash','account_status'])assert.equal(after[field],before[field]);
+ assert.equal(after.normalized_phone,'+19735550123');assert.equal(after.full_name,'Updated PostgreSQL Owner');assert.deepEqual(await second.paymentMapping(stored.id),mapping);
+ assert.equal(await second.updateCustomerProfile(stored.id,'0'.repeat(64),{fullName:'Forged'},Date.now()),null);
+ const conflict=await h.request('/api/customer/register',{...account,email:'pg-profile-conflict@example.test',phone:'2025550188'});assert.equal(conflict.status,201);
+ assert.equal((await profileUpdate(h2,cookie(winner),{phone:'202-555-0188',fullName:'Must Roll Back'})).status,400);
+ assert.equal((await pool.query('SELECT full_name FROM er_customers WHERE id=$1',[stored.id])).rows[0].full_name,'Updated PostgreSQL Owner');
  await h.request('/api/customer/logout',{},{cookie:cookie(winner)});assert.equal((await h2.request('/api/customer/profile',undefined,{cookie:cookie(winner)})).status,401);
  const login=await h.request('/api/customer/login',{email:account.email,password:account.password});const key=auth.hashToken(cookie(login).split('=')[1]);
  await pool.query("UPDATE er_customer_sessions SET created_at=now()-interval '32 days',expires_at=now()-interval '1 day' WHERE token_hash=$1",[key]);h2.advance(auth.SESSION_MS+1);assert.equal((await h2.request('/api/customer/profile',undefined,{cookie:cookie(login)})).status,401);
@@ -110,7 +172,7 @@ test('PostgreSQL customer integration: atomic registration, unique identities, p
 
 function accountUiHarness(){
  const vm=require('node:vm'),elements={},events={},toggles=[];
- for(const id of ['loginView','registerView','dashboardView','accountNavigation','accountShell','message','welcome','profileName','profileEmail','profilePhone','logout','navLogout','loginEmail','loginPassword','fullName','registerEmail','phone','registerPassword','loginForm','registerForm'])elements[id]={value:'',textContent:'',hidden:true,disabled:false,type:id.endsWith('Password')?'password':'text',classList:{toggle(){}},addEventListener(event,fn){events[id+':'+event]=fn;}};
+ for(const id of ['loginView','registerView','dashboardView','accountNavigation','accountShell','message','welcome','profileName','profileEmail','profilePhone','logout','navLogout','loginEmail','loginPassword','fullName','registerEmail','phone','registerPassword','loginForm','registerForm','profileForm','editProfile','editFullName','editEmail','editPhone','saveProfile','cancelProfile','profileStatus'])elements[id]={value:'',textContent:'',hidden:true,disabled:false,type:id.endsWith('Password')?'password':'text',classList:{toggle(){}},focus(){},setAttribute(){},addEventListener(event,fn){events[id+':'+event]=fn;}};
  for(const name of ['login','register']){
   const input=elements[name+'Password'],button={dataset:{passwordToggle:name+'Password'},attributes:{},addEventListener(event,fn){events[name+'Toggle:'+event]=fn;},setAttribute(name,value){this.attributes[name]=value;}};
   toggles.push(button);const submit={disabled:false};
@@ -122,6 +184,30 @@ function accountUiHarness(){
  vm.createContext(context);vm.runInContext(fs.readFileSync(path.join(__dirname,'../public/account.js'),'utf8'),context);
  return {context,elements,events,toggles,state};
 }
+
+test('profile UI edits only name/phone, renders authoritative response and stays logged in',async()=>{
+ const h=accountUiHarness();h.context.dashboard({fullName:'Original Owner',email:'readonly@example.test',phone:'2015550199'});
+ h.events['editProfile:click']();assert.equal(h.elements.profileForm.hidden,false);assert.equal(h.elements.editEmail.value,'readonly@example.test');
+ h.elements.editFullName.value='Updated Owner';h.elements.editPhone.value='9735550123';let done;
+ h.context.fetch=async(url,options)=>{h.state.requests.push({url,options});return await new Promise(resolve=>{done=resolve;});};
+ const request=h.events['profileForm:submit']({preventDefault(){}});await h.events['profileForm:submit']({preventDefault(){}});assert.equal(h.state.requests.length,1);
+ assert.deepEqual(JSON.parse(h.state.requests[0].options.body),{fullName:'Updated Owner',phone:'9735550123'});
+ done({ok:true,json:async()=>({customer:{fullName:'Updated Owner',email:'readonly@example.test',phone:'9735550123'}})});await request;
+ assert.equal(h.elements.profileName.textContent,'Updated Owner');assert.equal(h.elements.profilePhone.textContent,'9735550123');assert.equal(h.elements.profileEmail.textContent,'readonly@example.test');
+ assert.equal(h.elements.dashboardView.hidden,false);assert.match(h.elements.profileStatus.textContent,/updated successfully/);assert.equal(h.elements.profileForm.hidden,true);
+ assert.match(fs.readFileSync(path.join(__dirname,'../public/account.html'),'utf8'),/id="editEmail"[^>]*readonly/);
+});
+
+test('profile UI handles validation/session errors and ignores stale updates after session revalidation',async()=>{
+ const h=accountUiHarness();h.context.dashboard({fullName:'Owner',email:'owner@example.test',phone:'2015550199'});h.events['editProfile:click']();
+ h.context.fetch=async()=>({ok:false,status:400,json:async()=>({error:'Enter a valid U.S. phone number.'})});
+ await h.events['profileForm:submit']({preventDefault(){}});assert.match(h.elements.profileStatus.textContent,/valid U.S./);assert.equal(h.elements.saveProfile.disabled,false);assert.equal(h.elements.dashboardView.hidden,false);
+ let finish;h.context.fetch=async()=>await new Promise(resolve=>{finish=resolve;});const old=h.events['profileForm:submit']({preventDefault(){}});
+ require('node:vm').runInContext('accountGeneration++;clearPrivateAccount();dashboard({fullName:"New Session",email:"new@example.test",phone:"9735550123"})',h.context);
+ finish({ok:false,status:401,json:async()=>({error:'Please log in'})});await old;assert.equal(h.elements.profileName.textContent,'New Session');assert.equal(h.elements.dashboardView.hidden,false);
+ h.events['editProfile:click']();h.context.fetch=async()=>({ok:false,status:401,json:async()=>({error:'Please log in'})});await h.events['profileForm:submit']({preventDefault(){}});
+ assert.equal(h.elements.dashboardView.hidden,true);assert.equal(h.elements.loginView.hidden,false);assert.equal(h.elements.editPhone.value,'');
+});
 test('account UI: password visibility is accessible, reversible and never copies the password',()=>{
  const h=accountUiHarness();h.elements.loginPassword.value='synthetic private passphrase';
  h.events['loginToggle:click']();assert.equal(h.elements.loginPassword.type,'text');assert.equal(h.toggles[0].attributes['aria-pressed'],'true');assert.equal(h.toggles[0].textContent,'Hide');

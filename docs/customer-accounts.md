@@ -70,3 +70,17 @@ approved EWR pickup, Manhattan destination, one-way trip and SUV again, and read
 the current fixed-offer price rather than the source fare.
 
 Browser Back/bfcache restoration re-fetches an unfinished template through the authenticated endpoint. Only the source UUID is retained in page memory while loading. Stale responses cannot overwrite a restored page; success or terminal failure clears the pending source, and a failed restore leaves manual booking usable. No reservation is created by restoration.
+
+### Edit Profile
+
+The account dashboard allows name and U.S. phone changes through authenticated
+`POST /api/customer/profile`. Only `fullName` and `phone` are accepted; email remains
+read-only. Names are trimmed, whitespace is collapsed and length is limited to
+2–120 characters, with letters required and control/HTML delimiter characters rejected.
+Phones use the existing +1 normalized identity and formatted display convention.
+The existing unique phone constraint remains enforced with a generic conflict error.
+Origin/Fetch Metadata, JSON, IP and shared account limits protect mutations. Storage
+locks the authenticated customer and rechecks the current active session before updating.
+No migration is needed. Account UUID, email, password, sessions, reservation snapshots,
+reservation ownership and Stripe mappings are preserved. Edit data stays in page memory
+and is cleared on logout/pagehide; stale responses cannot overwrite a newer session.
