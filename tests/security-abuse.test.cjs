@@ -25,7 +25,7 @@ async function harness(t, env = {}, saved = "[]", injectedStore) {
   const testPricing = JSON.parse(JSON.stringify(pricing));
   const state = { creates: [], sessions: new Map(), googleCalls: 0, routes: [], timeout: false,
     googleError: false, fail: null, retrieveError: false, createDelay: 0, timeoutMs: null };
-  state.logs=[];state.emailMessages=[];state.emailFail=false;
+  state.logs=[];state.emailMessages=[];state.emailFail=false;state.bookingMessages=[];state.bookingCalls=[];state.bookingKeys=new Set();
   const storageFailures = {};
   const {memoryStore} = require("./helpers/memory-storage.cjs");
   const testStore = injectedStore || memoryStore(JSON.parse(saved), undefined, storageFailures);
@@ -121,7 +121,8 @@ async function harness(t, env = {}, saved = "[]", injectedStore) {
       if (name === "dotenv") return {config() {}};
       if (name === "express") return express;
       if (name === "stripe") return MockStripe;
-      if (name === "./services/email") return {createEmailProvider:options=>{if(env.TEST_VALIDATE_EMAIL_CONFIG)require('../services/email').createEmailProvider(options);if(env.TEST_RECOVERY_CONFIG_FAILURE)throw new Error('synthetic provider configuration');return {enabled:env.CUSTOMER_EMAIL_RECOVERY_ENABLED==='true',sendResetLink:async message=>{if(state.emailFail)throw new Error('synthetic email secret marker');state.emailMessages.push({...message});}};}};
+      if (name === "./services/email") return {createEmailProvider:options=>{if(env.TEST_VALIDATE_EMAIL_CONFIG)require('../services/email').createEmailProvider(options);if(env.TEST_RECOVERY_CONFIG_FAILURE)throw new Error('synthetic provider configuration');return {enabled:options.enabled,sendBookingEmail:async message=>{if(state.bookingOnCall)await state.bookingOnCall();state.bookingCalls.push({...message});if(state.emailFail)throw new Error('synthetic email secret marker');if(!state.bookingKeys.has(message.idempotencyKey)){state.bookingKeys.add(message.idempotencyKey);state.bookingMessages.push({...message});}if(state.bookingLoseResponse){state.bookingLoseResponse=false;throw new Error('synthetic lost email response');}},sendResetLink:async message=>{if(state.emailFail)throw new Error('synthetic email secret marker');state.emailMessages.push({...message});}};}};
+      if (name === "./services/booking-emails") return require("../services/booking-emails");
       if (name === "./storage/customer-trips") return require("../storage/customer-trips");
       if (name === "./auth/customers") return require("../auth/customers");
       if (name === "./auth/recovery") return require("../auth/recovery");
@@ -134,6 +135,9 @@ async function harness(t, env = {}, saved = "[]", injectedStore) {
   };
   vm.createContext(context);
   vm.runInContext(source, context);
+  // Match production startup: do not expose workers/direct helpers during migrations.
+  // Failed-startup fixtures still need an HTTP surface to assert fail-closed errors.
+  await vm.runInContext('storageReady.catch(()=>{})',context);
   const server = http.createServer(app);
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
   t.after(() => new Promise(resolve => {server.closeAllConnections(); server.close(resolve);}));

@@ -13,11 +13,12 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Diagnostic fields come from closed allowlists, never exception/request payloads.
-const diagnosticOperations=new Set(['request','quote','checkout','address','webhook','reservation','admin']);
+const diagnosticOperations=new Set(['request','quote','checkout','address','webhook','reservation','admin','booking_email']);
 const diagnosticCategories=new Set(['request_rejected','validation_error','unexpected_error','provider_error','storage_unavailable','invalid_signature','configuration_unavailable','response_interrupted']);
-const diagnosticProviders=new Set(['google','stripe','postgresql']);
+const diagnosticProviders=new Set(['google','stripe','postgresql','resend']);
 function requestOperation(req) {
   const route=req.route?.path;
+  if(route==='/internal/booking-emails')return 'booking_email';
   if(route==='/api/quote')return 'quote';
   if(route==='/api/checkout')return 'checkout';
   if(route==='/api/address-suggestions')return 'address';
@@ -271,12 +272,27 @@ const SITE_URL =
 let reservationStore;
 try { reservationStore = createStore(process.env); }
 catch (_) { console.error("Reservation storage configuration unavailable."); process.exitCode = 1; }
-let recoveryEmailProvider,recoveryConfigurationFailed=false;
-try { recoveryEmailProvider=require('./services/email').createEmailProvider({enabled:process.env.CUSTOMER_EMAIL_RECOVERY_ENABLED==='true',apiKey:process.env.CUSTOMER_EMAIL_RECOVERY_ENABLED==='true'?process.env.RESEND_API_KEY:undefined,from:process.env.CUSTOMER_RECOVERY_FROM,siteUrl:SITE_URL,production:productionHttps}); }
-catch (_) { recoveryConfigurationFailed=true; console.error('Customer recovery configuration unavailable.'); }
+const recoveryEmailsEnabled=process.env.CUSTOMER_EMAIL_RECOVERY_ENABLED==='true';
+const bookingEmailsEnabled=process.env.BOOKING_EMAILS_ENABLED===undefined?recoveryEmailsEnabled:process.env.BOOKING_EMAILS_ENABLED==='true';
+let recoveryEmailProvider,bookingEmailProvider,recoveryConfigurationFailed=false;
+try {
+ const provider=require('./services/email').createEmailProvider({enabled:recoveryEmailsEnabled||bookingEmailsEnabled,apiKey:recoveryEmailsEnabled||bookingEmailsEnabled?process.env.RESEND_API_KEY:undefined,from:process.env.CUSTOMER_RECOVERY_FROM,siteUrl:SITE_URL,production:productionHttps});
+ recoveryEmailProvider={...provider,enabled:recoveryEmailsEnabled&&provider.enabled};
+ bookingEmailProvider={...provider,enabled:bookingEmailsEnabled&&provider.enabled};
+}catch (_) {
+ recoveryConfigurationFailed=recoveryEmailsEnabled;
+ if(recoveryEmailsEnabled)console.error('Customer recovery configuration unavailable.');
+ else logDiagnostic({referenceId:crypto.randomUUID(),route:{path:'/internal/booking-emails'}},503,'configuration_unavailable','resend');
+}
 const storageReady = reservationStore && !recoveryConfigurationFailed ? reservationStore.migrate() : Promise.reject(new StorageError());
 // Attach immediately so an unavailable database never creates an unhandled rejection.
 storageReady.catch(() => { console.error("Reservation storage initialization unavailable."); });
+const reportBookingEmailFailure=()=>logDiagnostic({referenceId:crypto.randomUUID(),route:{path:'/internal/booking-emails'}},503,'provider_error','resend');
+const bookingEmailService=require('./services/booking-emails').createBookingEmails({store:reservationStore,provider:bookingEmailProvider,siteUrl:SITE_URL,
+ contact:{email:process.env.COMPANY_EMAIL || 'bookings@erlimousineservice.com',phone:process.env.COMPANY_PHONE || '(973) 555-0100'},
+ now:()=>Date.now(),reportFailure:reportBookingEmailFailure});
+async function runBookingEmails(){await storageReady;return bookingEmailService.run();}
+const bookingEmailTimer=setInterval(()=>{void runBookingEmails().catch(reportBookingEmailFailure);},60000);bookingEmailTimer.unref();
 const readBookings = () => reservationStore.list();
 const route = handler => async (req, res, next) => {
   try { await storageReady; await handler(req,res,next); }
@@ -1620,13 +1636,14 @@ app.post(
           Object.assign(booking.checkoutAttempt,{state:'session_identified',evidence:'payment_pending'});
         }
       }
-      });
+      },{paymentEmail:true});
       if (!changed) return res.status(400).json({error:`Webhook request rejected. Reference: ${req.referenceId}`});
     }
 
     res.json({
       received: true
     });
+    void runBookingEmails().catch(reportBookingEmailFailure);
   })
 );
 
@@ -2407,7 +2424,7 @@ app.post("/api/checkout", async (req, res) => {
     try {
       result=await storageReady.then(() => reservationStore.withActionLock(fingerprint,
         () => createCheckout(req.body,clientKey(req),fingerprint,req,res)));
-    } finally {checkoutActions.delete(actionKey);}
+    } finally {checkoutActions.delete(actionKey);void runBookingEmails().catch(reportBookingEmailFailure);}
     res.json({url: result.url, bookingId: result.bookingId});
   } catch (error) {
     if (error.status === 429) return tooManyRequests(res, 30 * 60);
@@ -2593,6 +2610,7 @@ app.use((error,req,res,next)=> {
 });
 
 storageReady.then(() => {
+void runBookingEmails().catch(reportBookingEmailFailure);
 app.listen(
   PORT,
   () => {
