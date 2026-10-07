@@ -147,6 +147,11 @@ const contentSecurityPolicy = [
   "frame-src 'none'"
 ].join("; ");
 app.disable("x-powered-by");
+// Indexing directives supplement authentication; private HTML stays crawlable.
+app.use(['/account', '/account.html', '/admin.html', '/payment-methods.html', '/success.html', '/reset-password.html', '/api', '/internal'], (req, res, next) => {
+  res.set('X-Robots-Tag', 'noindex, nofollow');
+  next();
+});
 app.use((req, res, next) => {
   res.set({
     "Content-Security-Policy": contentSecurityPolicy,
@@ -1712,6 +1717,10 @@ app.use(['/payment-methods.html','/payment-methods.js'],(req,res,next)=>{
 });
 app.use(['/reset-password.html','/reset-password.js'],(req,res,next)=>{res.set({'Cache-Control':'no-store','Referrer-Policy':'no-referrer','Content-Security-Policy':"default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'"});next();});
 
+require('./services/public-seo').installPublicSeo(app, {
+  publicDirectory: path.join(__dirname, 'public'), contentSecurityPolicy,
+  companyPhone: process.env.COMPANY_PHONE
+});
 app.use(
   express.static(
     path.join(

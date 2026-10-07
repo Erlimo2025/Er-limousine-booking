@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /internal/
+
+# Private HTML pages remain crawlable so their noindex directives can be read.
+# Authentication, not robots.txt, protects private reservation/account data.
+Sitemap: https://erlimousineservice.com/sitemap.xml
