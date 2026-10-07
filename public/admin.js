@@ -233,7 +233,12 @@ bookingsEl.addEventListener("click", async (event) => {
 
 loadBtn.addEventListener("click", loginAndLoad);
 filters.addEventListener('submit',event=>{event.preventDefault();loadBookings();});
-document.getElementById('clearFilters').addEventListener('click',()=>{filters.reset();loadBookings();});
+document.getElementById('clearFilters').addEventListener('click',()=>{
+  filters.reset();document.getElementById('reservationSearch').value='';
+  // Set dispatch defaults explicitly, even if the browser retains select state.
+  for(const [key,value]of Object.entries({status:'active',payment:'all',timing:'upcoming',airport:'all',vehicle:'all'}))document.getElementById(filterIds[key]).value=value;
+  loadBookings(false);
+});
 moreBtn.addEventListener('click',()=>{if(!moreBtn.disabled&&nextCursor)loadBookings(true);});
 logoutBtn.addEventListener("click", logout);
 window.addEventListener("pagehide", () => {

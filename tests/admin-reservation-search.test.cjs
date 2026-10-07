@@ -38,6 +38,11 @@ function ui(){
  const elements={},events={},requests=[];
  const ids=['token','loadBtn','bookings','notice','adminLoginField','logoutBtn','reservationFilters','moreBookings','applyFilters','clearFilters','activeFilters','reservationSearch','filterStatus','filterPayment','filterTiming','filterAirport','filterVehicle'];
  for(const id of ids)elements[id]={value:'',innerHTML:'',textContent:'',disabled:false,hidden:true,options:[{textContent:id}],selectedIndex:0,classList:{toggle(){}},addEventListener:(event,fn)=>events[id+':'+event]=fn,insertAdjacentHTML(_,html){this.innerHTML+=html;}};
+ const html=fs.readFileSync(path.join(__dirname,'../public/admin.html'),'utf8');
+ for(const select of html.matchAll(/<select id="([^"]+)">([\s\S]*?)<\/select>/g)){
+  const element=elements[select[1]];element.options=[...select[2].matchAll(/<option value="([^"]+)">([^<]+)<\/option>/g)].map(option=>({value:option[1],textContent:option[2]}));
+  let value=element.options[0].value;Object.defineProperty(element,'value',{get:()=>value,set:next=>{value=next;element.selectedIndex=element.options.findIndex(option=>option.value===next);}});
+ }
  elements.reservationFilters.reset=()=>{elements.reservationSearch.value='';for(const key of ['Status','Payment','Timing','Airport','Vehicle'])elements['filter'+key].value=key==='Status'?'active':key==='Timing'?'upcoming':'all';};elements.reservationFilters.reset();
  const state={data:{bookings:[],nextCursor:null}};
  const context={document:{getElementById:id=>elements[id]},window:{addEventListener:(event,fn)=>events['window:'+event]=fn},URLSearchParams,fetch:async(url,options)=>{requests.push({url,options});return state.pending&&url.startsWith('/api/bookings/search')?await state.pending:{ok:true,json:async()=>url==='/api/admin/session'?{authenticated:true}:state.data};}};
@@ -51,6 +56,22 @@ test('dispatch UI defaults upcoming, combines filters, paginates, clears filters
  h.events['clearFilters:click']();await new Promise(resolve=>setImmediate(resolve));assert.match(h.requests.at(-1).url,/timing=upcoming/);assert.match(h.requests.at(-1).url,/payment=all/);assert.equal(h.elements.reservationSearch.value,'');
  let resolve;h.state.pending=new Promise(done=>resolve=done);const pending=h.context.loadBookings();h.events['window:pagehide']();resolve({ok:true,json:async()=>({bookings:[adminDto(fixture())],nextCursor:'private'})});await pending;assert.equal(h.elements.bookings.innerHTML,'');assert.equal(h.elements.moreBookings.hidden,true);
  const evil=fixture();evil.customer.firstName='<img onerror=alert(1)>';assert.ok(h.context.renderBooking(adminDto(evil)).includes('&lt;img'));assert.ok(!h.context.renderBooking(adminDto(evil)).includes('<img'));
+});
+
+test('dispatch Clear Filters explicitly resets every control, summary and pagination despite retained select state',async()=>{
+ const h=ui();await new Promise(resolve=>setImmediate(resolve));
+ h.elements.reservationSearch.value='Alice EWR';h.elements.filterPayment.value='unpaid';h.elements.filterAirport.value='ewr';h.elements.filterTiming.value='tomorrow';h.elements.filterStatus.value='cancelled';h.elements.filterVehicle.value='suv';
+ h.state.data={bookings:[adminDto(fixture())],nextCursor:'filtered-page-cursor'};await h.context.loadBookings();await h.context.loadBookings(true);
+ const filtered=new URL(h.requests.at(-1).url,'http://localhost').searchParams;assert.equal(filtered.get('payment'),'unpaid');assert.equal(filtered.get('airport'),'ewr');assert.equal(filtered.get('search'),'Alice EWR');assert.equal(filtered.get('cursor'),'filtered-page-cursor');
+ // Reproduce a browser reset that restores text/timing/status but retains two selects.
+ h.elements.reservationFilters.reset=()=>{h.elements.reservationSearch.value='';h.elements.filterTiming.value='upcoming';h.elements.filterStatus.value='active';h.elements.filterVehicle.value='all';};
+ let resolve;h.state.pending=new Promise(done=>{resolve=done;});const before=h.requests.length;h.events['clearFilters:click']();
+ for(const [id,value]of Object.entries({reservationSearch:'',filterTiming:'upcoming',filterStatus:'active',filterPayment:'all',filterAirport:'all',filterVehicle:'all'}))assert.equal(h.elements[id].value,value,id);
+ assert.equal(h.elements.activeFilters.textContent,'Filters: Active / confirmed · All payment states · Upcoming · All airports / routes · All vehicles');
+ assert.equal(h.elements.bookings.innerHTML,'');assert.equal(h.elements.moreBookings.hidden,true);assert.equal(h.requests.length,before+1);
+ const defaults=new URL(h.requests.at(-1).url,'http://localhost').searchParams;
+ assert.deepEqual(Object.fromEntries(defaults),{search:'',limit:'25',status:'active',payment:'all',timing:'upcoming',airport:'all',vehicle:'all'});
+ resolve({ok:true,json:async()=>({bookings:[adminDto(fixture())],nextCursor:null})});await new Promise(done=>setImmediate(done));assert.equal(h.elements.moreBookings.hidden,true);assert.equal((h.elements.bookings.innerHTML.match(/booking-item/g)||[]).length,1);
 });
 
 test('PostgreSQL dispatch search: all fields, combined filters, NY dates/DST, legacy data, paging and no mutation',{skip:!process.env.ER_TEST_DATABASE_URL},async t=>{
