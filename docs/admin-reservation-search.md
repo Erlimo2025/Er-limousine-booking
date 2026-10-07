@@ -34,3 +34,18 @@ All searches are read-only. Existing reservation updates, reconciliation actions
 pricing, payment/webhook authority and ownership protections are unchanged. The
 legacy `/api/bookings` endpoint remains compatible; the dispatch page uses the
 bounded endpoint exclusively.
+
+Reservation cards prioritize stored New York pickup date/time, authoritative
+reservation/payment/refund badges and airport/terminal labels. Maintained EWR IDs
+take precedence over address text. JFK/LGA and legacy airport labels use conservative
+stored airport-name/terminal text for display only; no pricing identity is inferred.
+The admin-only projection includes customer notes (up to 2,000 characters) and airline
+if already stored (up to 120 characters); the current booking form does not collect
+a separate airline field. No airline is guessed from a flight number.
+
+All contact/address/flight/notes text is escaped. Telephone targets contain only
+validated phone digits; email targets use a fixed mailto scheme and encoded address.
+Invalid contact values remain plain text. Long notes and the existing dispatch editor
+use native expandable details, with keyboard access and 44px controls. Repeated
+terminal prefixes are collapsed only in displayed addresses. Cancelled cards have
+a clear “DO NOT DISPATCH” warning. No reservation, fare, identity or action logic changes.

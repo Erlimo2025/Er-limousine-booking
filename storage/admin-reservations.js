@@ -46,8 +46,20 @@ function searchSql(q){
  const limit=bind(q.limit+1);
  return {text:`WITH scheduled AS (SELECT id,record,COALESCE(scheduled_start_at,${pickupStart}) AS start,COALESCE(scheduled_end_at,${legacyEnd}) AS finish FROM er_reservations) SELECT id,record,start FROM scheduled ${where.length?'WHERE '+where.join(' AND '):''} ORDER BY start ASC,id ASC LIMIT ${limit}`,values};
 }
+function dispatchAirport(trip,side){
+ const id=trip[side+'PlaceId'];
+ if(typeof id==='string' && Object.hasOwn(ewr,id))return {code:'EWR',terminal:ewr[id].kind==='terminal'?ewr[id].label:null};
+ // Legacy/JFK/LGA display fallback only; never booking or pricing authority.
+ const text=typeof trip[side]==='string'?trip[side]:'';
+ const airports=[['EWR',/\bNewark(?: Liberty)?(?: International)? Airport\b/i],['JFK',/\b(?:John F\.? Kennedy(?: International)?|JFK(?: International)?) Airport\b/i],['LGA',/\b(?:LaGuardia|LGA) Airport\b/i]];
+ const match=airports.find(([,pattern])=>pattern.test(text));if(!match)return null;
+ const terminal=/\bTerminal\s+([ABC]|[1-9][0-9]?)(?=\s*(?:[,.)]|$)|\s+(?:at|Newark|John|JFK|LaGuardia|LGA)\b)/i.exec(text);
+ return {code:match[0],terminal:terminal?'Terminal '+terminal[1].toUpperCase():null};
+}
 function adminDto(r){
- return {id:r.id,customer:{firstName:r.customer.firstName,lastName:r.customer.lastName,email:r.customer.email,phone:r.customer.phone},trip:{...Object.fromEntries(['pickup','dropoff','date','time','returnDate','returnTime','hours','tripType','vehicle','passengers','flightNumber'].filter(k=>r.trip[k]!==undefined).map(k=>[k,r.trip[k]]))},quote:{total:r.quote.total,currency:r.quote.currency,vehicle:r.trip.vehicle==='suv'?'Luxury SUV':r.quote.vehicle},status:r.status,paymentStatus:r.paymentStatus,paymentReviewRequired:r.paymentReviewRequired===true,paymentVerificationPending:paymentVerificationPending(r),...(r.refundStatus?{refundStatus:r.refundStatus}:{}),dispatch:{...r.dispatch},...(r.checkoutAttempt?{checkoutAttempt:{state:r.checkoutAttempt.state,quote:{promotion:{code:r.checkoutAttempt.quote?.promotion?.code}}}}:{})};
+ const trip={...Object.fromEntries(['pickup','dropoff','date','time','returnDate','returnTime','hours','tripType','vehicle','passengers','flightNumber'].filter(k=>r.trip[k]!==undefined).map(k=>[k,r.trip[k]])),timeZone:'America/New_York',pickupAirport:dispatchAirport(r.trip,'pickup'),dropoffAirport:dispatchAirport(r.trip,'dropoff')};
+ for(const [field,max]of [['notes',2000],['airline',120]])if(typeof r.trip[field]==='string' && r.trip[field].trim())trip[field]=r.trip[field].slice(0,max);
+ return {id:r.id,customer:{firstName:r.customer.firstName,lastName:r.customer.lastName,email:r.customer.email,phone:r.customer.phone},trip,quote:{total:r.quote.total,currency:r.quote.currency,vehicle:r.trip.vehicle==='suv'?'Luxury SUV':r.quote.vehicle},status:r.status,paymentStatus:r.paymentStatus,paymentReviewRequired:r.paymentReviewRequired===true,paymentVerificationPending:paymentVerificationPending(r),...(r.refundStatus?{refundStatus:r.refundStatus}:{}),dispatch:{...r.dispatch},...(r.checkoutAttempt?{checkoutAttempt:{state:r.checkoutAttempt.state,quote:{promotion:{code:r.checkoutAttempt.quote?.promotion?.code}}}}:{})};
 }
 function page(rows,q){const subset=rows.slice(0,q.limit),last=subset.at(-1);return {bookings:subset.map(x=>adminDto(x.record)),nextCursor:rows.length>q.limit?Buffer.from(JSON.stringify({hash:q.hash,at:q.at,start:new Date(last.start).toISOString(),id:last.id})).toString('base64url'):null};}
 function adminReservationStorage(pool,transaction,validate){return {searchAdminReservations:q=>transaction(async client=>{

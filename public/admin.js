@@ -147,43 +147,64 @@ async function logout() {
 function renderBooking(b) {
   const total = Number(b.quote && b.quote.total || 0).toFixed(2);
   const d = b.dispatch || {};
+  const trip=b.trip;
+  const location=value=>String(value || '').replace(/\b(Terminal\s+([ABC]|[1-9][0-9]?))(?:\s*,\s*Terminal\s+\2(?=\s*(?:,|$)))+/gi,'$1');
+  const date=value=>/^\d{4}-\d{2}-\d{2}$/.test(value || '')?new Intl.DateTimeFormat('en-US',{weekday:'short',month:'short',day:'numeric',year:'numeric',timeZone:'UTC'}).format(new Date(value+'T12:00:00Z')):'Date unavailable';
+  const time=value=>{const parts=/^([01]\d|2[0-3]):([0-5]\d)$/.exec(value || '');return parts?`${Number(parts[1])%12 || 12}:${parts[2]} ${Number(parts[1])>=12?'PM':'AM'}`:'Time unavailable';};
+  const badge=(text,tone)=>`<span class="badge dispatch-badge ${tone}">${esc(text)}</span>`;
+  const statusLabels={awaiting_payment:'Awaiting payment',confirmed:'Confirmed',assigned:'Assigned',driver_en_route:'Driver en route',passenger_on_board:'Passenger on board',completed:'Completed',cancelled:'Cancelled'};
+  const cancelled=b.status==='cancelled',completed=b.status==='completed';
+  const review=b.paymentReviewRequired===true || b.checkoutAttempt?.state==='review_required';
+  const processing=b.paymentVerificationPending===true || b.checkoutAttempt?.state==='submitted_unknown';
+  const paid=b.paymentStatus==='paid';
+  const paymentLabel=paid?'PAID':review?'PAYMENT REVIEW':processing?'PAYMENT PROCESSING':b.paymentStatus==='unpaid'?'UNPAID':b.paymentStatus==='failed'?'PAYMENT FAILED':'PAYMENT STATUS UNAVAILABLE';
+  const refundLabels={processing:'REFUND PROCESSING',confirmed:'REFUND CONFIRMED',review_required:'REFUND REVIEW',failed:'REFUND FAILED · REVIEW'};
+  const airports=[['Pickup',trip.pickupAirport],['Drop-off',trip.dropoffAirport]].filter(([,a])=>a && ['EWR','JFK','LGA'].includes(a.code)).map(([side,a])=>`<span class="dispatch-airport"><small>${side}</small> ${esc(a.code)}${/^Terminal (?:[ABC]|[1-9][0-9]?)$/.test(a.terminal || '')?' • '+esc(a.terminal.toUpperCase()):''}</span>`).join('');
+  const phone=String(b.customer.phone || '').trim(),digits=phone.replace(/\D/g,''),phoneSafe=/^\+?[0-9(). -]+$/.test(phone) && digits.length>=7 && digits.length<=15;
+  const phoneTarget=phoneSafe?'tel:'+(phone.startsWith('+')?'+':digits.length===10?'+1':'')+digits:null;
+  const email=String(b.customer.email || '').trim(),emailSafe=email.length<=254 && /^[^\s<>@\x00-\x1f\x7f]+@[^\s<>@\x00-\x1f\x7f]+\.[^\s<>@\x00-\x1f\x7f]+$/.test(email);
+  const contact=(value,href,cls)=>href?`<a class="${cls}" href="${esc(href)}">${esc(value)}</a>`:`<span class="${cls}">${esc(value)}</span>`;
+  const tripTypes={oneway:'One way',airport:'Airport transfer',roundtrip:'Round trip',hourly:'Hourly'};
+  const notes=typeof trip.notes==='string'?trip.notes:'';
   return `
-    <article class="booking-item" data-id="${esc(b.id)}">
-      <div class="booking-top">
-        <div>
-          <strong>${esc(b.customer.firstName)} ${esc(b.customer.lastName)}</strong>
-          <div style="color:#b8b4ab">${esc(b.customer.phone)} • ${esc(b.customer.email)}</div>
-        </div>
-        <div>
-          <span class="badge">${esc(b.status)}</span>
-          <span class="badge">${esc(b.paymentStatus)}</span>
-          ${b.paymentVerificationPending?'<span class="badge">Payment verification in progress</span>':''}
-          ${b.refundStatus?`<span class="badge">Refund: ${esc(b.refundStatus)}</span>`:''}
-          ${b.paymentReviewRequired ? '<span class="badge">Payment review required</span>' : ''}
+    <article class="booking-item dispatch-card${cancelled?' dispatch-card-cancelled':completed?' dispatch-card-completed':''}" data-id="${esc(b.id)}">
+      <div class="dispatch-card-heading">
+        <div class="dispatch-pickup-time"><span class="dispatch-label">PICKUP · NEW YORK TIME</span><time datetime="${esc(trip.date)}">${esc(date(trip.date))}</time><strong><time datetime="${esc(trip.time)}">${esc(time(trip.time))}</time></strong></div>
+        <div class="dispatch-statuses" aria-label="Reservation and payment status">
+          ${badge(statusLabels[b.status] || 'Status unavailable',cancelled?'badge-cancelled':completed?'badge-muted':'badge-reservation')}
+          ${badge(paymentLabel,paid?'badge-paid':review || b.paymentStatus==='failed'?'badge-review':processing?'badge-processing':'badge-unpaid')}
+          ${paid && review?badge('PAYMENT REVIEW','badge-review'):''}
+          ${refundLabels[b.refundStatus]?badge(refundLabels[b.refundStatus],b.refundStatus==='confirmed'?'badge-paid':b.refundStatus==='processing'?'badge-processing':'badge-review'):''}
         </div>
       </div>
-
-      <p><strong>${esc(b.trip.date)} ${esc(b.trip.time)}</strong> — ${esc(b.quote.vehicle)} — $${total}</p>
-      <p>${esc(b.trip.pickup)} → ${esc(b.trip.dropoff)}</p>
-      <p class="dispatch-reference">Reference: ${esc(b.id)}${b.trip.flightNumber?' · Flight: '+esc(b.trip.flightNumber):''}</p>
-
+      ${cancelled?'<p class="dispatch-cancelled-notice">CANCELLED — DO NOT DISPATCH</p>':''}
+      ${airports?`<div class="dispatch-airports">${airports}</div>`:''}
+      <div class="dispatch-route"><div><span class="dispatch-label">Pickup</span><p>${esc(location(trip.pickup))}</p></div><span class="dispatch-route-arrow" aria-hidden="true">→</span><div><span class="dispatch-label">Destination</span><p>${esc(location(trip.dropoff))}</p></div></div>
+      <div class="dispatch-contact"><h3>${esc(b.customer.firstName)} ${esc(b.customer.lastName)}</h3><div>${contact(phone,phoneTarget,'dispatch-phone')}${contact(email,emailSafe?'mailto:'+encodeURIComponent(email):null,'dispatch-email')}</div></div>
+      <dl class="dispatch-facts"><div><dt>Vehicle</dt><dd>${esc(trip.vehicle==='suv'?'Luxury SUV / Suburban':b.quote.vehicle)}</dd></div><div><dt>Passengers</dt><dd>${esc(trip.passengers)}</dd></div><div><dt>Fare</dt><dd class="dispatch-fare">$${total}</dd></div><div><dt>Trip type</dt><dd>${esc(tripTypes[trip.tripType] || 'Other')}${trip.tripType==='hourly' && trip.hours?' · '+esc(trip.hours)+' hours':''}</dd></div></dl>
+      ${trip.tripType==='roundtrip' && trip.returnDate && trip.returnTime?`<p class="dispatch-secondary"><span class="dispatch-label">Return · New York time</span> ${esc(date(trip.returnDate))} · ${esc(time(trip.returnTime))}</p>`:''}
+      ${trip.flightNumber || trip.airline?`<p class="dispatch-flight">${trip.flightNumber?'<span class="dispatch-label">Flight</span> '+esc(trip.flightNumber):''}${trip.airline?' <span class="dispatch-label">Airline</span> '+esc(trip.airline):''}</p>`:''}
+      ${notes?`<details class="dispatch-notes"><summary>Customer notes <span class="dispatch-note-preview">${esc(notes.slice(0,100))}${notes.length>100?'…':''}</span></summary><p>${esc(notes)}</p></details>`:''}
+      <p class="dispatch-reference"><span class="dispatch-label">Reservation ID</span> ${esc(b.id)}</p>
+      <details class="dispatch-editor"><summary>Manage dispatch</summary>
       ${b.checkoutAttempt?.quote?.promotion?.code === "FIRST15" ? `
-        <p><strong>FIRST15 reconciliation:</strong> ${esc(b.checkoutAttempt.state || "review_required")}
+        <p class="dispatch-secondary"><strong>FIRST15 reconciliation:</strong> ${esc(b.checkoutAttempt.state || "review_required")}
         ${b.checkoutAttempt.state === "review_required" ? "— Provider verification required; eligibility remains protected." : ""}</p>
         <button class="btn btn-secondary reconcileBtn">Check FIRST15 payment state</button>` : ""}
       <div class="admin-controls">
-        <select class="status">
+        <label>Reservation status<select class="status">
           ${["awaiting_payment","confirmed","assigned","driver_en_route","passenger_on_board","completed","cancelled"]
             .map(s => `<option value="${s}" ${b.status === s ? "selected" : ""}>${s}</option>`).join("")}
-        </select>
-        <input class="driver" placeholder="Driver" value="${esc(d.driver)}">
-        <input class="driverPhone" placeholder="Driver phone" value="${esc(d.driverPhone)}">
-        <input class="vehicle" placeholder="Vehicle" value="${esc(d.vehicle)}">
-        <input class="plate" placeholder="Plate" value="${esc(d.plate)}">
+        </select></label>
+        <label>Chauffeur<input class="driver" placeholder="Driver" value="${esc(d.driver)}"></label>
+        <label>Chauffeur phone<input class="driverPhone" placeholder="Driver phone" value="${esc(d.driverPhone)}"></label>
+        <label>Assigned vehicle<input class="vehicle" placeholder="Vehicle" value="${esc(d.vehicle)}"></label>
+        <label>License plate<input class="plate" placeholder="Plate" value="${esc(d.plate)}"></label>
       </div>
       <div class="hero-actions">
         <button class="btn btn-secondary saveBtn">Save dispatch</button>
       </div>
+      </details>
     </article>
   `;
 }

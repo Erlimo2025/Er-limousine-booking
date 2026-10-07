@@ -1120,6 +1120,57 @@ textarea:focus {
   min-width: 0;
 }
 
+/* Dispatch cards: scheduling first, with compact operational details. */
+.dispatch-card{padding:18px;border-left:3px solid var(--gold);min-width:0}
+.dispatch-card-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}
+.dispatch-pickup-time{display:grid;grid-template-columns:auto auto;align-items:baseline;gap:3px 12px}
+.dispatch-label{font-size:.67rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#babfc3}
+.dispatch-pickup-time>.dispatch-label{grid-column:1/-1}
+.dispatch-pickup-time>time{font-size:1.12rem;color:#fff;font-weight:650}
+.dispatch-pickup-time strong{font-size:1.8rem;line-height:1.2;color:var(--gold-light)}
+.dispatch-statuses{display:flex;gap:6px;flex-wrap:wrap;max-width:100%;align-items:flex-start}
+.dispatch-badge{font-weight:700;line-height:1.35;font-size:.7rem;white-space:normal;border:1px solid transparent}
+.badge-paid{background:#123b2c;color:#baf0cf;border-color:#397452}
+.badge-unpaid{background:#3b2e14;color:#ffe0a0;border-color:#8f7030}
+.badge-processing{background:#113744;color:#c4ecfa;border-color:#376577}
+.badge-review,.badge-cancelled{background:#471f28;color:#ffd0d4;border-color:#ae5863}
+.badge-reservation{background:#26333e;color:#e5edf4}
+.badge-muted{background:#282c30;color:#d2d6db}
+.dispatch-card-cancelled{border-color:#ae5863;background:#1d151c}
+.dispatch-card-completed{border-left-color:#707985}
+.dispatch-cancelled-notice{font-size:.74rem;font-weight:750;color:#ffc8cf;margin:10px 0 0}
+.dispatch-airports{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.dispatch-airport{color:var(--gold-light);font-weight:750;font-size:.86rem}
+.dispatch-airport small{color:#b8bfc6;font-size:.66rem;font-weight:500;margin-right:4px}
+.dispatch-route{display:grid;grid-template-columns:minmax(0,1fr) 20px minmax(0,1fr);gap:10px;align-items:center;padding:12px 0;margin-top:4px;border-bottom:1px solid var(--dark-line)}
+.dispatch-route>div{min-width:0}.dispatch-route p{margin:3px 0 0;color:#f4f6f8;font-size:.9rem;line-height:1.5;overflow-wrap:anywhere}
+.dispatch-route-arrow{color:var(--gold);font-size:1.15rem}
+.dispatch-contact{margin-top:12px;min-width:0}.dispatch-contact h3{font-size:1rem;line-height:1.4;margin:0;color:#fff}
+.dispatch-contact>div{display:flex;flex-wrap:wrap;column-gap:18px;row-gap:0}
+.dispatch-contact a,.dispatch-contact span{display:inline-flex;align-items:center;min-height:44px;font-size:.84rem;overflow-wrap:anywhere;max-width:100%;text-decoration:underline;text-underline-offset:3px}
+.dispatch-contact span{text-decoration:none;color:#c3c8ce}.dispatch-phone{color:#99e6b8}.dispatch-email{color:#f2cd82}
+.dispatch-facts{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1.4fr);gap:8px 16px;margin:2px 0 10px}
+.dispatch-facts>div{min-width:0}.dispatch-facts dt{font-size:.66rem;color:#b8bfc6;text-transform:uppercase;letter-spacing:.04em}
+.dispatch-facts dd{margin:3px 0 0;color:#f4f6f8;font-size:.85rem;overflow-wrap:anywhere}.dispatch-facts .dispatch-fare{color:var(--gold-light);font-size:1.08rem;font-weight:700}
+.dispatch-flight,.dispatch-secondary{font-size:.82rem;color:#d7dce0;margin:8px 0;overflow-wrap:anywhere}
+.dispatch-flight .dispatch-label{margin-right:5px}.dispatch-flight .dispatch-label:not(:first-child){margin-left:10px}
+.dispatch-notes{border-top:1px solid var(--dark-line);margin-top:8px}.dispatch-notes summary{padding:10px 0;min-height:44px;color:#e4e8eb;font-size:.82rem;cursor:pointer;overflow-wrap:anywhere}
+.dispatch-note-preview{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-size:.77rem;color:#b9c0c7;margin:4px 0 0 15px;overflow-wrap:anywhere}
+.dispatch-notes[open] .dispatch-note-preview{display:none}.dispatch-notes p{white-space:pre-wrap;overflow-wrap:anywhere;font-size:.83rem;line-height:1.6;max-height:180px;overflow-y:auto;margin:0 0 12px;color:#e5e8eb}
+.dispatch-reference{font-size:.69rem;color:#afb7be;margin:8px 0 12px;overflow-wrap:anywhere;line-height:1.5}.dispatch-reference .dispatch-label{display:block;margin-bottom:3px}
+.dispatch-editor{border-top:1px solid var(--dark-line)}.dispatch-editor>summary{padding:12px 0 0;min-height:44px;color:var(--gold-light);font-weight:650;font-size:.82rem;cursor:pointer}
+.dispatch-editor .admin-controls{grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:10px}.dispatch-editor label{font-size:.7rem;color:#b9c0c7;min-width:0}
+.dispatch-editor input,.dispatch-editor select{display:block;width:100%;min-height:44px;margin-top:5px;font-size:16px;padding:10px;border-radius:8px}
+.dispatch-editor .hero-actions{margin-top:12px}.dispatch-editor button{min-height:44px;font-size:.8rem;border:1px solid #6c5a31;background:#152630;color:#f2cd82;border-radius:8px;padding:10px 14px;max-width:100%;white-space:normal}
+.dispatch-card a:focus-visible,.dispatch-card summary:focus-visible,.dispatch-card button:focus-visible,.dispatch-card input:focus-visible,.dispatch-card select:focus-visible{outline:2px solid var(--gold-light);outline-offset:3px}
+@media(max-width:650px){
+ .dispatch-card{padding:14px 12px}.dispatch-card-heading{gap:10px}.dispatch-pickup-time{gap:3px 10px}.dispatch-pickup-time>time{font-size:1rem}.dispatch-pickup-time strong{font-size:1.6rem}
+ .dispatch-statuses{width:100%}.dispatch-route{grid-template-columns:minmax(0,1fr);gap:9px;padding:10px 0}.dispatch-route-arrow{display:none}
+ .dispatch-facts{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px 12px}.dispatch-contact>div{display:grid;grid-template-columns:minmax(0,1fr)}
+ .dispatch-editor .admin-controls{grid-template-columns:repeat(2,minmax(0,1fr))}.dispatch-editor .admin-controls label:first-child{grid-column:1/-1}
+}
+@media(max-width:350px){.dispatch-editor .admin-controls{grid-template-columns:minmax(0,1fr)}.dispatch-pickup-time{gap:3px 8px}.dispatch-pickup-time strong{font-size:1.45rem}.dispatch-badge{font-size:.66rem}}
+
 
 /* =========================
    TABLET

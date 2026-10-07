@@ -74,11 +74,59 @@ test('dispatch Clear Filters explicitly resets every control, summary and pagina
  resolve({ok:true,json:async()=>({bookings:[adminDto(fixture())],nextCursor:null})});await new Promise(done=>setImmediate(done));assert.equal(h.elements.moreBookings.hidden,true);assert.equal((h.elements.bookings.innerHTML.match(/booking-item/g)||[]).length,1);
 });
 
+test('dispatch cards prioritize stored New York pickup fields, fare, vehicle, passengers and safe contact links',()=>{
+ const h=ui(),r=fixture();const before=JSON.stringify(r),html=h.context.renderBooking(adminDto(r));
+ assert.match(html,/PICKUP · NEW YORK TIME/);assert.match(html,/Fri, Oct 2, 2026/);assert.match(html,/12:00 PM/);assert.match(html,/datetime="2026-10-02"/);assert.match(html,/datetime="12:00"/);
+ assert.match(html,/href="tel:\+12015550199"/);assert.match(html,/href="mailto:alice%40example.test"/);assert.match(html,/Luxury SUV \/ Suburban/);assert.match(html,/<dt>Passengers<\/dt><dd>2<\/dd>/);assert.match(html,/\$150.00/);assert.match(html,/One way/);assert.match(html,new RegExp(r.id));
+ assert.ok(html.indexOf('dispatch-pickup-time')<html.indexOf('dispatch-statuses'));assert.ok(html.indexOf('dispatch-statuses')<html.indexOf('dispatch-route'));assert.equal(JSON.stringify(r),before);
+ r.trip.time='00:05';assert.match(h.context.renderBooking(adminDto(r)),/12:05 AM/);r.trip.time='23:45';assert.match(h.context.renderBooking(adminDto(r)),/11:45 PM/);
+});
+
+test('dispatch payment/reservation badges use only server states and cancelled cards are unmistakable',()=>{
+ const h=ui(),html=r=>h.context.renderBooking(adminDto(r));
+ assert.match(html(fixture()),/badge-unpaid[^>]*>UNPAID/);assert.match(html(fixture({paymentStatus:'paid',status:'confirmed'})),/badge-paid[^>]*>PAID/);
+ const pending=fixture({checkoutAttempt:{state:'session_identified',evidence:'verified_paid_awaiting_webhook'}}),pendingHtml=html(pending);assert.match(pendingHtml,/PAYMENT PROCESSING/);assert.doesNotMatch(pendingHtml,/>PAID<|>UNPAID</);
+ assert.match(html(fixture({checkoutAttempt:{state:'submitted_unknown'}})),/PAYMENT PROCESSING/);assert.match(html(fixture({paymentReviewRequired:true})),/PAYMENT REVIEW/);
+ for(const [state,label]of Object.entries({processing:'REFUND PROCESSING',confirmed:'REFUND CONFIRMED',review_required:'REFUND REVIEW',failed:'REFUND FAILED · REVIEW'})){const r=fixture({status:'cancelled',paymentStatus:'paid',refundStatus:state}),text=html(r);assert.ok(text.includes(label));assert.match(text,/dispatch-card-cancelled/);assert.match(text,/CANCELLED — DO NOT DISPATCH/);assert.doesNotMatch(text,/>Confirmed</);}
+ assert.match(html(fixture({status:'completed'})),/dispatch-card-completed/);assert.match(html(fixture({status:'cancelled'})),/>Cancelled</);
+});
+
+test('admin airport display prefers maintained EWR identities; JFK/LGA/legacy terminal labels are read-only',()=>{
+ const h=ui();for(const [id,terminal]of Object.entries({'ChIJ2dQDPZNSwokRVJr9XE2SPt0':'Terminal A','ChIJ-6uTxfZSwokR-VfW-WSM53k':'Terminal B','ChIJMYEleJSwokRawcDBeH8NVg':'Terminal C'})){
+  const r=fixture();r.trip.pickupPlaceId=id;r.trip.pickup='Newark Liberty International Airport Terminal B';const before=JSON.stringify(r),dto=adminDto(r);assert.deepEqual(dto.trip.pickupAirport,{code:'EWR',terminal});assert.ok(h.context.renderBooking(dto).includes('EWR • '+terminal.toUpperCase()));assert.equal(JSON.stringify(r),before);assert.ok(!JSON.stringify(dto).includes(id));
+ }
+ const general=fixture();general.trip.pickupPlaceId='ChIJ7wzsxeFSwokRhvLXxTe087M';assert.deepEqual(adminDto(general).trip.pickupAirport,{code:'EWR',terminal:null});
+ for(const [pickup,airport,terminal]of [['John F. Kennedy International Airport Terminal 4, Queens, NY','JFK','Terminal 4'],['LaGuardia Airport Terminal B, Queens, NY','LGA','Terminal B']]){const r=fixture();delete r.trip.pickupPlaceId;r.trip.pickup=pickup;const dto=adminDto(r);assert.deepEqual(dto.trip.pickupAirport,{code:airport,terminal});assert.ok(h.context.renderBooking(dto).includes(airport+' • '+terminal.toUpperCase()));}
+ const r=fixture();delete r.trip.pickupPlaceId;r.trip.pickup='JFK hotel';r.trip.dropoff='Home';assert.equal(adminDto(r).trip.pickupAirport,null);assert.doesNotMatch(h.context.renderBooking(adminDto(r)),/class="dispatch-airport"/);
+ r.trip.pickup='Home';r.trip.dropoff='LaGuardia Airport Terminal C, Queens';assert.deepEqual(adminDto(r).trip.dropoffAirport,{code:'LGA',terminal:'Terminal C'});
+});
+
+test('dispatch collapses repeated A/B/C terminal labels without changing stored addresses or IDs',()=>{
+ const h=ui();for(const terminal of ['A','B','C']){const r=fixture();r.trip.pickup=`Terminal ${terminal}, Terminal ${terminal}, 3 Brewster Rd`;r.trip.dropoff=`Terminal ${terminal}, Terminal ${terminal}, Terminal ${terminal}, Newark`;const before=JSON.stringify(r),html=h.context.renderBooking(adminDto(r));assert.ok(html.includes(`Terminal ${terminal}, 3 Brewster Rd`));assert.ok(html.includes(`Terminal ${terminal}, Newark`));assert.ok(!html.includes(`Terminal ${terminal}, Terminal ${terminal}`));assert.equal(JSON.stringify(r),before);}
+ const r=fixture();r.trip.pickup='Terminal A, Terminal B, Airport';assert.ok(h.context.renderBooking(adminDto(r)).includes(r.trip.pickup));
+});
+
+test('dispatch notes, flight/airline and contacts are escaped; long notes remain in expandable text',()=>{
+ const h=ui(),r=fixture();r.trip.airline='United Airlines';r.trip.notes='Please meet at baggage claim.';let html=h.context.renderBooking(adminDto(r));assert.match(html,/UA 123/);assert.match(html,/United Airlines/);assert.match(html,/<details class="dispatch-notes">/);assert.match(html,/<summary>Customer notes/);
+ const attack='<img src=x onerror=alert(1)>" & <script>unsafe()</script>';r.customer.firstName=attack;r.customer.lastName=attack;r.customer.phone='javascript:alert(1)';r.customer.email='bad@example.test\r\nBcc:other@example.test';r.trip.pickup=attack;r.trip.dropoff=attack;r.trip.flightNumber=attack;r.trip.airline=attack;r.trip.notes=(attack+'\n').repeat(20);r.dispatch.driver=attack;
+ html=h.context.renderBooking(adminDto(r));assert.ok(!html.includes('<img'));assert.ok(!html.includes('<script>'));assert.ok(html.includes('&lt;img'));assert.doesNotMatch(html,/href="(?:javascript|tel:javascript|mailto:bad)/);assert.match(html,/dispatch-note-preview/);assert.match(html,/…/);assert.ok(html.includes('&lt;script&gt;unsafe()&lt;/script&gt;'));
+ const bounded=adminDto(r);assert.ok(bounded.trip.notes.length<=2000);assert.ok(bounded.trip.airline.length<=120);assert.equal(r.trip.notes.length,(attack+'\n').length*20);
+ const css=fs.readFileSync(path.join(__dirname,'../public/styles.css'),'utf8');assert.match(css,/\.dispatch-notes p\{[^}]*white-space:pre-wrap[^}]*overflow-wrap:anywhere[^}]*max-height:180px/);
+});
+
+test('dispatch editor preserves status/dispatch/reconciliation actions with accessible labels and compact mobile rules',()=>{
+ const h=ui(),r=fixture({checkoutAttempt:{state:'review_required',quote:{promotion:{code:'FIRST15'}}}}),html=h.context.renderBooking(adminDto(r));assert.match(html,/<details class="dispatch-editor"><summary>Manage dispatch<\/summary>/);
+ for(const cls of ['status','driver','driverPhone','vehicle','plate','saveBtn','reconcileBtn'])assert.ok(html.includes('class="'+cls+'"')||html.includes(' '+cls+'"'),cls);
+ assert.match(html,/value="awaiting_payment" selected/);assert.match(html,/<label>Chauffeur<input/);assert.match(html,/Check FIRST15 payment state/);
+ const editor=html.slice(html.indexOf('<details class="dispatch-editor">'),html.indexOf('</details>',html.indexOf('<details class="dispatch-editor">')));assert.ok(editor.includes('saveBtn'));assert.ok(editor.includes('reconcileBtn'));
+ const css=fs.readFileSync(path.join(__dirname,'../public/styles.css'),'utf8');assert.match(css,/@media\(max-width:650px\)/);assert.match(css,/@media\(max-width:350px\)/);assert.match(css,/\.dispatch-route\{grid-template-columns:minmax\(0,1fr\)/);assert.match(css,/\.dispatch-editor input,[^}]*min-height:44px/);
+});
+
 test('PostgreSQL dispatch search: all fields, combined filters, NY dates/DST, legacy data, paging and no mutation',{skip:!process.env.ER_TEST_DATABASE_URL},async t=>{
  const u=new URL(process.env.ER_TEST_DATABASE_URL);assert.ok(['localhost','127.0.0.1'].includes(u.hostname));assert.ok(u.pathname.startsWith('/er_test_'));
  const admin=new Pool({connectionString:u.toString()}),schema='dispatch_test_'+crypto.randomBytes(8).toString('hex');await admin.query('CREATE SCHEMA '+schema);
  const pool=new Pool({connectionString:u.toString(),options:'-c search_path='+schema}),store=createStore({},pool);t.after(async()=>{await store.close();await admin.query('DROP SCHEMA '+schema+' CASCADE');await admin.end();});await store.migrate();
- const ewr=fixture(),jfk=fixture({status:'confirmed',paymentStatus:'paid'});jfk.trip={...jfk.trip,date:'2026-10-01',pickup:'John F. Kennedy International Airport',pickupPlaceId:null,vehicle:'escalade'};
+ const ewr=fixture(),jfk=fixture({status:'confirmed',paymentStatus:'paid'});ewr.trip.notes='Synthetic customer note';ewr.trip.airline='United Airlines';jfk.trip={...jfk.trip,date:'2026-10-01',pickup:'John F. Kennedy International Airport',pickupPlaceId:null,vehicle:'escalade'};
  const lga=fixture({status:'completed',paymentStatus:'paid'});lga.trip={...lga.trip,date:'2026-09-30',pickup:'LaGuardia Airport',pickupPlaceId:null};
  const other=fixture();other.trip={...other.trip,date:'2026-10-03',pickup:'JFK hotel',pickupPlaceId:null,dropoff:'Hotel Manhattan'};
  const cancelled=fixture({status:'cancelled'}),processing=fixture({checkoutAttempt:{key:crypto.randomUUID(),expiresAt:1790956800,quote:ewr.quote,state:'session_identified',evidence:'verified_paid_awaiting_webhook'}}),review=fixture({paymentReviewRequired:true}),refund=fixture({status:'cancelled',paymentStatus:'paid',refundStatus:'confirmed'});
@@ -87,6 +135,7 @@ test('PostgreSQL dispatch search: all fields, combined filters, NY dates/DST, le
  const records=[ewr,jfk,lga,other,cancelled,processing,review,refund,overnight,legacy];
  for(const r of records)await pool.query('INSERT INTO er_reservations(id,record,created_at,scheduled_start_at,scheduled_end_at) VALUES($1,$2::jsonb,$3,CASE WHEN $4 THEN NULL ELSE ($5::timestamp AT TIME ZONE \'America/New_York\') END,CASE WHEN $4 THEN NULL ELSE ($6::timestamp AT TIME ZONE \'America/New_York\') END)',[r.id,JSON.stringify(r),r.createdAt,r===legacy,r.trip.date+' '+r.trip.time,(r.trip.returnDate || r.trip.date)+' '+(r.trip.returnTime || r.trip.time)]);
  const before=(await pool.query('SELECT id,record,customer_id,scheduled_start_at,scheduled_end_at FROM er_reservations ORDER BY id')).rows;
+ const projected=(await store.searchAdminReservations(adminQuery({search:ewr.id,status:'all',timing:'all'},at))).bookings[0];assert.equal(projected.trip.notes,ewr.trip.notes);assert.equal(projected.trip.airline,ewr.trip.airline);assert.deepEqual(projected.trip.pickupAirport,{code:'EWR',terminal:'Terminal A'});assert.ok(!JSON.stringify(projected).includes(ewr.trip.pickupPlaceId));
  const ids=async input=>(await store.searchAdminReservations(adminQuery({status:'all',timing:'all',...input},at))).bookings.map(x=>x.id);
  for(const search of [ewr.id,' ALICE  smith ','ALICE@EXAMPLE.TEST','+1 (201) 555-0199','newark liberty','TIMES SQUARE','UA 123'])assert.ok((await ids({search})).includes(ewr.id),search);
  for(const search of ["' OR 1=1 --",'%','_','\\'])assert.deepEqual(await ids({search}),[]);
