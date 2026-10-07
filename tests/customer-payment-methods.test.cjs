@@ -13,6 +13,12 @@ const verify=(h,headers,id,body={})=>h.request(base+'/setup/'+id+'/verify',body,
 const remove=(h,headers,id)=>h.request(base+'/'+id,{},headers,'DELETE');
 function complete(h,attempt){const a=h.testStore.shared.paymentSetups.get(attempt),si=h.state.payments.setups.get(a.stripe_setup_id);const pm={id:'pm_saved'+(h.state.payments.cards.size+1),type:'card',customer:si.customer,livemode:false,card:{brand:'visa',last4:'4242',exp_month:3,exp_year:2030,fingerprint:'synthetic_private_fingerprint'},billing_details:{address:{line1:'synthetic_private_address'}},metadata:{private:'synthetic_private_metadata'}};h.state.payments.cards.set(pm.id,pm);si.status='succeeded';si.payment_method=pm.id;return {a,si,pm};}
 const databaseState=h=>JSON.stringify({mappings:[...h.testStore.shared.paymentMappings.values()],setups:[...h.testStore.shared.paymentSetups.values()]});
+async function assertProviderOutsideTransaction(observer,workerName){
+ // Provider calls must be outside the initiating worker's transactions.
+ // A different worker may legitimately authenticate/enforce shared limits.
+ const open=await observer.query('SELECT 1 FROM pg_stat_activity WHERE application_name=$1 AND pid<>pg_backend_pid() AND xact_start IS NOT NULL',[workerName]);
+ assert.equal(open.rowCount,0,'Stripe network calls must occur outside the calling worker transactions');
+}
 
 test('saved-card feature defaults disabled and never changes booking Checkout',async t=>{
  const {h,headers}=await setup(t,{});for(const [url,body,method]of [[base,undefined,'GET'],[base+'/setup',{consent:true},'POST'],[base+'/setup/'+crypto.randomUUID()+'/verify',{},'POST'],[base+'/pm_foreign',{},'DELETE']]){const r=await h.request(url,body,headers,method);assert.equal(r.status,503);assert.equal(r.headers.get('cache-control'),'no-store');}
@@ -224,14 +230,38 @@ test('PostgreSQL cleanup faults do not fail requests or bypass counters; later c
  const logs=h.state.logs.join(' ');for(const marker of ['synthetic private cleanup payload','synthetic private counter payload',expired,live,account.email,account.phone,headers.cookie])assert.ok(!logs.includes(marker));assert.equal(h.state.payments.calls.length,0);
 });
 
+test('PostgreSQL provider transaction probe ignores another worker UPDATE but still rejects a calling-worker transaction',{skip:!process.env.ER_TEST_DATABASE_URL},async t=>{
+ const u=new URL(process.env.ER_TEST_DATABASE_URL);assert.ok(['127.0.0.1','localhost'].includes(u.hostname));assert.ok(u.pathname.startsWith('/er_test_'));
+ const tag='probe_test_'+crypto.randomBytes(8).toString('hex'),firstName=tag+'_first',secondName=tag+'_second';
+ const observer=new Pool({connectionString:u.toString()}),firstPool=new Pool({connectionString:u.toString(),application_name:firstName}),secondPool=new Pool({connectionString:u.toString(),application_name:secondName});
+ let first,second;t.after(async()=>{for(const client of [first,second])if(client){await client.query('ROLLBACK').catch(()=>{});client.release();}await Promise.all([observer.end(),firstPool.end(),secondPool.end()]);});
+ first=await firstPool.connect();second=await secondPool.connect();
+ await second.query('CREATE TEMP TABLE provider_probe (n integer)');await second.query('INSERT INTO provider_probe VALUES(1)');await second.query('BEGIN');await second.query('UPDATE provider_probe SET n=2');
+ // The old schema-wide probe incorrectly counted this legitimate other-worker transaction.
+ const old=await observer.query('SELECT 1 FROM pg_stat_activity WHERE application_name=ANY($1::text[]) AND xact_start IS NOT NULL',[[firstName,secondName]]);assert.equal(old.rowCount,1);
+ const state={},mock=require('./helpers/stripe-payments.cjs').stripePaymentMock(state);state.payments.onCall=async(op,caller)=>{assert.equal(caller,state);await assertProviderOutsideTransaction(observer,firstName);};
+ const provider=stripePaymentProvider(mock);assert.match((await provider.createCustomer(crypto.randomUUID())).id,/^cus_/);assert.equal(state.payments.customers.size,1);
+ await first.query('BEGIN');await first.query('SELECT 1');
+ await assert.rejects(provider.createCustomer(crypto.randomUUID()),error=>error.paymentFailure && error.status===503);assert.equal(state.payments.customers.size,1);
+ await first.query('ROLLBACK');assert.match((await provider.createCustomer(crypto.randomUUID())).id,/^cus_/);assert.equal(state.payments.customers.size,2);
+});
+
 test('PostgreSQL saved cards: migrations, competing workers, persistent retries, ownership, shared limits and rollback',{skip:!process.env.ER_TEST_DATABASE_URL},async t=>{
  const u=new URL(process.env.ER_TEST_DATABASE_URL);assert.ok(['127.0.0.1','localhost'].includes(u.hostname));assert.ok(u.pathname.startsWith('/er_test_'));
  const admin=new Pool({connectionString:u.toString()}),schema='cards_test_'+crypto.randomBytes(8).toString('hex');await admin.query('CREATE SCHEMA '+schema);
- const pool=new Pool({connectionString:u.toString(),options:'-c search_path='+schema,application_name:schema}),pool2=new Pool({connectionString:u.toString(),options:'-c search_path='+schema,application_name:schema});const store=createStore({},pool),second=createStore({},pool2);
+ const firstWorker=schema+'_first',secondWorker=schema+'_second';
+ const pool=new Pool({connectionString:u.toString(),options:'-c search_path='+schema,application_name:firstWorker}),pool2=new Pool({connectionString:u.toString(),options:'-c search_path='+schema,application_name:secondWorker});const store=createStore({},pool),second=createStore({},pool2);
  t.after(async()=>{await store.close();await second.close();await admin.query('DROP SCHEMA '+schema+' CASCADE');await admin.end();});await store.migrate();await Promise.all([store.migrate(),second.migrate()]);
  const {h,headers}=await setup(t,enabled,store),worker=await harness(t,enabled,'[]',second);worker.state.payments=h.state.payments;
- let networkChecks=0;h.state.payments.onCall=async()=>{const open=await pool.query("SELECT 1 FROM pg_stat_activity WHERE application_name=$1 AND pid<>pg_backend_pid() AND xact_start IS NOT NULL",[schema]);assert.equal(open.rowCount,0,'Stripe network calls must occur outside database transactions');networkChecks++;};
- h.state.payments.delay=30;const results=await Promise.all([start(h,headers),start(worker,headers)]);assert.deepEqual(results.map(x=>x.status).sort(),[200,409]);h.state.payments.delay=0;assert.equal(h.state.payments.customers.size,1);
+ let releaseProvider,holdFirstCustomer=true,networkChecks=0;const providerGate=new Promise(resolve=>{releaseProvider=resolve;});
+ h.state.payments.onCall=async(op,caller)=>{assert.ok(caller===h.state || caller===worker.state);await assertProviderOutsideTransaction(admin,caller===h.state?firstWorker:secondWorker);networkChecks++;
+  if(op==='createCustomer' && holdFirstCustomer){holdFirstCustomer=false;await providerGate;}
+ };
+ // Keep the winner inside its provider call until the competing action settles.
+ // A fixed sleep cannot guarantee overlap on a busy host.
+ const requests=[start(h,headers),start(worker,headers)];let conflict,results;
+ try{conflict=await Promise.race(requests);}finally{releaseProvider();results=await Promise.all(requests);}
+ assert.equal(conflict.status,409);assert.deepEqual(results.map(x=>x.status).sort(),[200,409]);assert.equal(h.state.payments.customers.size,1);
  let rows=(await pool.query('SELECT * FROM er_customer_payment_mappings')).rows;assert.equal(rows.length,1);const owner=rows[0].customer_id;let attempts=(await pool.query('SELECT * FROM er_customer_payment_setups')).rows;assert.equal(attempts.length,1);
  assert.equal((await start(worker,headers)).status,200);assert.equal(h.state.payments.setups.size,1);const a=attempts[0],si=h.state.payments.setups.get(a.stripe_setup_id),pm={id:'pm_pgowned',type:'card',customer:rows[0].stripe_customer_id,livemode:false,card:{brand:'visa',last4:'4242',exp_month:2,exp_year:2030}};h.state.payments.cards.set(pm.id,pm);si.payment_method=pm.id;si.status='succeeded';assert.equal((await verify(worker,headers,a.id)).status,200);
  const b=await worker.request('/api/customer/register',{...account,email:'pgother@example.test',phone:'2035550137'}),otherHeaders={...headers,cookie:cookie(b)};assert.equal((await verify(worker,otherHeaders,a.id)).status,404);assert.deepEqual((await worker.request(base,undefined,otherHeaders)).body,[]);assert.equal((await remove(worker,otherHeaders,pm.id)).status,200);assert.equal(h.state.payments.calls.filter(x=>x.op==='detach').length,0);

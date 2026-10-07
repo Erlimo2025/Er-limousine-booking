@@ -2,7 +2,7 @@
 function stripePaymentMock(state) {
  let p=state.payments ||= {customers:new Map(),setups:new Map(),cards:new Map(),keys:new Map(),calls:[]};
  const clone=x=>structuredClone(x);
- async function call(op,params,options,fn){p=state.payments;p.calls.push({op,params:clone(params),options:clone(options)});if(p.onCall)await p.onCall(op);if(p.delay)await new Promise(r=>setTimeout(r,p.delay));if(p.fail===op)throw Object.assign(new Error('synthetic private provider message'),{type:'StripeAPIError'});return fn();}
+ async function call(op,params,options,fn){p=state.payments;p.calls.push({op,params:clone(params),options:clone(options)});if(p.onCall)await p.onCall(op,state);if(p.delay)await new Promise(r=>setTimeout(r,p.delay));if(p.fail===op)throw Object.assign(new Error('synthetic private provider message'),{type:'StripeAPIError'});return fn();}
  const missing=()=>{throw Object.assign(new Error('synthetic private missing provider object'),{type:'StripeInvalidRequestError',code:'resource_missing'});};
  return {
   customers:{

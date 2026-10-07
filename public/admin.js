@@ -7,6 +7,9 @@ const loginField = document.getElementById("adminLoginField");
 const logoutBtn = document.getElementById("logoutBtn");
 let authenticated = false;
 let authGeneration = 0;
+let searchGeneration=0,nextCursor=null,activeQuery='';
+const filters=document.getElementById('reservationFilters'),moreBtn=document.getElementById('moreBookings');
+const filterIds={status:'filterStatus',payment:'filterPayment',timing:'filterTiming',airport:'filterAirport',vehicle:'filterVehicle'};
 
 // Delete credentials left by the former implementation; never read/store them.
 for (const store of ["localStorage", "sessionStorage"]) {
@@ -20,13 +23,16 @@ function setLoggedIn(value) {
   loginField.classList.toggle("hidden-field", value);
   logoutBtn.classList.toggle("hidden-field", !value);
   loadBtn.textContent = value ? "Load bookings" : "Admin login";
+  filters.hidden=!value;
   if (!value) {
     authGeneration++;
+    searchGeneration++;nextCursor=null;moreBtn.hidden=true;filters.reset();document.getElementById('activeFilters').textContent='';
     bookingsEl.innerHTML = "";
   }
 }
 
 async function adminFetch(url, options = {}) {
+  const generation=authGeneration;
   const response = await fetch(url, {
     ...options,
     credentials: "same-origin",
@@ -35,7 +41,7 @@ async function adminFetch(url, options = {}) {
   });
   const data = await response.json();
   if (!response.ok) {
-    if (response.status === 401 || response.status === 403) setLoggedIn(false);
+    if (generation===authGeneration && (response.status === 401 || response.status === 403)) setLoggedIn(false);
     throw new Error(data.error || "Request failed. Please try again.");
   }
   return data;
@@ -55,23 +61,36 @@ function showNotice(message, type = "error") {
   notice.textContent = message;
 }
 
-async function loadBookings() {
+function filterQuery(){
+ const query=new URLSearchParams({search:document.getElementById('reservationSearch').value.trim(),limit:'25'});
+ const labels=[];
+ for(const [key,id]of Object.entries(filterIds)){const select=document.getElementById(id);query.set(key,select.value);labels.push(select.options[select.selectedIndex].textContent);}
+ document.getElementById('activeFilters').textContent='Filters: '+labels.join(' · ')+(query.get('search')?' · Search: '+query.get('search'):'');return query.toString();
+}
+async function loadBookings(more=false) {
   if (!authenticated) return;
   const generation = authGeneration;
+  const request=++searchGeneration;
+  if(!more){activeQuery=filterQuery();nextCursor=null;bookingsEl.innerHTML='';moreBtn.hidden=true;}
+  const query=activeQuery+(more&&nextCursor?'&cursor='+encodeURIComponent(nextCursor):'');
+  moreBtn.disabled=true;document.getElementById('applyFilters').disabled=true;
   loadBtn.disabled = true;
   loadBtn.textContent = "Loading...";
   try {
-    const data = await adminFetch("/api/bookings");
-    if (!authenticated || generation !== authGeneration) return;
+    const data = await adminFetch('/api/bookings/search?'+query);
+    if (!authenticated || generation !== authGeneration || request!==searchGeneration) return;
     notice.className = "notice";
-    bookingsEl.innerHTML = data.length
-      ? data.map(renderBooking).join("")
-      : `<div class="booking-item">No bookings yet.</div>`;
+    if(more)bookingsEl.insertAdjacentHTML('beforeend',data.bookings.map(renderBooking).join(''));
+    else bookingsEl.innerHTML = data.bookings.length?data.bookings.map(renderBooking).join(''):'<div class="booking-item">No matching reservations.</div>';
+    nextCursor=data.nextCursor;moreBtn.hidden=!nextCursor;
   } catch (err) {
+    if(generation!==authGeneration || request!==searchGeneration)return;
     showNotice(err.message);
   } finally {
+    if(generation===authGeneration && request===searchGeneration){moreBtn.disabled=false;document.getElementById('applyFilters').disabled=false;
     loadBtn.disabled = false;
     loadBtn.textContent = authenticated ? "Load bookings" : "Admin login";
+    }
   }
 }
 
@@ -138,12 +157,15 @@ function renderBooking(b) {
         <div>
           <span class="badge">${esc(b.status)}</span>
           <span class="badge">${esc(b.paymentStatus)}</span>
+          ${b.paymentVerificationPending?'<span class="badge">Payment verification in progress</span>':''}
+          ${b.refundStatus?`<span class="badge">Refund: ${esc(b.refundStatus)}</span>`:''}
           ${b.paymentReviewRequired ? '<span class="badge">Payment review required</span>' : ''}
         </div>
       </div>
 
       <p><strong>${esc(b.trip.date)} ${esc(b.trip.time)}</strong> — ${esc(b.quote.vehicle)} — $${total}</p>
       <p>${esc(b.trip.pickup)} → ${esc(b.trip.dropoff)}</p>
+      <p class="dispatch-reference">Reference: ${esc(b.id)}${b.trip.flightNumber?' · Flight: '+esc(b.trip.flightNumber):''}</p>
 
       ${b.checkoutAttempt?.quote?.promotion?.code === "FIRST15" ? `
         <p><strong>FIRST15 reconciliation:</strong> ${esc(b.checkoutAttempt.state || "review_required")}
@@ -151,7 +173,7 @@ function renderBooking(b) {
         <button class="btn btn-secondary reconcileBtn">Check FIRST15 payment state</button>` : ""}
       <div class="admin-controls">
         <select class="status">
-          ${["confirmed","assigned","driver_en_route","passenger_on_board","completed","cancelled"]
+          ${["awaiting_payment","confirmed","assigned","driver_en_route","passenger_on_board","completed","cancelled"]
             .map(s => `<option value="${s}" ${b.status === s ? "selected" : ""}>${s}</option>`).join("")}
         </select>
         <input class="driver" placeholder="Driver" value="${esc(d.driver)}">
@@ -210,10 +232,14 @@ bookingsEl.addEventListener("click", async (event) => {
 });
 
 loadBtn.addEventListener("click", loginAndLoad);
+filters.addEventListener('submit',event=>{event.preventDefault();loadBookings();});
+document.getElementById('clearFilters').addEventListener('click',()=>{filters.reset();loadBookings();});
+moreBtn.addEventListener('click',()=>{if(!moreBtn.disabled&&nextCursor)loadBookings(true);});
 logoutBtn.addEventListener("click", logout);
 window.addEventListener("pagehide", () => {
   tokenInput.value = "";
   authGeneration++;
+  searchGeneration++;nextCursor=null;moreBtn.hidden=true;filters.reset();document.getElementById('activeFilters').textContent='';
   bookingsEl.innerHTML = "";
 });
 window.addEventListener("pageshow", event => { if (event.persisted) restoreSession(); });

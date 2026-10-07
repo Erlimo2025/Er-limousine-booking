@@ -1713,6 +1713,14 @@ textarea:focus {
 .mobile-special-image {
   display: none;
 }
+.dispatch-filters{margin-bottom:18px}
+.dispatch-filters[hidden],#moreBookings[hidden]{display:none}
+.dispatch-filters .field{min-width:0}
+.dispatch-filters input,.dispatch-filters select{width:100%;min-height:44px}
+.dispatch-filters .hero-actions{flex-wrap:wrap}
+#activeFilters{overflow-wrap:anywhere;color:var(--gold-light)}
+#moreBookings{margin-top:16px}
+.booking-item{overflow-wrap:anywhere}
 
 @media (max-width: 650px) {
   .top-bar-inner {

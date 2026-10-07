@@ -2520,6 +2520,11 @@ app.get(
   })
 );
 
+app.get('/api/bookings/search',requireAdmin,rateLimit('admin-search',30),route(async(req,res)=>{
+ const query=require('./storage/admin-reservations').adminQuery(req.query,Date.now());
+ res.json(await reservationStore.searchAdminReservations(query));
+}));
+
 
 /* =========================================
    ADMIN — UPDATE BOOKING

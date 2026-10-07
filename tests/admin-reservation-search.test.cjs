@@ -1,0 +1,80 @@
+const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto'),vm=require('node:vm'),{createRequire}=require('node:module'),{Pool}=require('pg');
+const {adminQuery,searchSql,adminDto,adminReservationStorage,page}=require('../storage/admin-reservations');
+const {createStore}=require('../storage/postgres');
+const harnessPath=path.join(__dirname,'security-abuse.test.cjs'),source=fs.readFileSync(harnessPath,'utf8');
+const {harness}=new Function('require','__dirname',source.slice(0,source.indexOf('test("approved prices'))+'\nreturn {harness};')(createRequire(harnessPath),__dirname);
+const at=Date.parse('2026-10-01T16:00:00Z');
+const fixture=(extra={})=>({id:crypto.randomUUID(),createdAt:'2026-10-01T10:00:00Z',status:'awaiting_payment',paymentStatus:'unpaid',stripeSessionId:null,customer:{firstName:'Alice',lastName:'Smith',email:'alice@example.test',phone:'(201) 555-0199'},trip:{pickup:'Newark Liberty International Airport Terminal A',pickupPlaceId:'ChIJ2dQDPZNSwokRVJr9XE2SPt0',dropoff:'Times Square Manhattan',date:'2026-10-02',time:'12:00',vehicle:'suv',tripType:'oneway',passengers:2,flightNumber:'UA 123'},quote:{total:150,currency:'usd',vehicle:'Luxury SUV'},dispatch:{driver:'',driverPhone:'',vehicle:'',plate:''},...extra});
+const cookie=r=>r.headers.getSetCookie()[0].split(';')[0];
+
+test('admin search query strictly validates input/cursors and binds literal wildcard/injection searches',()=>{
+ const defaults=adminQuery({},at);assert.equal(defaults.status,'active');assert.equal(defaults.timing,'upcoming');assert.equal(defaults.limit,25);
+ for(const bad of [{status:'DROP TABLE'},{payment:'unknown'},{timing:'yesterday'},{airport:'ATL'},{vehicle:'sedan'},{limit:'100000'},{limit:['1','2']},{search:'x'.repeat(121)},{search:'x\nlog'},{search:['x']},{search:'one two three four five six seven'},{cursor:'broken'},{customer_id:'forged'}])assert.throws(()=>adminQuery(bad,at),e=>e.status===400);
+ const q=adminQuery({search:"%' OR 1=1 --",status:'all',timing:'all'},at),sql=searchSql(q);assert.ok(!sql.text.includes(q.search));assert.ok(sql.values.some(x=>typeof x==='string'&&x.includes('\\%')));assert.ok(sql.values.includes(26));assert.match(sql.text,/LIMIT \$\d+/);assert.doesNotMatch(sql.text,/DELETE|UPDATE|INSERT/);
+ assert.deepEqual(adminQuery({search:' +1 (201) 555-0199 '},at).terms,['2015550199']);assert.deepEqual(adminQuery({search:' Alice   SMITH '},at).terms,['alice','smith']);
+ const r=fixture(),first=page([{record:r,id:r.id,start:'2026-10-02T16:00:00Z'},{record:fixture(),id:crypto.randomUUID(),start:'2026-10-03T16:00:00Z'}],adminQuery({limit:'1'},at));assert.ok(first.nextCursor);
+ assert.ok(adminQuery({limit:'1',cursor:first.nextCursor},at).cursor);assert.throws(()=>adminQuery({limit:'1',status:'cancelled',cursor:first.nextCursor},at),e=>e.status===400);assert.throws(()=>adminQuery({limit:'1',cursor:first.nextCursor},at+86400001),e=>e.status===400);
+});
+
+test('admin search requires existing admin session, denies customers/guests and returns a minimal read-only projection',async t=>{
+ const h=await harness(t),record=fixture();let calls=0;
+ h.testStore.searchAdminReservations=async q=>{calls++;return page([{id:record.id,start:'2026-10-02T16:00:00Z',record}],q);};
+ assert.equal((await h.request('/api/bookings/search')).status,401);assert.equal(calls,0);
+ const customer=await h.request('/api/customer/register',{fullName:'Customer Account',email:'customer-search@example.test',phone:'2025550123',password:'Synthetic customer password'});assert.equal((await h.request('/api/bookings/search',undefined,{cookie:cookie(customer)})).status,401);assert.equal(calls,0);
+ const admin=await h.request('/api/admin/login',{token:'local-test-token'}),c=cookie(admin),before=JSON.stringify(record);
+ const r=await h.request('/api/bookings/search?search='+record.id,undefined,{cookie:c});assert.equal(r.status,200);assert.equal(r.body.bookings[0].id,record.id);assert.match(r.headers.get('cache-control'),/no-store/);assert.equal(calls,1);
+ assert.equal((await h.request('/api/bookings/search?airport=forged',undefined,{cookie:c})).status,400);assert.equal(calls,1);assert.equal(JSON.stringify(record),before);
+ const dto=adminDto({...record,customerAccess:{tokenHash:'private'},checkoutFingerprint:'private',stripeSessionId:'cs_private',customer_id:crypto.randomUUID()});assert.doesNotMatch(JSON.stringify(dto),/private|customer_id|tokenHash|stripeSessionId/);
+ await h.request('/api/admin/logout',{},{cookie:c});assert.equal((await h.request('/api/bookings/search',undefined,{cookie:c})).status,401);
+});
+
+test('search storage enforces a short statement timeout and parameterized bounded SELECT',async()=>{
+ const calls=[],r=fixture(),q=adminQuery({search:'Alice',airport:'ewr',payment:'unpaid'},at);
+ const store=adminReservationStorage(null,async fn=>fn({query:async(text,values)=>{calls.push({text,values});return {rows:text.startsWith('WITH')?[{record:r,id:r.id,start:'2026-10-02T16:00:00Z'}]:[]};}}),x=>x);
+ assert.equal((await store.searchAdminReservations(q)).bookings.length,1);assert.equal(calls[0].text,"SET LOCAL statement_timeout='5s'");assert.ok(calls[1].values.includes('%alice%'));assert.ok(calls[1].values.at(-1)<=51);assert.doesNotMatch(calls[1].text,/alice|DROP TABLE/);
+});
+
+function ui(){
+ const elements={},events={},requests=[];
+ const ids=['token','loadBtn','bookings','notice','adminLoginField','logoutBtn','reservationFilters','moreBookings','applyFilters','clearFilters','activeFilters','reservationSearch','filterStatus','filterPayment','filterTiming','filterAirport','filterVehicle'];
+ for(const id of ids)elements[id]={value:'',innerHTML:'',textContent:'',disabled:false,hidden:true,options:[{textContent:id}],selectedIndex:0,classList:{toggle(){}},addEventListener:(event,fn)=>events[id+':'+event]=fn,insertAdjacentHTML(_,html){this.innerHTML+=html;}};
+ elements.reservationFilters.reset=()=>{elements.reservationSearch.value='';for(const key of ['Status','Payment','Timing','Airport','Vehicle'])elements['filter'+key].value=key==='Status'?'active':key==='Timing'?'upcoming':'all';};elements.reservationFilters.reset();
+ const state={data:{bookings:[],nextCursor:null}};
+ const context={document:{getElementById:id=>elements[id]},window:{addEventListener:(event,fn)=>events['window:'+event]=fn},URLSearchParams,fetch:async(url,options)=>{requests.push({url,options});return state.pending&&url.startsWith('/api/bookings/search')?await state.pending:{ok:true,json:async()=>url==='/api/admin/session'?{authenticated:true}:state.data};}};
+ vm.createContext(context);vm.runInContext(fs.readFileSync(path.join(__dirname,'../public/admin.js'),'utf8'),context);return {context,elements,events,requests,state};
+}
+test('dispatch UI defaults upcoming, combines filters, paginates, clears filters and rejects stale results',async()=>{
+ const h=ui();await new Promise(resolve=>setImmediate(resolve));assert.equal(h.elements.reservationFilters.hidden,false);assert.match(h.requests.at(-1).url,/timing=upcoming/);assert.match(h.requests.at(-1).url,/status=active/);
+ h.elements.filterTiming.value='tomorrow';h.elements.filterPayment.value='unpaid';h.elements.filterAirport.value='ewr';h.state.data={bookings:[adminDto(fixture())],nextCursor:'cursor'};
+ await h.context.loadBookings();const last=h.requests.at(-1).url;for(const x of ['timing=tomorrow','payment=unpaid','airport=ewr'])assert.ok(last.includes(x));assert.equal(h.elements.moreBookings.hidden,false);assert.match(h.elements.bookings.innerHTML,/Save dispatch/);
+ await h.context.loadBookings(true);assert.ok(h.requests.at(-1).url.includes('cursor=cursor'));assert.equal((h.elements.bookings.innerHTML.match(/booking-item/g)||[]).length,2);
+ h.events['clearFilters:click']();await new Promise(resolve=>setImmediate(resolve));assert.match(h.requests.at(-1).url,/timing=upcoming/);assert.match(h.requests.at(-1).url,/payment=all/);assert.equal(h.elements.reservationSearch.value,'');
+ let resolve;h.state.pending=new Promise(done=>resolve=done);const pending=h.context.loadBookings();h.events['window:pagehide']();resolve({ok:true,json:async()=>({bookings:[adminDto(fixture())],nextCursor:'private'})});await pending;assert.equal(h.elements.bookings.innerHTML,'');assert.equal(h.elements.moreBookings.hidden,true);
+ const evil=fixture();evil.customer.firstName='<img onerror=alert(1)>';assert.ok(h.context.renderBooking(adminDto(evil)).includes('&lt;img'));assert.ok(!h.context.renderBooking(adminDto(evil)).includes('<img'));
+});
+
+test('PostgreSQL dispatch search: all fields, combined filters, NY dates/DST, legacy data, paging and no mutation',{skip:!process.env.ER_TEST_DATABASE_URL},async t=>{
+ const u=new URL(process.env.ER_TEST_DATABASE_URL);assert.ok(['localhost','127.0.0.1'].includes(u.hostname));assert.ok(u.pathname.startsWith('/er_test_'));
+ const admin=new Pool({connectionString:u.toString()}),schema='dispatch_test_'+crypto.randomBytes(8).toString('hex');await admin.query('CREATE SCHEMA '+schema);
+ const pool=new Pool({connectionString:u.toString(),options:'-c search_path='+schema}),store=createStore({},pool);t.after(async()=>{await store.close();await admin.query('DROP SCHEMA '+schema+' CASCADE');await admin.end();});await store.migrate();
+ const ewr=fixture(),jfk=fixture({status:'confirmed',paymentStatus:'paid'});jfk.trip={...jfk.trip,date:'2026-10-01',pickup:'John F. Kennedy International Airport',pickupPlaceId:null,vehicle:'escalade'};
+ const lga=fixture({status:'completed',paymentStatus:'paid'});lga.trip={...lga.trip,date:'2026-09-30',pickup:'LaGuardia Airport',pickupPlaceId:null};
+ const other=fixture();other.trip={...other.trip,date:'2026-10-03',pickup:'JFK hotel',pickupPlaceId:null,dropoff:'Hotel Manhattan'};
+ const cancelled=fixture({status:'cancelled'}),processing=fixture({checkoutAttempt:{key:crypto.randomUUID(),expiresAt:1790956800,quote:ewr.quote,state:'session_identified',evidence:'verified_paid_awaiting_webhook'}}),review=fixture({paymentReviewRequired:true}),refund=fixture({status:'cancelled',paymentStatus:'paid',refundStatus:'confirmed'});
+ const overnight=fixture();overnight.trip={...overnight.trip,date:'2026-09-30',time:'23:00',tripType:'roundtrip',returnDate:'2026-10-02',returnTime:'12:00'};
+ const legacy=fixture();legacy.trip={...legacy.trip,date:'2026-10-04'};
+ const records=[ewr,jfk,lga,other,cancelled,processing,review,refund,overnight,legacy];
+ for(const r of records)await pool.query('INSERT INTO er_reservations(id,record,created_at,scheduled_start_at,scheduled_end_at) VALUES($1,$2::jsonb,$3,CASE WHEN $4 THEN NULL ELSE ($5::timestamp AT TIME ZONE \'America/New_York\') END,CASE WHEN $4 THEN NULL ELSE ($6::timestamp AT TIME ZONE \'America/New_York\') END)',[r.id,JSON.stringify(r),r.createdAt,r===legacy,r.trip.date+' '+r.trip.time,(r.trip.returnDate || r.trip.date)+' '+(r.trip.returnTime || r.trip.time)]);
+ const before=(await pool.query('SELECT id,record,customer_id,scheduled_start_at,scheduled_end_at FROM er_reservations ORDER BY id')).rows;
+ const ids=async input=>(await store.searchAdminReservations(adminQuery({status:'all',timing:'all',...input},at))).bookings.map(x=>x.id);
+ for(const search of [ewr.id,' ALICE  smith ','ALICE@EXAMPLE.TEST','+1 (201) 555-0199','newark liberty','TIMES SQUARE','UA 123'])assert.ok((await ids({search})).includes(ewr.id),search);
+ for(const search of ["' OR 1=1 --",'%','_','\\'])assert.deepEqual(await ids({search}),[]);
+ assert.deepEqual((await ids({payment:'paid'})).sort(),[jfk.id,lga.id,refund.id].sort());assert.ok(!(await ids({payment:'unpaid'})).includes(processing.id));assert.ok(!(await ids({payment:'unpaid'})).includes(review.id));assert.ok((await ids({payment:'processing'})).includes(processing.id));assert.ok((await ids({payment:'review'})).includes(review.id));assert.deepEqual(await ids({payment:'refunded'}),[refund.id]);
+ assert.deepEqual((await ids({status:'cancelled'})).sort(),[cancelled.id,refund.id].sort());assert.deepEqual(await ids({status:'completed'}),[lga.id]);assert.deepEqual(await ids({timing:'today'}),[jfk.id]);assert.ok((await ids({timing:'tomorrow'})).includes(ewr.id));assert.ok((await ids({timing:'upcoming'})).includes(overnight.id));assert.ok((await ids({timing:'upcoming'})).includes(legacy.id));assert.deepEqual((await ids({timing:'past'})).sort(),[jfk.id,lga.id].sort());
+ assert.deepEqual(await ids({airport:'jfk'}),[jfk.id]);assert.deepEqual(await ids({airport:'lga'}),[lga.id]);assert.deepEqual(await ids({airport:'other'}),[other.id]);assert.ok((await ids({airport:'ewr'})).includes(ewr.id));assert.deepEqual(await ids({vehicle:'escalade'}),[jfk.id]);
+ assert.deepEqual(await ids({timing:'tomorrow',payment:'unpaid',airport:'ewr',status:'active',search:ewr.id}),[ewr.id]);
+ const collected=[];let cursor;do{const result=await store.searchAdminReservations(adminQuery({status:'all',timing:'all',limit:'2',...(cursor?{cursor}:{})},at));collected.push(...result.bookings.map(x=>x.id));cursor=result.nextCursor;}while(cursor);assert.equal(collected.length,records.length);assert.equal(new Set(collected).size,records.length);
+ assert.deepEqual((await pool.query('SELECT id,record,customer_id,scheduled_start_at,scheduled_end_at FROM er_reservations ORDER BY id')).rows,before);
+ const dst=fixture();dst.trip={...dst.trip,date:'2026-11-01',time:'01:30'};await pool.query('INSERT INTO er_reservations(id,record,created_at) VALUES($1,$2::jsonb,$3)',[dst.id,JSON.stringify(dst),dst.createdAt]);
+ const now=Date.parse('2026-11-01T04:00:00Z');assert.ok((await store.searchAdminReservations(adminQuery({status:'all',timing:'today'},now))).bookings.some(x=>x.id===dst.id));assert.equal(adminQuery({},Date.parse('2026-10-02T02:00:00Z')).today,'2026-10-01');
+});

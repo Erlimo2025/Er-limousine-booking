@@ -36,7 +36,20 @@
         <div id="notice" class="notice"></div>
       </div>
 
+      <form id="reservationFilters" class="booking-card dispatch-filters" hidden>
+        <div class="form-grid">
+          <div class="field full"><label for="reservationSearch">Search reservations</label><input id="reservationSearch" type="search" maxlength="120" placeholder="Reference, passenger, email, phone, route or flight" autocomplete="off"></div>
+          <div class="field"><label for="filterTiming">Trip timing (New York time)</label><select id="filterTiming"><option value="upcoming">Upcoming</option><option value="today">Today</option><option value="tomorrow">Tomorrow</option><option value="past">Past</option><option value="all">All dates</option></select></div>
+          <div class="field"><label for="filterStatus">Reservation status</label><select id="filterStatus"><option value="active">Active / confirmed</option><option value="all">All statuses</option><option value="cancelled">Cancelled</option><option value="completed">Completed</option></select></div>
+          <div class="field"><label for="filterPayment">Payment status</label><select id="filterPayment"><option value="all">All payment states</option><option value="paid">Paid</option><option value="unpaid">Unpaid</option><option value="processing">Payment / refund processing</option><option value="review">Review required</option><option value="refunded">Refund confirmed</option></select></div>
+          <div class="field"><label for="filterAirport">Airport (either end of route)</label><select id="filterAirport"><option value="all">All airports / routes</option><option value="ewr">EWR</option><option value="jfk">JFK</option><option value="lga">LGA</option><option value="other">Other / unidentified</option></select></div>
+          <div class="field"><label for="filterVehicle">Vehicle</label><select id="filterVehicle"><option value="all">All vehicles</option><option value="suv">Luxury SUV / Suburban</option><option value="escalade">Cadillac Escalade ESV</option></select></div>
+        </div>
+        <div class="hero-actions"><button id="applyFilters" class="btn btn-primary" type="submit">Search / Apply Filters</button><button id="clearFilters" class="btn btn-secondary" type="button">Clear Filters</button></div>
+        <p id="activeFilters" role="status" aria-live="polite"></p>
+      </form>
       <div id="bookings" class="admin-grid"></div>
+      <button id="moreBookings" class="btn btn-secondary" type="button" hidden>Load More</button>
     </div>
   </main>
 
