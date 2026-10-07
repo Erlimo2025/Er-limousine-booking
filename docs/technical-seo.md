@@ -4,8 +4,9 @@ Production canonical origin: **https://erlimousineservice.com**.
 
 ## Audit and scope
 
-The homepage is currently the only public indexable HTML page. Fleet, service,
-about, contact and booking sections are anchors on that page, not separate URLs.
+Public indexable HTML now consists of the homepage and the approved
+`/new-jersey-to-nyc-car-service` landing page. Fleet, general service, about,
+contact and booking sections remain anchors on the homepage.
 The initial audit found no canonical, Open Graph/Twitter metadata, robots file,
 sitemap, structured data or private-page indexing directives. Existing page titles
 were distinct, but the homepage title used the older Black SUV label and its
@@ -45,11 +46,11 @@ operations. No physical address, business hours, reviews/ratings, awards or sche
 prices are invented. Organization is used rather than claiming address-based
 LocalBusiness rich-result eligibility without an authoritative physical address.
 
-`services/public-seo.js` loads the public homepage once at startup and optionally
+`services/public-seo.js` loads the allowlisted public templates once at startup and optionally
 adds a normalized US telephone from the existing public `COMPANY_PHONE` setting.
 Absent or invalid settings omit telephone; the module does not read secrets or
 invent a placeholder number. It never includes request/customer/reservation data.
-The JSON is escaped and its exact hash is added to the **homepage-only** CSP.
+The JSON is escaped and its exact hash is added to that **public page's** CSP.
 Other pages keep their existing CSP, including the confirmation-script hash and
 the dedicated Stripe Elements/reset-page policies. No script unsafe-inline/eval or
 new external origins are allowed. No new environment variable is required.
@@ -59,6 +60,7 @@ new external origins are allowed. No new environment variable is required.
 `public/sitemap.xml` currently contains exactly:
 
 - `https://erlimousineservice.com/`
+- `https://erlimousineservice.com/new-jersey-to-nyc-car-service`
 
 It omits private pages, API URLs, query variants, fragments and duplicate
 `/index.html`. It has no invented last-modified dates. Add approved future public
@@ -83,9 +85,41 @@ unauthenticated responses and redirects. Existing no-store, no-referrer and
 authentication controls are preserved. Private pages are not given indexable
 canonicals or social-sharing metadata.
 
-## Next public pages — planning only
+## New Jersey → New York City landing page
 
-1. **New Jersey → New York City Car Service**, explicitly NJ-origin service.
+The approved clean URL is `/new-jersey-to-nyc-car-service`. The `.html` file URL
+redirects permanently to it; a trailing slash or query variant declares the same
+clean canonical. This is an indexable public page with unique title/description,
+Open Graph/Twitter metadata and linked Organization, WebPage and Service JSON-LD.
+The schema describes New Jersey-origin transportation to NYC and uses the same
+validated public telephone handling as the homepage. FAQ answers are visible
+native disclosure elements; no FAQ rich-result claims or FAQ schema are added.
+
+The page reuses the existing navy/gold/white design and Suburban/Escalade fleet
+assets. Its dedicated CSS is scoped to landing-page components. There is no
+executable JavaScript, additional font, tracking script, new booking form or
+external dependency. Images have intrinsic dimensions; below-fold vehicle
+images are lazy-loaded. Check the rendered page at 320px, 390px and 1440px after
+visual changes, including keyboard focus, FAQ expansion and booking navigation.
+
+Sections cover the one-way NJ-origin service, supported booking/account features,
+NYC destinations, existing vehicles, booking steps, five FAQs and booking CTAs.
+Manhattan, Midtown, Times Square and Lower Manhattan are destinations, never
+advertised pickup locations. No NYC-origin return/round-trip service or JFK/LGA
+pickup service is advertised. No rates, ratings, years, availability guarantees
+or operating-authority claims are added.
+
+Every booking CTA points to `/#book`. The current booking flow has no general
+marketing-route prefill mechanism, so no route, Place ID, offer, fare, passenger
+count, date or vehicle is forced from this page. Customers choose/review all trip
+fields and receive the normal server-calculated quote, then Pay Now/Pay Later.
+The page links to the public homepage, booking and contact section; it has no
+private account/admin/payment/recovery links. The homepage About section links
+naturally to this new service page. No application/business behavior is changed.
+
+## Next public pages
+
+1. **New Jersey → New York City Car Service** is implemented locally for review.
 2. **EWR transportation**, strictly the EWR operations already supported, including
    the existing eligible EWR → Manhattan offer without expanding its terms.
 3. **New Jersey private car / limousine service**.
@@ -95,12 +129,12 @@ canonicals or social-sharing metadata.
 **JFK/LGA pickup marketing must not be published without confirmation of operating
 authority.** Do not advertise "to and from JFK/LaGuardia", unrestricted JFK/LGA
 transportation or NYC-origin pickup service. Do not place legal/licensing claims
-in public copy. None of these landing pages are created in this phase.
+in public copy. The EWR, general NJ and airport drop-off pages remain planning only.
 
 ## After an approved deployment
 
 Verify domain ownership in Google Search Console, submit `/sitemap.xml`, use URL
-Inspection on the homepage and request recrawling. Monitor canonical selection and
+Inspection on the homepage and new landing page and request recrawling. Monitor canonical selection and
 the Page Indexing report for excluded private pages; previously indexed private
 URLs need recrawling before noindex is observed. Validate the deployed JSON-LD
 with Google's Rich Results Test and the Schema.org validator; markup does not
