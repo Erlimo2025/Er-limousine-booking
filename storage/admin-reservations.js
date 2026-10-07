@@ -48,12 +48,14 @@ function searchSql(q){
 }
 function dispatchAirport(trip,side){
  const id=trip[side+'PlaceId'];
- if(typeof id==='string' && Object.hasOwn(ewr,id))return {code:'EWR',terminal:ewr[id].kind==='terminal'?ewr[id].label:null};
+ const canonical=typeof id==='string' && Object.hasOwn(ewr,id)?ewr[id]:null;
+ if(canonical?.kind==='terminal')return {code:'EWR',terminal:canonical.label};
  // Legacy/JFK/LGA display fallback only; never booking or pricing authority.
  const text=typeof trip[side]==='string'?trip[side]:'';
  const airports=[['EWR',/\bNewark(?: Liberty)?(?: International)? Airport\b/i],['JFK',/\b(?:John F\.? Kennedy(?: International)?|JFK(?: International)?) Airport\b/i],['LGA',/\b(?:LaGuardia|LGA) Airport\b/i]];
- const match=airports.find(([,pattern])=>pattern.test(text));if(!match)return null;
- const terminal=/\bTerminal\s+([ABC]|[1-9][0-9]?)(?=\s*(?:[,.)]|$)|\s+(?:at|Newark|John|JFK|LaGuardia|LGA)\b)/i.exec(text);
+ const match=airports.find(([,pattern])=>pattern.test(text));if(!match)return canonical?{code:'EWR',terminal:null}:null;
+ if(canonical && match[0]!=='EWR')return {code:'EWR',terminal:null};
+ const terminal=/\bTerminal\s+([ABC]|[1-9][0-9]?)(?=\s*(?:[,.)]|$)|\s+(?:at|Newark|John|JFK|LaGuardia|LGA|Arrivals|Departures)\b)/i.exec(text);
  return {code:match[0],terminal:terminal?'Terminal '+terminal[1].toUpperCase():null};
 }
 function adminDto(r){
