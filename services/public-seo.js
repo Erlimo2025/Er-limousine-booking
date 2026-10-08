@@ -15,7 +15,8 @@ function installPublicSeo(app, {publicDirectory, contentSecurityPolicy, companyP
   const telephone = publicTelephone(companyPhone);
   const pages = [
     {file: 'index.html', routes: ['/', '/index.html']},
-    {file: 'new-jersey-to-nyc-car-service.html', routes: ['/new-jersey-to-nyc-car-service']}
+    {file: 'new-jersey-to-nyc-car-service.html', routes: ['/new-jersey-to-nyc-car-service']},
+    {file: 'newark-airport-ewr-car-service.html', routes: ['/newark-airport-ewr-car-service']}
   ];
   for (const page of pages) {
     const template = fs.readFileSync(path.join(publicDirectory, page.file), 'utf8');
@@ -34,6 +35,7 @@ function installPublicSeo(app, {publicDirectory, contentSecurityPolicy, companyP
     });
   }
   app.get('/new-jersey-to-nyc-car-service.html', (_req, res) => res.redirect(301, '/new-jersey-to-nyc-car-service'));
+  app.get('/newark-airport-ewr-car-service.html', (_req, res) => res.redirect(301, '/newark-airport-ewr-car-service'));
 }
 
 module.exports = {installPublicSeo};

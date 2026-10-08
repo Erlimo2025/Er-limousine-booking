@@ -4,8 +4,9 @@ Production canonical origin: **https://erlimousineservice.com**.
 
 ## Audit and scope
 
-Public indexable HTML now consists of the homepage and the approved
-`/new-jersey-to-nyc-car-service` landing page. Fleet, general service, about,
+Public indexable HTML now consists of the homepage, the approved
+`/new-jersey-to-nyc-car-service` page and `/newark-airport-ewr-car-service`.
+Fleet, general service, about,
 contact and booking sections remain anchors on the homepage.
 The initial audit found no canonical, Open Graph/Twitter metadata, robots file,
 sitemap, structured data or private-page indexing directives. Existing page titles
@@ -61,6 +62,7 @@ new external origins are allowed. No new environment variable is required.
 
 - `https://erlimousineservice.com/`
 - `https://erlimousineservice.com/new-jersey-to-nyc-car-service`
+- `https://erlimousineservice.com/newark-airport-ewr-car-service`
 
 It omits private pages, API URLs, query variants, fragments and duplicate
 `/index.html`. It has no invented last-modified dates. Add approved future public
@@ -113,15 +115,63 @@ Every booking CTA points to `/#book`. The current booking flow has no general
 marketing-route prefill mechanism, so no route, Place ID, offer, fare, passenger
 count, date or vehicle is forced from this page. Customers choose/review all trip
 fields and receive the normal server-calculated quote, then Pay Now/Pay Later.
-The page links to the public homepage, booking and contact section; it has no
+The page links to the public homepage, booking, EWR page and contact section; it has no
 private account/admin/payment/recovery links. The homepage About section links
 naturally to this new service page. No application/business behavior is changed.
+
+## Newark Airport (EWR) landing page
+
+`/newark-airport-ewr-car-service` markets pickups originating at Newark Liberty
+International Airport, New Jersey, to Manhattan/New York City, New Jersey,
+Connecticut and Pennsylvania. Its title is **Newark Airport Car Service | ER
+Limousine Service**. Canonical/social URLs use the extensionless production URL;
+the `.html` alias redirects to it. The sitemap includes this third public page,
+and existing robots/private-page noindex behavior remains unchanged.
+
+It shares the landing-page CSS and real Suburban/Escalade photographs; EWR-only
+styles live in `public/ewr-car-service.css`. There is no executable script on the
+landing page. It has one H1, a prominent Manhattan offer, four destination cards,
+terminal/pickup guidance, the current two-vehicle fleet, six booking steps and
+eight native, keyboard-accessible FAQs. Organization/WebPage/Service JSON-LD uses
+the same validated public phone and exact page-specific CSP hash. General-service
+metadata/schema intentionally has no price or Offer node implying a flat fare for
+all destinations. No FAQ rich-result claims are added.
+
+The **$150 flat rate** is existing public display information only: qualifying
+one-way **EWR → Manhattan**, **Chevrolet Suburban Premier / Luxury SUV / `suv`**,
+up to six passengers. The offer does not cover all NYC destinations, NJ/CT/PA,
+Escalade, reverse trips or other airports. FIRST15 stays excluded. NJ/CT/PA cards
+link to normal quoting and contain no flat/city-specific prices.
+
+General CTAs use `/#book`. Special CTAs use `/#ewr-manhattan-special`. A small
+homepage initialization hook recognizes only that fragment and invokes the
+**existing** `activateEwrManhattanSpecial()` selection function, then replaces the
+fragment with `#book`. It adds no pricing or authorization rule, query-parameter
+trust, provider request, reservation creation or automatic payment. The existing
+function selects the General EWR identity and Suburban, leaves destination and
+schedule for customer review, and disables promotions for the special. Explicit
+Book Again input takes precedence, and stale initialization after pagehide cannot
+apply the landing selection. Other booking entry paths are unchanged.
+
+Quote and Checkout still require the exact approved EWR identity and provider
+verification, verified Manhattan destination, eligible one-way/airport journey
+and `suv`. A/B keep their own verified IDs; C uses the existing exact-C-only General
+verification/routing fallback; General remains unchanged. Manual address edits
+still clear identity. No pricing, FIRST15, vehicle, payment or ownership code changes.
+
+Pickup copy reflects the current Airport form: Terminal A/B/C or Not sure / EWR
+General, date/time, optional flight number and notes, and eligible time changes
+in My Trips when signed in. No automatic flight tracking, meet-and-greet, waiting
+time, baggage-help or availability guarantees are invented. No JFK/LGA or NYC-origin
+pickup marketing is added. The homepage EWR service banner links to this page;
+both public landing-page footers link to one another with their origin direction
+clearly named. No private URLs are linked from either landing page.
 
 ## Next public pages
 
 1. **New Jersey → New York City Car Service** is implemented locally for review.
-2. **EWR transportation**, strictly the EWR operations already supported, including
-   the existing eligible EWR → Manhattan offer without expanding its terms.
+2. **EWR transportation** is implemented locally for review, including the existing
+   eligible EWR → Manhattan offer without expanding its terms.
 3. **New Jersey private car / limousine service**.
 4. **New Jersey airport drop-off pages** only after JFK/LGA operating authority is
    confirmed.
@@ -129,7 +179,7 @@ naturally to this new service page. No application/business behavior is changed.
 **JFK/LGA pickup marketing must not be published without confirmation of operating
 authority.** Do not advertise "to and from JFK/LaGuardia", unrestricted JFK/LGA
 transportation or NYC-origin pickup service. Do not place legal/licensing claims
-in public copy. The EWR, general NJ and airport drop-off pages remain planning only.
+in public copy. General NJ and airport drop-off pages remain planning only.
 
 ## After an approved deployment
 

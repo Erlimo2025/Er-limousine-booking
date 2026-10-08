@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const vm = require('node:vm');
 const {createRequire} = require('node:module');
 const testPath = path.join(__dirname, 'security-abuse.test.cjs');
 const source = fs.readFileSync(testPath, 'utf8');
@@ -14,6 +15,10 @@ const servicePath = '/new-jersey-to-nyc-car-service';
 const serviceFile = 'new-jersey-to-nyc-car-service.html';
 const serviceTitle = 'New Jersey to NYC Car Service | ER Limousine Service';
 const serviceDescription = 'Book private car service from New Jersey to New York City with ER Limousine Service. Choose a luxury SUV, review your quote, and reserve online.';
+const ewrPath = '/newark-airport-ewr-car-service';
+const ewrFile = 'newark-airport-ewr-car-service.html';
+const ewrTitle = 'Newark Airport Car Service | ER Limousine Service';
+const ewrDescription = 'Private car service from Newark Airport (EWR) to Manhattan, New Jersey, Connecticut and Pennsylvania. Book your trip with ER Limousine Service.';
 const title = 'New Jersey Car &amp; Limousine Service | ER Limousine Service';
 const description = 'Private car and limousine transportation from New Jersey to New York City, plus supported EWR airport service. Book ER Limousine Service online.';
 const read = file => fs.readFileSync(path.join(publicDirectory, file), 'utf8');
@@ -120,15 +125,15 @@ test('sitemap contains only approved canonical public pages, with no private/tra
   assert.match(r.headers.get('content-type'), /xml/);
   assert.match(r.body, /^<\?xml version="1.0" encoding="UTF-8"\?>/);
   assert.match(r.body, /<urlset xmlns="http:\/\/www\.sitemaps\.org\/schemas\/sitemap\/0.9">/);
-  assert.deepEqual([...r.body.matchAll(/<loc>(.*?)<\/loc>/g)].map(match => match[1]), [origin + '/', origin + servicePath]);
-  assert.equal((r.body.match(/<url>/g) || []).length, 2);
+  assert.deepEqual([...r.body.matchAll(/<loc>(.*?)<\/loc>/g)].map(match => match[1]), [origin + '/', origin + servicePath, origin + ewrPath]);
+  assert.equal((r.body.match(/<url>/g) || []).length, 3);
   assert.match(r.body, /<\/urlset>\s*$/);
   assert.doesNotMatch(r.body, /account|admin|dispatch|success|payment-methods|reset-password|login|signup|recovery|api\/|index\.html|jfk|lga/i);
 });
 
 test('all private HTML pages and their API/auth surfaces carry noindex without removing no-store', async t => {
   const h = await harness(t);
-  assert.deepEqual(fs.readdirSync(publicDirectory).filter(file => file.endsWith('.html')).sort(), ['index.html', serviceFile, ...privatePages].sort());
+  assert.deepEqual(fs.readdirSync(publicDirectory).filter(file => file.endsWith('.html')).sort(), ['index.html', serviceFile, ewrFile, ...privatePages].sort());
   for (const page of privatePages) {
     assert.match(read(page), /<meta name="robots" content="noindex, nofollow">/);
     const r = await h.request('/' + page);
@@ -183,7 +188,7 @@ test('homepage marketing has one meaningful H1, working section links and no JFK
 
 test('public SEO reads create no reservation/provider activity and keep authoritative quotes/pay-later intact', async t => {
   const h = await harness(t);
-  for (const url of ['/', '/index.html', servicePath, '/robots.txt', '/sitemap.xml']) assert.equal((await h.request(url)).status, 200);
+  for (const url of ['/', '/index.html', servicePath, ewrPath, '/robots.txt', '/sitemap.xml']) assert.equal((await h.request(url)).status, 200);
   assert.equal(h.records().length, 0);
   assert.equal(h.state.googleCalls, 0);
   assert.equal(h.state.creates.length, 0);
@@ -237,7 +242,7 @@ test('landing CTAs use the existing booking flow with no forced route, price, ID
   const book = links.filter(link => /Book Your Ride/.test(link[2]));
   assert.equal(book.length, 5);
   for (const link of book) assert.equal(link[1], '/#book');
-  for (const link of links) assert.ok(['/', '/#book', '/#contact', '#vehicles', '#main'].includes(link[1]), link[1]);
+  for (const link of links) assert.ok(['/', '/#book', '/#contact', '#vehicles', '#main', ewrPath].includes(link[1]), link[1]);
   assert.doesNotMatch(r.body, /<form|<input|<select|<script\s+src=|customer_id|pickupPlaceId|offerCode|bookingId|stripeSessionId|\/account|\/admin|\/success|\/payment-methods|\/reset-password|\/api\//);
   assert.equal(h.records().length, 0);
   assert.equal(h.state.googleCalls, 0);
@@ -323,4 +328,140 @@ test('landing CSS is separate with mobile sizing, intrinsic images, focus and us
   assert.match(css, /grid-template-columns: 1fr/);
   assert.match(css, /prefers-reduced-motion/);
   assert.doesNotMatch(css, /@import|https?:|100vw/);
+});
+
+test('EWR public page has unique indexable metadata, clean canonical, schema and unchanged private CSP', async t => {
+  const h = await harness(t, {COMPANY_PHONE: '(201) 555-0199'});
+  for (const url of [ewrPath, ewrPath + '/', ewrPath + '?amount=1&offerCode=forged']) {
+    const r = await h.request(url);
+    assert.equal(r.status, 200);
+    assert.equal(r.headers.get('x-robots-tag'), null);
+    assert.match(r.body, /name="robots" content="index, follow, max-image-preview:large"/);
+    assert.equal(r.body.match(/<title>(.*?)<\/title>/)[1], ewrTitle);
+    assert.ok(![title, serviceTitle].includes(ewrTitle));
+    assert.ok(ewrTitle.length <= 60 && ewrDescription.length <= 160);
+    assert.equal(r.body.match(/name="description" content="([^"]+)"/)[1], ewrDescription);
+    assert.equal(r.body.match(/rel="canonical" href="([^"]+)"/)[1], origin + ewrPath);
+    assert.equal(r.body.match(/property="og:url" content="([^"]+)"/)[1], origin + ewrPath);
+    assert.ok(r.body.includes(`property="og:title" content="${ewrTitle}"`));
+    assert.ok(r.body.includes(`property="og:description" content="${ewrDescription}"`));
+    const nodes = graph(r.body);
+    assert.deepEqual(nodes.map(node => node['@type']), ['Organization', 'WebPage', 'Service']);
+    assert.equal(nodes[0].telephone, '+12015550199');
+    assert.equal(nodes[1].about['@id'], nodes[2]['@id']);
+    assert.equal(nodes[2].provider['@id'], origin + '/#business');
+    assert.equal(nodes[1].url, origin + ewrPath);
+    assert.match(nodes[2].description, /Pickups originating at Newark Liberty/);
+    assert.doesNotMatch(JSON.stringify(nodes), /150|price|"Offer"|FAQPage|aggregateRating|"review"/);
+    const hash = crypto.createHash('sha256').update(schemaText(r.body)).digest('base64');
+    const api = await h.request('/api/public-config');
+    assert.equal(r.headers.get('content-security-policy').replace(` 'sha256-${hash}'`, ''), api.headers.get('content-security-policy'));
+    assert.equal(r.headers.get('x-frame-options'), 'DENY');
+    assert.equal(r.headers.get('referrer-policy'), 'no-referrer');
+  }
+  const alias = await fetch(h.url + '/' + ewrFile, {redirect: 'manual'});
+  assert.equal(alias.status, 301);
+  assert.equal(alias.headers.get('location'), ewrPath);
+  assert.equal(h.state.googleCalls, 0);
+  assert.equal(h.state.creates.length, 0);
+});
+
+test('EWR offer presentation limits $150 to the existing one-way Manhattan Suburban offer, not NJ/CT/PA', () => {
+  const html = read(ewrFile), pricing = require('../pricing');
+  assert.equal(pricing.fixedOffers.EWR_MANHATTAN_SUV.price, 150);
+  assert.equal(pricing.fixedOffers.EWR_MANHATTAN_SUV.vehicle, 'suv');
+  assert.equal(pricing.fixedOffers.EWR_MANHATTAN_SUV.allowPromotions, false);
+  const special = html.match(/<aside class="ewr-special"[\s\S]*?<\/aside>/)[0];
+  for (const text of ['EWR → MANHATTAN', 'Luxury SUV', '$150', 'FLAT RATE', 'Chevrolet Suburban Premier only', 'Up to 6 passengers', 'qualifying one-way', 'verified Manhattan destination', 'FIRST15 does not apply']) assert.ok(special.includes(text), text);
+  assert.match(special, /href="\/#ewr-manhattan-special">Book This Ride/);
+  for (const [code, name] of [['nj', 'New Jersey'], ['ct', 'Connecticut'], ['pa', 'Pennsylvania']]) {
+    const card = html.match(new RegExp('<article[^>]*data-destination="' + code + '"[\\s\\S]*?<\\/article>'))[0];
+    assert.ok(card.includes('EWR → ' + name));
+    assert.doesNotMatch(card, /150|flat|\$/i);
+    assert.match(card, /href="\/#book"/);
+    assert.match(card, /quote/i);
+  }
+  assert.match(html, /Other New York City destinations and other vehicles use the normal quote flow/);
+});
+
+test('EWR page shows only project fleet/terminals and truthful optional airport features, without unsupported marketing', () => {
+  const html = read(ewrFile), pricing = require('../pricing');
+  assert.deepEqual(Object.keys(pricing.vehicleRates).sort(), ['escalade', 'suv']);
+  assert.equal((html.match(/<h1\b/g) || []).length, 1);
+  assert.match(html, /<h1 id="route-title">Newark Airport <span>\(EWR\) Car Service<\/span><\/h1>/);
+  for (const name of ['Chevrolet Suburban Premier', 'Cadillac Escalade ESV']) assert.ok(html.includes(name));
+  for (const image of html.matchAll(/<img[^>]*src="([^"]+)"[^>]*>/g)) {
+    assert.ok(['/suburban-premier-2025.png', '/cadillac-escalade.png'].includes(image[1]));
+    assert.match(image[0], /alt="[^"]+"/);
+    assert.match(image[0], /width="1774" height="887"/);
+  }
+  assert.ok(Object.values(pricing.vehicleRates).every(vehicle => vehicle.maxPassengers === 6));
+  for (const terminal of ['Terminal A', 'Terminal B', 'Terminal C', 'Not sure / EWR General']) assert.ok(html.includes(terminal));
+  assert.match(html, /optional flight-number field/);
+  assert.match(html, /while the trip is active/);
+  assert.equal((html.match(/<details>/g) || []).length, 8);
+  assert.equal((html.match(/<li><h3>/g) || []).length, 6);
+  assert.doesNotMatch(html, /Executive Sedan|Executive Van|Sprinter|JFK|LGA|LaGuardia|to and from|automatic flight|flight tracking|meet.and.greet|free waiting|baggage assistance|guaranteed|#1|\bbest\b|\bcheapest\b|licensed|licensing|certified/i);
+  assert.doesNotMatch(html, /pickup (?:in|from) (?:NYC|New York City|Manhattan)|NYC\s*→\s*(?:EWR|New Jersey)|New York City\s*→\s*(?:EWR|New Jersey)/i);
+});
+
+test('EWR internal links stay public and both special/general CTAs lead to existing booking without creating a reservation', async t => {
+  const h = await harness(t), r = await h.request(ewrPath);
+  const links = [...r.body.matchAll(/href="([^"]+)"/g)].map(match => match[1]);
+  for (const link of links.filter(link => !link.startsWith(origin) && !link.endsWith('.css'))) assert.ok(['/', '/#book', '/#ewr-manhattan-special', '/#contact', servicePath, '#destinations', '#main'].includes(link), link);
+  assert.match(r.body, /href="\/#ewr-manhattan-special">Book This Ride/);
+  assert.match(r.body, /href="\/#book">Book Your Ride/);
+  assert.match(read('index.html'), /href="\/newark-airport-ewr-car-service">Newark Liberty \(EWR\)/);
+  assert.ok(read(serviceFile).includes(`href="${ewrPath}"`));
+  assert.ok(r.body.includes(`href="${servicePath}"`));
+  assert.doesNotMatch(r.body, /<form|<input|<script\s+src=|\/account|\/admin|\/api\/|customer_id|pickupPlaceId|stripeSessionId/);
+  assert.equal(h.records().length, 0);
+  assert.equal(h.state.googleCalls, 0);
+  assert.equal(h.state.creates.length, 0);
+});
+
+function entryUi(hash, search = '') {
+  const src = read('app.js'), calls = [], context = {
+    bookAgainGeneration: 0, pickup: {}, dropoff: {}, pickupSuggestions: {}, dropoffSuggestions: {},
+    URLSearchParams, configureDates() {}, selectTripType() {}, resetPassengerOptions() {}, resetPromoDisplay() {}, enableAddressAutocomplete() {},
+    loadPublicConfig: async () => {}, loadBookAgainTemplate: async () => {}, activateEwrManhattanSpecial: () => calls.push('existing-offer-selection'),
+    showNotice() {}, document: {getElementById: id => ({scrollIntoView() {calls.push('scroll:' + id);}})},
+    window: {location: {hash, search, pathname: '/'}, history: {replaceState: (_state, _title, url) => calls.push(url)}}
+  };
+  vm.createContext(context);
+  vm.runInContext(src.slice(src.indexOf('async function initialize()'), src.indexOf('\ninitialize();')), context);
+  return {context, calls};
+}
+
+test('only the explicit EWR landing fragment selects the existing public offer UI; normal/Book Again/stale entries stay unchanged', async () => {
+  const special = entryUi('#ewr-manhattan-special');
+  await special.context.initialize();
+  assert.deepEqual(special.calls, ['existing-offer-selection', '/#book', 'scroll:book']);
+  for (const [hash, search] of [['#book', ''], ['#unrecognized', ''], ['', '?offerCode=EWR_MANHATTAN_SUV&amount=150'], ['#ewr-manhattan-special', '?bookAgain=source']]) {
+    const ui = entryUi(hash, search); await ui.context.initialize(); assert.deepEqual(ui.calls, []);
+  }
+  const stale = entryUi('#ewr-manhattan-special'); let release;
+  stale.context.loadPublicConfig = () => new Promise(resolve => release = resolve);
+  const pending = stale.context.initialize(); stale.context.bookAgainGeneration++; release(); await pending;
+  assert.deepEqual(stale.calls, []);
+  const changed = entryUi('#ewr-manhattan-special');
+  changed.context.loadPublicConfig = async () => {changed.context.window.location.hash = '#book';};
+  await changed.context.initialize(); assert.deepEqual(changed.calls, []);
+});
+
+test('EWR landing offer still needs server-verified EWR/Manhattan/suv eligibility and never broadens to NJ/CT/PA or other vehicles', async t => {
+  const h = await harness(t), special = {...booking, vehicle: 'suv', tripType: 'airport', offerCode: 'EWR_MANHATTAN_SUV', promoCode: 'FIRST15', amount: 1, total: 1};
+  assert.equal((await h.request(ewrPath)).status, 200);
+  const result = await h.request('/api/quote', special);
+  assert.equal(result.status, 200); assert.equal(result.body.total, 150); assert.equal(result.body.discount, 0); assert.equal(result.body.promotion, null);
+  for (const change of [{pickupPlaceId: 'forged'}, {pickupPlaceId: undefined}, {vehicle: 'escalade'}, {tripType: 'roundtrip'}, {tripType: 'hourly', hours: 3}]) assert.equal((await h.request('/api/quote', {...special, ...change})).status, 400);
+  const counties = {'Jersey City, NJ': 'Hudson County', 'Stamford, CT': 'Fairfield County', 'Philadelphia, PA': 'Philadelphia County'};
+  h.state.searchResults = Object.fromEntries(Object.entries(counties).map(([name, county]) => [name, [{addressComponents: [{types: ['administrative_area_level_2'], longText: county}]}]]));
+  for (const destination of Object.keys(counties)) {
+    assert.equal((await h.request('/api/quote', {...special, dropoff: destination})).status, 400);
+    const normal = await h.request('/api/quote', {...booking, vehicle: 'suv', tripType: 'airport', dropoff: destination, total: 150});
+    assert.equal(normal.status, 200); assert.equal(normal.body.fixedOffer, null); assert.equal(normal.body.total, 80);
+  }
+  const reserved = await h.request('/api/checkout', {...special, paymentChoice: 'later'});
+  assert.equal(reserved.status, 200); assert.equal(h.records()[0].quote.total, 150); assert.equal(h.state.creates.length, 0);
 });

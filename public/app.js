@@ -1433,6 +1433,9 @@ window.addEventListener('pageshow',event=>{
 });
 
 async function initialize() {
+  // A public landing link selects the existing offer UI, never price authority.
+  const ewrLandingEntry = window.location.hash === '#ewr-manhattan-special' &&
+    !new URLSearchParams(window.location.search).has('bookAgain');
 
   configureDates();
 
@@ -1458,7 +1461,14 @@ async function initialize() {
 
   const initialBookingGeneration=bookAgainGeneration;
   await loadPublicConfig();
-  if(initialBookingGeneration===bookAgainGeneration)await loadBookAgainTemplate();
+  if(initialBookingGeneration===bookAgainGeneration){
+    await loadBookAgainTemplate();
+    if(ewrLandingEntry && initialBookingGeneration===bookAgainGeneration && window.location.hash==='#ewr-manhattan-special'){
+      activateEwrManhattanSpecial();
+      window.history.replaceState(null,'',window.location.pathname+window.location.search+'#book');
+      document.getElementById('book').scrollIntoView({block:'start'});
+    }
+  }
 
   const params =
     new URLSearchParams(
