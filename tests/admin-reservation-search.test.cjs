@@ -36,14 +36,14 @@ test('search storage enforces a short statement timeout and parameterized bounde
 
 function ui(){
  const elements={},events={},requests=[];
- const ids=['token','loadBtn','bookings','notice','adminLoginField','logoutBtn','reservationFilters','moreBookings','applyFilters','clearFilters','activeFilters','reservationSearch','filterStatus','filterPayment','filterTiming','filterAirport','filterVehicle'];
+ const ids=['token','loadBtn','bookings','notice','adminLoginField','logoutBtn','reservationFilters','moreBookings','applyFilters','clearFilters','activeFilters','reservationSearch','filterView','filterStatus','filterPayment','filterTiming','filterAirport','filterVehicle'];
  for(const id of ids)elements[id]={value:'',innerHTML:'',textContent:'',disabled:false,hidden:true,options:[{textContent:id}],selectedIndex:0,classList:{toggle(){}},addEventListener:(event,fn)=>events[id+':'+event]=fn,insertAdjacentHTML(_,html){this.innerHTML+=html;}};
  const html=fs.readFileSync(path.join(__dirname,'../public/admin.html'),'utf8');
  for(const select of html.matchAll(/<select id="([^"]+)">([\s\S]*?)<\/select>/g)){
   const element=elements[select[1]];element.options=[...select[2].matchAll(/<option value="([^"]+)">([^<]+)<\/option>/g)].map(option=>({value:option[1],textContent:option[2]}));
   let value=element.options[0].value;Object.defineProperty(element,'value',{get:()=>value,set:next=>{value=next;element.selectedIndex=element.options.findIndex(option=>option.value===next);}});
  }
- elements.reservationFilters.reset=()=>{elements.reservationSearch.value='';for(const key of ['Status','Payment','Timing','Airport','Vehicle'])elements['filter'+key].value=key==='Status'?'active':key==='Timing'?'upcoming':'all';};elements.reservationFilters.reset();
+ elements.reservationFilters.reset=()=>{elements.reservationSearch.value='';elements.filterView.value='dispatch';for(const key of ['Status','Payment','Timing','Airport','Vehicle'])elements['filter'+key].value=key==='Status'?'active':key==='Timing'?'upcoming':'all';};elements.reservationFilters.reset();
  const state={data:{bookings:[],nextCursor:null}};
  const context={document:{getElementById:id=>elements[id]},window:{addEventListener:(event,fn)=>events['window:'+event]=fn},URLSearchParams,fetch:async(url,options)=>{requests.push({url,options});return state.pending&&url.startsWith('/api/bookings/search')?await state.pending:{ok:true,json:async()=>url==='/api/admin/session'?{authenticated:true}:state.data};}};
  vm.createContext(context);vm.runInContext(fs.readFileSync(path.join(__dirname,'../public/admin.js'),'utf8'),context);return {context,elements,events,requests,state};
@@ -67,10 +67,10 @@ test('dispatch Clear Filters explicitly resets every control, summary and pagina
  h.elements.reservationFilters.reset=()=>{h.elements.reservationSearch.value='';h.elements.filterTiming.value='upcoming';h.elements.filterStatus.value='active';h.elements.filterVehicle.value='all';};
  let resolve;h.state.pending=new Promise(done=>{resolve=done;});const before=h.requests.length;h.events['clearFilters:click']();
  for(const [id,value]of Object.entries({reservationSearch:'',filterTiming:'upcoming',filterStatus:'active',filterPayment:'all',filterAirport:'all',filterVehicle:'all'}))assert.equal(h.elements[id].value,value,id);
- assert.equal(h.elements.activeFilters.textContent,'Filters: Active / confirmed · All payment states · Upcoming · All airports / routes · All vehicles');
+ assert.equal(h.elements.activeFilters.textContent,'Filters: Dispatch trips · Active / confirmed · All payment states · Upcoming · All airports / routes · All vehicles');
  assert.equal(h.elements.bookings.innerHTML,'');assert.equal(h.elements.moreBookings.hidden,true);assert.equal(h.requests.length,before+1);
  const defaults=new URL(h.requests.at(-1).url,'http://localhost').searchParams;
- assert.deepEqual(Object.fromEntries(defaults),{search:'',limit:'25',status:'active',payment:'all',timing:'upcoming',airport:'all',vehicle:'all'});
+ assert.deepEqual(Object.fromEntries(defaults),{search:'',limit:'25',view:'dispatch',status:'active',payment:'all',timing:'upcoming',airport:'all',vehicle:'all'});
  resolve({ok:true,json:async()=>({bookings:[adminDto(fixture())],nextCursor:null})});await new Promise(done=>setImmediate(done));assert.equal(h.elements.moreBookings.hidden,true);assert.equal((h.elements.bookings.innerHTML.match(/booking-item/g)||[]).length,1);
 });
 
@@ -125,7 +125,7 @@ test('dispatch editor preserves status/dispatch/reconciliation actions with acce
 test('dispatch polish shows friendly visible labels while retaining internal action values and refreshed asset URLs',()=>{
  const h=ui(),r=fixture({checkoutAttempt:{state:'submitted_unknown',quote:{promotion:{code:'FIRST15'}}}}),html=h.context.renderBooking(adminDto(r));
  assert.match(html,/>Awaiting Payment<\/span>/);assert.match(html,/value="awaiting_payment" selected>Awaiting Payment<\/option>/);assert.doesNotMatch(html,/>awaiting_payment<|>driver_en_route<|>submitted_unknown</);assert.match(html,/Provider response pending/);
- const page=fs.readFileSync(path.join(__dirname,'../public/admin.html'),'utf8');assert.match(page,/\/admin\.js\?v=dispatch-cards-2/);assert.match(page,/\/styles\.css\?v=dispatch-cards-2/);
+ const page=fs.readFileSync(path.join(__dirname,'../public/admin.html'),'utf8');assert.match(page,/\/admin\.js\?v=dispatch-archive-1/);assert.match(page,/\/styles\.css\?v=dispatch-archive-1/);
  const css=fs.readFileSync(path.join(__dirname,'../public/styles.css'),'utf8');assert.match(css,/\.dispatch-editor:not\(\[open\]\)>:not\(summary\)\{display:none\}/);assert.match(css,/\.dispatch-contact a\.dispatch-phone\{[^}]*background:#123b2c/);
 });
 

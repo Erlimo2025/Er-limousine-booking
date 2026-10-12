@@ -76,7 +76,8 @@ for(const label of ['pickup','return'])for(const ending of ['date or time.','dat
 }
 for(const message of ['This reservation has already been paid.','Checkout is already processing for this reservation.',
  'Checkout is already processing. Please try again.','A first-ride Checkout is already pending. Please complete or retry that booking.',
- 'A first-ride Checkout is already pending.'])customerErrorMessages.set(message,{message,status:409});
+ 'A first-ride Checkout is already pending.','Cancel or complete an active trip before archiving it.',
+ 'Restore this trip before reactivating dispatch.','Trip archive unavailable. Refresh and try again.'])customerErrorMessages.set(message,{message,status:409});
 for(const message of ['Please log in to continue.','Reservation access unavailable.'])customerErrorMessages.set(message,{message,status:401});
 customerErrorMessages.set('Authentication required.',{message:'Please log in to continue.',status:401});
 customerErrorMessages.set('Customer trip unavailable.',{message:'Reservation unavailable.',status:404});
@@ -1543,6 +1544,7 @@ function requireAdmin(req, res, next) {
     return res.status(401).json({error: "Unauthorized"});
   }
   session.lastSeen = now;
+  req.adminArchiveAuthority={actorId:session.auditActorId,authorized:()=>adminSessions.get(key)===session && session.expiresAt>Date.now() && session.lastSeen+ADMIN_SESSION_IDLE_MS>Date.now()};
   next();
 }
 
@@ -1755,7 +1757,7 @@ app.post("/api/admin/login", (req, res) => {
   const id = crypto.randomBytes(32).toString("base64url");
   const now = Date.now();
   adminSessions.set(crypto.createHash("sha256").update(id).digest("hex"), {
-    expiresAt: now + ADMIN_SESSION_ABSOLUTE_MS, lastSeen: now
+    expiresAt: now + ADMIN_SESSION_ABSOLUTE_MS, lastSeen: now, auditActorId:crypto.randomUUID()
   });
   res.cookie(adminCookieName, id, {...adminCookieOptions, maxAge: ADMIN_SESSION_ABSOLUTE_MS});
   res.json({authenticated: true});
@@ -2534,6 +2536,14 @@ app.get('/api/bookings/search',requireAdmin,rateLimit('admin-search',30),route(a
  res.json(await reservationStore.searchAdminReservations(query));
 }));
 
+for(const action of ['archive','restore'])app.post('/api/bookings/:id/'+action,requireAdmin,rateLimit('admin-archive',30),route(async(req,res)=>{
+ if(req.get('origin')!==new URL(SITE_URL).origin || !req.is('application/json') || req.get('sec-fetch-site') && !['same-origin','none'].includes(req.get('sec-fetch-site')))return res.status(403).json({error:'Unauthorized'});
+ require('./storage/admin-archives').archiveInput(req.params.id,req.body);
+ const initial=await reservationStore.get(req.params.id);if(!initial)return res.status(404).json({error:'Booking not found.'});
+ const result=await reservationStore.withActionLock(paymentActionKey(initial),()=>reservationStore.manageAdminArchive(req.adminArchiveAuthority,req.params.id,req.body,action,Date.now()));
+ res.json({ok:true,...result});
+}));
+
 
 /* =========================================
    ADMIN — UPDATE BOOKING
@@ -2558,6 +2568,7 @@ app.patch(
     const initial=await reservationStore.get(req.params.id);
     if(!initial)return res.status(404).json({error:'Booking not found.'});
     const mutate=async()=>{
+    if(req.body.status && !['cancelled','completed'].includes(req.body.status) && (await reservationStore.adminArchiveState(req.params.id))?.archived_at)throw Object.assign(new Error('Restore this trip before reactivating dispatch.'),{status:409});
     if(req.body.status==='cancelled')await cancelUnderLock(await reservationStore.get(req.params.id));
     return reservationStore.update(req.params.id, async booking => {
     if (req.body.status) {

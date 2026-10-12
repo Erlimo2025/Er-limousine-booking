@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Dispatch | ER Limousine Service</title>
   <meta name="robots" content="noindex, nofollow">
-  <link rel="stylesheet" href="/styles.css?v=dispatch-cards-2">
+  <link rel="stylesheet" href="/styles.css?v=dispatch-archive-1">
 </head>
 <body>
   <nav class="nav">
@@ -39,6 +39,7 @@
 
       <form id="reservationFilters" class="booking-card dispatch-filters" hidden>
         <div class="form-grid">
+          <div class="field full"><label for="filterView">Trip view</label><select id="filterView"><option value="dispatch">Dispatch trips</option><option value="archived">Archived Trips</option></select></div>
           <div class="field full"><label for="reservationSearch">Search reservations</label><input id="reservationSearch" type="search" maxlength="120" placeholder="Reference, passenger, email, phone, route or flight" autocomplete="off"></div>
           <div class="field"><label for="filterTiming">Trip timing (New York time)</label><select id="filterTiming"><option value="upcoming">Upcoming</option><option value="today">Today</option><option value="tomorrow">Tomorrow</option><option value="past">Past</option><option value="all">All dates</option></select></div>
           <div class="field"><label for="filterStatus">Reservation status</label><select id="filterStatus"><option value="active">Active / confirmed</option><option value="all">All statuses</option><option value="cancelled">Cancelled</option><option value="completed">Completed</option></select></div>
@@ -54,6 +55,6 @@
     </div>
   </main>
 
-  <script src="/admin.js?v=dispatch-cards-2"></script>
+  <script src="/admin.js?v=dispatch-archive-1"></script>
 </body>
 </html>

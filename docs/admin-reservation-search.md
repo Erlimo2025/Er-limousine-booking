@@ -26,7 +26,7 @@ the filter selection and snapshot clock and expire after 24 hours. No total-coun
 scan or full dataset is sent to the page. A five-second transaction-local statement
 timeout and existing admin limits plus a 30/minute search limit bound resource use.
 Substring searches may scan rows in this existing modest dataset; a dedicated text
-index can be considered if volume warrants it. No schema migration is introduced.
+index can be considered if volume warrants it.
 
 The search response includes only the existing dispatch display/action information,
 excluding guest access hashes, payment credentials and Stripe session/customer data.
@@ -49,3 +49,39 @@ Invalid contact values remain plain text. Long notes and the existing dispatch e
 use native expandable details, with keyboard access and 44px controls. Repeated
 terminal prefixes are collapsed only in displayed addresses. Cancelled cards have
 a clear “DO NOT DISPATCH” warning. No reservation, fare, identity or action logic changes.
+
+## Archive and restore
+
+Manage Dispatch offers Archive Trip only when the server establishes eligibility:
+cancelled/completed reservations, or past awaiting-payment/confirmed reservations
+whose entire service has ended. Assigned, driver-en-route and passenger-on-board
+trips must be cancelled or completed, even if their planned pickup has passed.
+Round-trip return and hourly service end times count. Unknown schedules fail closed.
+An explicit second confirmation is required; archiving never cancels a trip,
+changes its fare/payment state, expires Checkout, releases FIRST15, or refunds funds.
+
+The default Dispatch trips view excludes archived records. Archived Trips selects
+all statuses/dates initially, then uses the same search, filters and keyset paging.
+Clear Filters returns to active upcoming unarchived dispatch trips. Restore Trip
+has its own confirmation and returns the record to normal filtering; cancelled or
+completed trips still require the corresponding status/date filters to appear.
+Restore does not reactivate or change reservation status. Restore is required before
+reactivating an archived trip through the dispatch status editor.
+
+Migration 010 adds nullable relational archived_at/archived_by columns and the
+append-only er_admin_trip_archive_events table. It does not rewrite historical
+JSON, ownership or schedule fields. Archive/restore hold the existing reservation
+action lock, lock the row, recheck admin authorization and eligibility, and atomically
+commit visibility plus an audit event. Confirmed requests contain only a server-
+validated request UUID; retries are bound to the reservation/action and cannot
+reapply an old archive after restoration. Events record no-op requests too.
+
+Both POST /api/bookings/:id/archive and /restore require the existing admin cookie,
+canonical Origin, safe Fetch Metadata, JSON, exact confirmed/requestId input and
+existing rate limits. Browser-supplied actor, owner, fare or status fields are rejected.
+This application has one shared ADMIN_TOKEN and no named admin accounts or tenants.
+The audit actor is a non-secret UUID generated per authorized admin login session,
+not the credential/session-token hash and not a verified person's name. Different
+admin sessions have distinct persistent audit references. Customer sessions confer
+no archive/restore authority. Archive state never filters customer/payment/refund,
+reconciliation or audit workflows; the reservation remains available to its owner.

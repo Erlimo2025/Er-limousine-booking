@@ -9,7 +9,8 @@ let authenticated = false;
 let authGeneration = 0;
 let searchGeneration=0,nextCursor=null,activeQuery='';
 const filters=document.getElementById('reservationFilters'),moreBtn=document.getElementById('moreBookings');
-const filterIds={status:'filterStatus',payment:'filterPayment',timing:'filterTiming',airport:'filterAirport',vehicle:'filterVehicle'};
+const filterIds={view:'filterView',status:'filterStatus',payment:'filterPayment',timing:'filterTiming',airport:'filterAirport',vehicle:'filterVehicle'};
+const archiveRequests=new Map();
 
 // Delete credentials left by the former implementation; never read/store them.
 for (const store of ["localStorage", "sessionStorage"]) {
@@ -25,6 +26,7 @@ function setLoggedIn(value) {
   loadBtn.textContent = value ? "Load bookings" : "Admin login";
   filters.hidden=!value;
   if (!value) {
+    archiveRequests.clear();
     authGeneration++;
     searchGeneration++;nextCursor=null;moreBtn.hidden=true;filters.reset();document.getElementById('activeFilters').textContent='';
     bookingsEl.innerHTML = "";
@@ -172,7 +174,7 @@ function renderBooking(b) {
   const tripTypes={oneway:'One way',airport:'Airport transfer',roundtrip:'Round trip',hourly:'Hourly'};
   const notes=typeof trip.notes==='string'?trip.notes:'';
   return `
-    <article class="booking-item dispatch-card${cancelled?' dispatch-card-cancelled':completed?' dispatch-card-completed':''}" data-id="${esc(b.id)}">
+    <article class="booking-item dispatch-card${cancelled?' dispatch-card-cancelled':completed?' dispatch-card-completed':''}${b.archived?' dispatch-card-archived':''}" data-id="${esc(b.id)}" data-archived="${b.archived===true}">
       <div class="dispatch-card-heading">
         <div class="dispatch-pickup-time"><span class="dispatch-label">PICKUP · NEW YORK TIME</span><time datetime="${esc(trip.date)}">${esc(date(trip.date))}</time><strong><time datetime="${esc(trip.time)}">${esc(time(trip.time))}</time></strong></div>
         <div class="dispatch-statuses" aria-label="Reservation and payment status">
@@ -183,6 +185,7 @@ function renderBooking(b) {
         </div>
       </div>
       ${cancelled?'<p class="dispatch-cancelled-notice">CANCELLED — DO NOT DISPATCH</p>':''}
+      ${b.archived?`<p class="dispatch-archive-meta"><strong>Archived — hidden from dispatch.</strong> Reservation and payment records are retained.<br>Archived ${esc(b.archivedAt)} · Admin session ${esc(b.archivedBy)}</p>`:''}
       ${airports?`<div class="dispatch-airports">${airports}</div>`:''}
       <div class="dispatch-route"><div><span class="dispatch-label">Pickup</span><p>${esc(location(trip.pickup))}</p></div><span class="dispatch-route-arrow" aria-hidden="true">→</span><div><span class="dispatch-label">Destination</span><p>${esc(location(trip.dropoff))}</p></div></div>
       <div class="dispatch-contact"><h3>${esc(b.customer.firstName)} ${esc(b.customer.lastName)}</h3><div>${contact(phone,phoneTarget,'dispatch-phone')}${contact(email,emailSafe?'mailto:'+encodeURIComponent(email):null,'dispatch-email')}</div></div>
@@ -197,7 +200,7 @@ function renderBooking(b) {
         ${b.checkoutAttempt.state === "review_required" ? "— Provider verification required; eligibility remains protected." : ""}</p>
         <button class="btn btn-secondary reconcileBtn">Check FIRST15 payment state</button>` : ""}
       <div class="admin-controls">
-        <label>Reservation status<select class="status">
+        <label>Reservation status<select class="status" ${b.archived?'disabled':''}>
           ${["awaiting_payment","confirmed","assigned","driver_en_route","passenger_on_board","completed","cancelled"]
             .map(s => `<option value="${s}" ${b.status === s ? "selected" : ""}>${statusLabels[s]}</option>`).join("")}
         </select></label>
@@ -207,14 +210,42 @@ function renderBooking(b) {
         <label>License plate<input class="plate" placeholder="Plate" value="${esc(d.plate)}"></label>
       </div>
       <div class="hero-actions">
-        <button class="btn btn-secondary saveBtn">Save dispatch</button>
+        <button class="btn btn-secondary saveBtn" ${b.archived?'disabled':''}>Save dispatch</button>
       </div>
+      ${b.archived || b.canArchive?`<div class="dispatch-archive-actions">
+        <button type="button" class="btn btn-secondary archiveBtn">${b.archived?'Restore Trip':'Archive Trip'}</button>
+        <div class="archive-confirmation" role="group" aria-label="Confirm ${b.archived?'restore':'archive'} trip" hidden>
+          <p>${b.archived?'Restore this trip to the dispatch list? Its reservation and payment status will stay the same.':'Archive this trip and hide it from dispatch? Its reservation, payment and customer records will be retained. You can restore it later.'}</p>
+          <button type="button" class="btn btn-secondary confirmArchiveBtn">${b.archived?'Confirm Restore':'Confirm Archive'}</button>
+          <button type="button" class="btn btn-secondary cancelArchiveBtn">Keep current view</button>
+        </div>
+      </div>`:'<p class="dispatch-secondary">Cancel or complete an active trip before archiving it.</p>'}
       </details>
     </article>
   `;
 }
 
 bookingsEl.addEventListener("click", async (event) => {
+  const button=event.target;
+  if(button.classList.contains('archiveBtn') || button.classList.contains('cancelArchiveBtn')){
+    const card=button.closest('.booking-item'),confirm=button.classList.contains('archiveBtn');
+    card.querySelector('.archive-confirmation').hidden=!confirm;card.querySelector('.archiveBtn').hidden=confirm;
+    card.querySelector(confirm?'.confirmArchiveBtn':'.archiveBtn').focus();return;
+  }
+  if(button.classList.contains('confirmArchiveBtn')){
+    const card=button.closest('.booking-item');if(!authenticated||button.disabled||!card.isConnected)return;
+    const generation=authGeneration,search=searchGeneration,action=card.dataset.archived==='true'?'restore':'archive',key=card.dataset.id+':'+action;
+    if(!archiveRequests.has(key))archiveRequests.set(key,crypto.randomUUID());
+    button.disabled=true;card.querySelector('.cancelArchiveBtn').disabled=true;
+    try{
+      await adminFetch('/api/bookings/'+encodeURIComponent(card.dataset.id)+'/'+action,{method:'POST',body:JSON.stringify({confirmed:true,requestId:archiveRequests.get(key)})});
+      if(generation!==authGeneration||search!==searchGeneration||!authenticated)return;
+      archiveRequests.delete(key);await loadBookings();
+      if(generation===authGeneration&&authenticated)showNotice(action==='archive'?'Trip archived. Reservation and payment records retained.':'Trip restored. Reservation and payment status unchanged.','success');
+    }catch(err){if(generation===authGeneration&&search===searchGeneration)showNotice(err.message);}
+    finally{button.disabled=false;card.querySelector('.cancelArchiveBtn').disabled=false;}
+    return;
+  }
   if(event.target.classList.contains("reconcileBtn")) {
     event.target.disabled=true;
     try {
@@ -262,12 +293,18 @@ filters.addEventListener('submit',event=>{event.preventDefault();loadBookings();
 document.getElementById('clearFilters').addEventListener('click',()=>{
   filters.reset();document.getElementById('reservationSearch').value='';
   // Set dispatch defaults explicitly, even if the browser retains select state.
-  for(const [key,value]of Object.entries({status:'active',payment:'all',timing:'upcoming',airport:'all',vehicle:'all'}))document.getElementById(filterIds[key]).value=value;
+  for(const [key,value]of Object.entries({view:'dispatch',status:'active',payment:'all',timing:'upcoming',airport:'all',vehicle:'all'}))document.getElementById(filterIds[key]).value=value;
+  loadBookings(false);
+});
+document.getElementById('filterView').addEventListener('change',()=>{
+  const archived=document.getElementById('filterView').value==='archived';
+  document.getElementById('filterStatus').value=archived?'all':'active';document.getElementById('filterTiming').value=archived?'all':'upcoming';
   loadBookings(false);
 });
 moreBtn.addEventListener('click',()=>{if(!moreBtn.disabled&&nextCursor)loadBookings(true);});
 logoutBtn.addEventListener("click", logout);
 window.addEventListener("pagehide", () => {
+  archiveRequests.clear();
   tokenInput.value = "";
   authGeneration++;
   searchGeneration++;nextCursor=null;moreBtn.hidden=true;filters.reset();document.getElementById('activeFilters').textContent='';

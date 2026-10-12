@@ -227,6 +227,7 @@ function createStore(env = process.env, suppliedPool) {
       // Migration 008's old event constraint must not be reapplied after expansion in 009.
       if(!(await client.query('SELECT 1 FROM er_schema_migrations WHERE version=8')).rowCount)await client.query(fs.readFileSync(path.join(__dirname,'../migrations/008-booking-emails.sql'),'utf8'));
       await client.query(fs.readFileSync(path.join(__dirname,'../migrations/009-customer-trip-management.sql'),'utf8'));
+      await client.query(fs.readFileSync(path.join(__dirname,'../migrations/010-admin-trip-archives.sql'),'utf8'));
     });
   }
   async function importLegacy(records) {
@@ -240,7 +241,7 @@ function createStore(env = process.env, suppliedPool) {
     });
   }
   const assertActionLock=key=>{if(actionScope.getStore()!==key)throw Object.assign(new Error('Reservation action is already processing. Please try again.'),{status:409});};
-  const adminSearch=require('./admin-reservations').adminReservationStorage(pool,transaction,validateRecord);
+  const adminSearch={...require('./admin-reservations').adminReservationStorage(pool,transaction,validateRecord),...require('./admin-archives').adminArchiveStorage(transaction,validateRecord,assertActionLock)};
   return {...adminSearch,...require('./refunds').refundStorage(pool,transaction,validateRecord,assertActionLock,()=>scope.getStore() || pool),...require('./trip-management').tripManagementStorage(pool,transaction,validateRecord,assertActionLock,()=>scope.getStore() || pool),...bookingEmailStorage(pool,transaction,safe),...require('./customer-payments').customerPaymentStorage(pool,transaction,safe),...require('./customer-trips').customerTripsStorage(pool,safe,validateRecord),...require('./recovery').recoveryStorage(pool,transaction,safe),...require('./customers').customerStorage(pool,transaction,safe),list,get,hasPaidRide,update,createWithBudget,withActionLock,firstRideConflicts,claimFirstRide,releaseExpiredFirstRide,reconciliationCandidates,abandonedDeferredCandidates,finalizeReconciliation,migrate,importLegacy,close:()=>pool.end()};
 }
 module.exports={createStore,StorageError,validateRecord,validateRecords,connectionOptions};
