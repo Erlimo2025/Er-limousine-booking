@@ -257,6 +257,7 @@
             name="pickup"
             autocomplete="off"
             placeholder="Enter pickup address"
+            aria-describedby="pickupLocationStatus"
             required
           >
 
@@ -264,6 +265,9 @@
             id="pickupSuggestions"
             class="address-suggestions">
           </div>
+
+          <button type="button" id="currentLocationBtn" class="current-location-option">📍 Use My Current Location</button>
+          <small id="pickupLocationStatus" class="pickup-location-status" role="status" aria-live="polite" hidden></small>
 
         </div>
 
@@ -1249,6 +1253,7 @@
 </footer>
 
 
+<script src="/pickup-location.js"></script>
 <script src="/app.js"></script>
 
 </body>

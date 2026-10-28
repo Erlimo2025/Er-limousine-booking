@@ -78,7 +78,7 @@ async function harness(t, env = {}, saved = "[]", injectedStore) {
     static now() { return clock; }
   }
   const context = {
-    __dirname: root, console:{log:(...args)=>state.logs.push(args.join(' ')),error:(...args)=>state.logs.push(args.join(' '))}, URL, Buffer, Date: TestDate,
+    __dirname: root, console:{log:(...args)=>state.logs.push(args.join(' ')),error:(...args)=>state.logs.push(args.join(' '))}, URL, URLSearchParams, Buffer, Date: TestDate,
     process: {env: {GOOGLE_MAPS_API_KEY: "mock-google-key", STRIPE_SECRET_KEY: "mock",
       STRIPE_WEBHOOK_SECRET: "whsec_local_mock", ADMIN_TOKEN: "local-test-token", ...env}},
     setInterval: () => ({unref() {}}),
@@ -101,6 +101,7 @@ async function harness(t, env = {}, saved = "[]", injectedStore) {
       return {ok: !state.googleError, status:state.providerStatus===undefined?(state.googleError?404:200):state.providerStatus, json: async () => {
         if(state.providerInvalidJson)throw new SyntaxError("synthetic-private-json-marker");
         if(state.googleBody!==undefined)return state.googleBody;
+        if(url.includes('/maps/api/geocode/json'))return state.reverseResult || {status:'OK',results:[{formatted_address:'1 Market St, Newark, NJ 07102, USA',place_id:'ChIJ_reverse_street',types:['street_address']}]};
         if (url.includes("computeRoutes")) {
           const route = JSON.parse(options.body);
           state.routes.push(route);
@@ -871,7 +872,7 @@ test("application-wide browser security headers and exact confirmation script ha
     assert.equal(r.headers.get("x-frame-options"), "DENY");
     assert.equal(r.headers.get("x-content-type-options"), "nosniff");
     assert.equal(r.headers.get("referrer-policy"), "no-referrer");
-    assert.equal(r.headers.get("permissions-policy"), "camera=(), microphone=(), geolocation=(), payment=(), usb=()");
+    assert.equal(r.headers.get("permissions-policy"), `camera=(), microphone=(), geolocation=${route==='/'?'(self)':'()'}, payment=(), usb=()`);
     assert.equal(r.headers.get("x-powered-by"), null);
     assert.equal(r.headers.get("strict-transport-security"), null);
     const script = fs.readFileSync(path.join(root,"public/success.html"),"utf8").match(/<script>([\s\S]*?)<\/script>/)[1].replace(/\r\n/g,"\n");

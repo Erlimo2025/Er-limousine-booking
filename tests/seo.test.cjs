@@ -87,7 +87,8 @@ test('schema omits unconfigured/invalid company telephone and cannot leak config
     const r = await h.request('/');
     assert.ok(!Object.hasOwn(graph(r.body)[0], 'telephone'));
     assert.doesNotMatch(r.body, /synthetic.private|alert\(1\)|442071234567/);
-    assert.equal((r.body.match(/<script\b/g) || []).length, 2);
+    assert.equal((r.body.match(/<script\b/g) || []).length, 3);
+    assert.deepEqual([...r.body.matchAll(/<script src="([^"]+)"/g)].map(match=>match[1]),['/pickup-location.js','/app.js']);
   }
 });
 

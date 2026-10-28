@@ -85,6 +85,40 @@ Listen for:
 
 ## 4. Google Routes API
 
+### Current pickup location
+
+The booking form offers **📍 Use My Current Location** before pickup suggestions
+and when the pickup is empty. Only a customer click requests browser location
+permission. HTTPS (or localhost during development) and device/browser location
+services are required. The customer should check the resulting street address.
+
+Enable **Geocoding API** in the existing Google Cloud project, confirm billing is
+enabled, and allow that API in the existing server key's API restrictions. Keep
+the existing Places API (New) and Routes API enabled. This feature uses the same
+private `GOOGLE_MAPS_API_KEY`; it needs no browser API key, Maps JavaScript SDK,
+Google Geolocation API, new database schema, or change to fares/airport offers.
+Setup reference: [Google Geocoding API setup](https://developers.google.com/maps/documentation/geocoding/guides-v3/get-api-key).
+
+`POST /api/reverse-geocode` accepts only finite latitude/longitude numbers in
+range, with exact same-origin JSON and safe Fetch Metadata. The endpoint is
+limited to 20 requests/minute and 100/hour per existing trusted-client limits,
+uses the existing eight-second provider timeout, and returns only a street
+address and optional compatible Place ID. Query parameters are rejected. Missing
+configuration, denied provider access, quota errors and unavailable results fall
+back to manual pickup entry. Permission policy permits geolocation only on the
+booking documents, retaining the existing restrictions on other pages.
+
+Coordinates are transient request data sent to Google for reverse geocoding.
+The application does not put them in browser URLs/storage, application logs,
+reservation records or the database. Responses are no-store/no-referrer. No
+continuous tracking or automatic location request is used. Typing/selecting a
+pickup, changing trip/terminal, resetting the form or leaving the page invalidates
+pending work; a late result cannot replace a newer pickup. GPS and provider work
+are bounded, and errors leave manual pickup/drop-off entry available.
+
+Run `node --test --test-concurrency=1 tests/pickup-location.test.cjs tests/security-abuse.test.cjs tests/book-again.test.cjs tests/seo.test.cjs`
+for mocked location, autocomplete, quoting, airport-offer and restoration checks.
+
 Enable **Routes API** in Google Cloud and add the server API key:
 
 ```env

@@ -21,7 +21,7 @@ function requestOperation(req) {
   if(route==='/internal/booking-emails')return 'booking_email';
   if(route==='/api/quote')return 'quote';
   if(route==='/api/checkout')return 'checkout';
-  if(route==='/api/address-suggestions')return 'address';
+  if(route==='/api/address-suggestions'||route==='/api/reverse-geocode')return 'address';
   if(route==='/api/stripe-webhook')return 'webhook';
   if(route==='/api/booking/:id')return 'reservation';
   if(typeof route==='string' && (route.startsWith('/api/admin/') || route.startsWith('/api/bookings')))return 'admin';
@@ -159,7 +159,7 @@ app.use((req, res, next) => {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "no-referrer",
-    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+    "Permissions-Policy": `camera=(), microphone=(), geolocation=${['/','/index.html'].includes(req.path)?'(self)':'()'}, payment=(), usb=()`
   });
   if (productionHttps && req.secure) {
     res.set("Strict-Transport-Security", "max-age=31536000");
@@ -1666,6 +1666,7 @@ app.post(
 ========================================= */
 
 app.use("/api/address-suggestions", rateLimit("address", 120));
+app.use('/api/reverse-geocode',customerPrivateResponse,rateLimit('reverse-geocode',20),rateLimit('reverse-geocode-long',100,60*MINUTE));
 app.use("/api/quote", rateLimit("quote", 30));
 app.use("/api/checkout", customerPrivateResponse, rateLimit("checkout", 15), rateLimit("checkout-long", 60, 30 * MINUTE));
 app.use("/api/booking", customerPrivateResponse, rateLimit("booking-status", 120));
@@ -1817,6 +1818,26 @@ app.get(
 /* =========================================
    GOOGLE ADDRESS AUTOCOMPLETE
 ========================================= */
+
+// Coordinates are transient POST data, never URL parameters, logs or reservations.
+app.post('/api/reverse-geocode',async(req,res)=>{
+ if(req.get('origin')!==new URL(SITE_URL).origin || !req.is('application/json') || req.get('sec-fetch-site') && !['same-origin','none'].includes(req.get('sec-fetch-site')))return res.status(403).json({error:'Invalid location request.'});
+ const body=req.body;
+ if(Object.keys(req.query).length || !body || Array.isArray(body) || Object.keys(body).sort().join(',')!=='latitude,longitude' || typeof body.latitude!=='number' || !Number.isFinite(body.latitude) || body.latitude < -90 || body.latitude > 90 || typeof body.longitude!=='number' || !Number.isFinite(body.longitude) || body.longitude < -180 || body.longitude > 180)return res.status(400).json({error:'Invalid location request.'});
+ const key=process.env.GOOGLE_MAPS_API_KEY;
+ if(!key)return res.status(503).json({error:'Location lookup is unavailable. Please enter your pickup address manually.'});
+ try {
+  const url=new URL('https://maps.googleapis.com/maps/api/geocode/json');
+  url.search=new URLSearchParams({latlng:body.latitude+','+body.longitude,key,language:'en',result_type:'street_address|premise|subpremise|intersection|route'}).toString();
+  const data=await googleJson(url.toString(),{});
+  if(data?.status==='ZERO_RESULTS')return res.status(404).json({error:'No street address found. Please enter your pickup address manually.'});
+  if(data?.status!=='OK'||!Array.isArray(data.results))throw Error('unavailable');
+  const address=data.results.find(item=>Array.isArray(item?.types)&&item.types.some(type=>['street_address','premise','subpremise','intersection','route'].includes(type))&&typeof item.formatted_address==='string'&&item.formatted_address.trim()&&item.formatted_address.length<=400&&!/[\x00-\x1f\x7f]/.test(item.formatted_address));
+  if(!address)return res.status(404).json({error:'No street address found. Please enter your pickup address manually.'});
+  const placeId=typeof address.place_id==='string'&&/^[A-Za-z0-9_-]{1,255}$/.test(address.place_id)?address.place_id:'';
+  return res.json({description:address.formatted_address.trim(),placeId});
+ }catch(_){req.diagnosticCategory='provider_error';req.diagnosticProvider='google';return res.status(502).json({error:'Location lookup is unavailable. Please enter your pickup address manually.'});}
+});
 
 app.get(
   "/api/address-suggestions",

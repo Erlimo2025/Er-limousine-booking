@@ -24,6 +24,7 @@ function syncPickupTerminal() {
   pickupTerminal.value=match && match[0]!=="general" ? match[0] : "";
 }
 pickupTerminal.addEventListener("change",()=>{
+  if(typeof pickupLocation!=='undefined' && pickupLocation)pickupLocation.cancel();
   const selected=ewrTerminalChoices[pickupTerminal.value || "general"];
   if (!selected || pickupTerminal.disabled) return;
   pickup.dataset.placeId=selected.id;
@@ -185,6 +186,13 @@ const ewrManhattanSpecialBtn =
 let currentQuote = null;
 let suggestionTimers = {};
 let hourlyVehicles = {};
+
+const pickupLocation=typeof createPickupLocation==='function'?createPickupLocation({
+  input:pickup,button:document.getElementById('currentLocationBtn'),status:document.getElementById('pickupLocationStatus'),
+  beforeStart(){pickup._addressGeneration=(pickup._addressGeneration || 0)+1;clearTimeout(suggestionTimers.pickup);pickupSuggestions.innerHTML='';pickupLocation.clearOption();},
+  onSelect(address){pickup._addressGeneration=(pickup._addressGeneration || 0)+1;pickup.value=address.description;delete pickup.dataset.placeId;if(address.placeId)pickup.dataset.placeId=address.placeId;syncPickupTerminal();pickupSuggestions.innerHTML='';pickupLocation.clearOption();resetQuote();}
+}):null;
+form.addEventListener('reset',()=>{if(pickupLocation)pickupLocation.cancel();});
 
 function updateHourlyRates() {
   if (tripTypeInput.value !== "hourly") return;
@@ -459,6 +467,7 @@ function clearSpecialOffer() {
 
 
 function activateEwrManhattanSpecial() {
+  if(typeof pickupLocation!=='undefined' && pickupLocation)pickupLocation.cancel();
 
   showBookingStep(1);
 
@@ -529,6 +538,7 @@ if (ewrManhattanSpecialBtn) {
 ========================================= */
 
 function selectTripType(type) {
+  if(typeof pickupLocation!=='undefined' && pickupLocation)pickupLocation.cancel();
 
   showBookingStep(1);
 
@@ -775,6 +785,8 @@ function renderSuggestions(
 
   container.innerHTML = "";
 
+  if(input===pickup && typeof pickupLocation!=='undefined' && pickupLocation)pickupLocation.addOption(container);
+
   suggestions.forEach(
     (item) => {
 
@@ -800,6 +812,9 @@ function renderSuggestions(
 
           event.preventDefault();
 
+          input._addressGeneration=(input._addressGeneration || 0)+1;
+          if(input===pickup && typeof pickupLocation!=='undefined' && pickupLocation)pickupLocation.cancel();
+
           input.value =
             description;
           input.dataset.placeId = typeof item === "object" ? item.placeId || "" : "";
@@ -808,6 +823,8 @@ function renderSuggestions(
 
           container.innerHTML =
             "";
+
+          if(input===pickup && typeof pickupLocation!=='undefined' && pickupLocation)pickupLocation.clearOption();
 
           resetQuote();
         }
@@ -835,6 +852,7 @@ function enableAddressAutocomplete(
     "input",
     () => {
 
+      const generation=input._addressGeneration=(input._addressGeneration || 0)+1;
       delete input.dataset.placeId;
       if (input === pickup) syncPickupTerminal();
       if (input === dropoff) syncDropoffTerminal();
@@ -851,6 +869,8 @@ function enableAddressAutocomplete(
         container.innerHTML =
           "";
 
+        if(input===pickup && typeof pickupLocation!=='undefined' && pickupLocation)renderSuggestions(container,input,[]);
+
         return;
       }
 
@@ -862,6 +882,8 @@ function enableAddressAutocomplete(
               await findAddresses(
                 query
               );
+
+            if(generation!==input._addressGeneration || input.value.trim()!==typedQuery || input._addressFocused===false)return;
 
             renderSuggestions(
               container,
@@ -877,17 +899,24 @@ function enableAddressAutocomplete(
   input.addEventListener(
     "blur",
     () => {
+      input._addressFocused=false;
 
       setTimeout(
         () => {
+          if(input._addressFocused)return;
 
           container.innerHTML =
             "";
+          if(input===pickup && typeof pickupLocation!=='undefined' && pickupLocation)pickupLocation.clearOption();
         },
         150
       );
     }
   );
+  input.addEventListener('focus',()=>{
+    input._addressFocused=true;
+    if(input===pickup && typeof pickupLocation!=='undefined' && pickupLocation)renderSuggestions(container,input,[]);
+  });
 }
 
 
@@ -1387,6 +1416,7 @@ async function loadPublicConfig() {
 
 let bookAgainGeneration=0,bookAgainFlowReference=null,bookAgainPendingSource=null;
 function applyBookAgainTemplate(template,flowReference){
+ if(typeof pickupLocation!=='undefined' && pickupLocation)pickupLocation.cancel();
  if(typeof flowReference!=='string' || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\.[a-f0-9]{64}$/.test(flowReference))throw new Error('Template unavailable.');
  if(template?.offerCode!==undefined && template.offerCode!=='EWR_MANHATTAN_SUV')throw new Error('Template unavailable.');
  if(!template || !['oneway','airport','roundtrip','hourly'].includes(template.tripType) || !['suv','escalade'].includes(template.vehicle) ||
