@@ -55,6 +55,16 @@ function bookingMessage(record,kind,contact,myTripsUrl=null,event=null){
  const timezone=admin?'America/New_York':'New York time';
  const rows=[['Reservation ID',record.id],['Pickup',admin?t.pickup:customerPickup(t.pickup)],['Destination',t.dropoff],['Pickup date/time',t.date+' '+t.time+' ('+timezone+')'],['Vehicle',vehicle]];
  if(t.returnDate)rows.push(['Return pickup',t.returnDate+' '+t.returnTime+' ('+timezone+')']);
+ const p=q.pricingBreakdown;
+ if(p?.version===1){
+  const price=value=>new Intl.NumberFormat('en-US',{style:'currency',currency:q.currency}).format(value/100);
+  rows.push([p.tollsIncluded?'EWR → Manhattan Special':'Trip Fare',price(p.tripFareCents)]);
+  for(const item of p.surcharges)rows.push([item.label,price(item.amountCents)]);
+  rows.push([p.interstate?'Estimated Interstate Tolls':p.tollsCents>0?'Estimated Tolls':'Tolls',p.tollsIncluded?'Included':q.tolls.status==='waived'?'No added tolls — same-state trip':q.tolls.status==='none'?'None expected':p.tollsCents>0?price(p.tollsCents):p.tollAllowanceCents?'Included in fare allowance':'No additional charge']);
+  if(p.tollAllowanceCents)rows.push(['Toll allowance already in fare',price(p.tollAllowanceCents)]);
+  if(p.discountCents)rows.push(['Eligible Discount','−'+price(p.discountCents)]);
+  if(p.gratuityCents)rows.push(['Gratuity',price(p.gratuityCents)]);
+ }
  if(reservation || admin){
   if(admin)rows.splice(1,0,['Customer name',customer.firstName+' '+customer.lastName],['Customer email',customer.email],['Customer phone',customer.phone]);
   if(admin)rows.push(['Passenger count',t.passengers]);

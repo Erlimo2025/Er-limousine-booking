@@ -105,6 +105,7 @@ async function harness(t, env = {}, saved = "[]", injectedStore) {
         if (url.includes("computeRoutes")) {
           const route = JSON.parse(options.body);
           state.routes.push(route);
+          (state.routeHeaders ||= []).push(options.headers);
           if (state.routeResult) return {routes: [state.routeResult(route)]};
           return {routes: [{distanceMeters: 16093.44, duration: "1200s"}]};
         }
@@ -137,6 +138,7 @@ async function harness(t, env = {}, saved = "[]", injectedStore) {
       if (name === "./routes/customer-payment-methods") return require("../routes/customer-payment-methods");
       if (name === "./routes/customer-trip-management") return require("../routes/customer-trip-management");
       if (name === "./pricing") return testPricing;
+      if (name === "./services/route-tolls") return require('../services/route-tolls');
       if (name === "./ewr-pickups") return require("../ewr-pickups");
       if (name === "./storage/postgres") return {createStore: () => {if(injectedStore instanceof Error)throw injectedStore;return testStore;}, StorageError: require("../storage/postgres").StorageError};
       return require(name);

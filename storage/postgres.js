@@ -4,6 +4,7 @@ const path = require('path');
 const crypto = require('crypto');
 const {AsyncLocalStorage} = require('async_hooks');
 const {enqueueBookingEmail,bookingEmailStorage}=require('./booking-emails');
+const {validQuote}=require('../services/route-tolls');
 class StorageError extends Error {
   constructor() { super('Reservation service temporarily unavailable. Please try again.'); this.status = 503; this.storageFailure = true; }
 }
@@ -14,6 +15,7 @@ function validateRecord(r) {
   if (!plain(r) || typeof r.id !== 'string' || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(r.id) ||
       typeof r.createdAt !== 'string' || !Number.isFinite(Date.parse(r.createdAt)) || !statuses.includes(r.status) ||
       !['unpaid','paid','failed'].includes(r.paymentStatus) || !plain(r.customer) || !plain(r.trip) || !plain(r.quote) || !plain(r.dispatch)) fail();
+  if(!validQuote(r.quote) || r.checkoutAttempt?.quote && !validQuote(r.checkoutAttempt.quote))fail();
   for (const key of ['firstName','lastName','email','phone']) if(typeof r.customer[key] !== 'string' || !r.customer[key].trim() || r.customer[key].length>200) fail();
   for (const key of ['pickup','dropoff','date','time','vehicle','tripType']) if(typeof r.trip[key] !== 'string' || !r.trip[key].trim() || r.trip[key].length>200) fail();
   if(!['escalade','suv'].includes(r.trip.vehicle) || !['oneway','roundtrip','airport','hourly'].includes(r.trip.tripType) ||

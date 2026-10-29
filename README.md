@@ -85,6 +85,14 @@ Listen for:
 
 ## 4. Google Routes API
 
+Automatic interstate-only route-toll calculation is implemented behind the disabled-by-default
+`ROUTE_TOLLS_ENABLED` flag. NJ E-ZPass business/Suburban 2Ax is confirmed;
+commercial-rate equivalence and congestion coverage must be verified before
+activation. Hourly booking retains its existing behavior when the complete route
+is unknown. Same-state trips add no tolls based on verified
+provider endpoint states. The qualifying EWR → Manhattan special remains $150,
+tolls included. See [toll policy, configuration, costs and tests](docs/route-tolls.md).
+
 ### Current pickup location
 
 The booking form offers **📍 Use My Current Location** before pickup suggestions

@@ -685,6 +685,11 @@ textarea:focus {
   margin: 10px 0 0;
 }
 
+.fare-breakdown{padding:12px 0;font-size:.82rem;overflow-wrap:anywhere}
+.fare-breakdown[hidden]{display:none}
+.fare-breakdown-row{display:flex;justify-content:space-between;gap:12px;padding:5px 0}
+.fare-breakdown-row strong{text-align:right;flex-shrink:0;max-width:75%}
+
 
 /* =========================
    FLEET

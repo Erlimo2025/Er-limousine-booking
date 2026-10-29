@@ -91,7 +91,7 @@ function arrangeMobileHomepage() {
     vehicleLabel.textContent = "LUXURY SUV";
     const priceLabel = document.createElement("span");
     priceLabel.className = "special-price-value";
-    priceLabel.textContent = "$150 FLAT RATE";
+    priceLabel.textContent = "$150 FLAT RATE · TOLLS INCLUDED";
     specialPrice.replaceChildren(vehicleLabel, priceLabel);
     bookingPanel.after(mobileSpecial);
     document.querySelector(".nav-inner").append(headerActions);
@@ -421,6 +421,7 @@ function resetQuote() {
   sumMilesLabel.textContent = "Distance";
   sumMinutesLabel.textContent = "Estimated Drive Time";
   sumTotalLabel.textContent = "Total";
+  if(typeof renderFareBreakdown==='function')renderFareBreakdown(null);
 
   sumVehicle.textContent =
     vehicle.value === "suv" ? "Luxury SUV" : vehicle.options[
@@ -924,12 +925,36 @@ function enableAddressAutocomplete(
    QUOTE
 ========================================= */
 
+function renderFareBreakdown(data, review = false) {
+  const container=document.getElementById('fareBreakdown');
+  if(!container)return;
+  container.replaceChildren();container.hidden=true;
+  if(review){container.textContent='Toll estimate unavailable — contact us for a final quote';container.hidden=false;return;}
+  const p=data?.pricingBreakdown;
+  if(!p || p.version!==1)return;
+  const amount=value=>formatMoney(value/100,data.currency);
+  const row=(label,value)=>{const item=document.createElement('div'),name=document.createElement('span'),price=document.createElement('strong');item.className='fare-breakdown-row';name.textContent=label;price.textContent=value;item.append(name,price);container.append(item);};
+  row(p.tollsIncluded?'EWR → Manhattan Special':'Trip Fare',amount(p.tripFareCents));
+  for(const item of p.surcharges)row(item.label,amount(item.amountCents));
+  if(p.tollsIncluded)row('Tolls','Included');
+  else if(data.tolls.status==='waived')row('Tolls','No added tolls — same-state trip');
+  else if(data.tolls.status==='none')row(p.interstate?'Estimated Interstate Tolls':'Tolls','None expected');
+  else if(p.tollsCents>0)row((p.interstate?'Estimated Interstate Tolls':'Estimated Tolls')+(p.tollAllowanceCents?' (additional)':''),amount(p.tollsCents));
+  else row(p.interstate?'Estimated Interstate Tolls':'Tolls',p.tollAllowanceCents?'Included in fare allowance':'No additional charge');
+  if(p.tollAllowanceCents)row('Toll allowance already in fare',amount(p.tollAllowanceCents));
+  if(p.discountCents)row('Eligible Discount','−'+amount(p.discountCents));
+  if(p.gratuityCents)row('Gratuity',amount(p.gratuityCents));
+  container.hidden=false;
+}
+
 async function requestQuote(event) {
 
   const showMobileSummary = event?.currentTarget === quoteBtn || quoteArea.classList.contains("has-completed-quote");
   quoteArea.classList.remove("has-completed-quote");
 
   clearNotice();
+  if(typeof renderFareBreakdown==='function')renderFareBreakdown(null);
+  sumTotal.textContent='—';
 
   quoteBtn.disabled = true;
 
@@ -986,6 +1011,12 @@ async function requestQuote(event) {
       await response.json();
 
     if (!response.ok) {
+      if(data.code==='TOLL_ESTIMATE_UNAVAILABLE'){
+        sumMiles.textContent='—';sumMinutes.textContent='—';sumMilesLabel.textContent='Distance';sumMinutesLabel.textContent='Estimated Drive Time';
+        sumTotal.textContent='Contact us';sumTotalLabel.textContent='Final quote required';
+        if(typeof renderFareBreakdown==='function')renderFareBreakdown(null,true);
+        if(showMobileSummary)quoteArea.classList.add('has-completed-quote');
+      }
 
       throw new Error(
         data.error ||
@@ -1045,6 +1076,8 @@ async function requestQuote(event) {
     }
 
     showPromoResult(data);
+    if(typeof renderFareBreakdown==='function')renderFareBreakdown(data);
+    if(data.pricingBreakdown){sumTotalLabel.textContent=data.pricingBreakdown.tollsIncluded || data.pricingBreakdown.interstate===false?'Total':'Total Including Tolls';if(promoSummary)promoSummary.hidden=true;}
 
     if (showMobileSummary) quoteArea.classList.add("has-completed-quote");
 
@@ -1054,7 +1087,7 @@ async function requestQuote(event) {
     if (data.fixedOffer) {
 
       showNotice(
-        "$150 EWR → Manhattan Chevrolet Suburban Premier special applied.",
+        "$150 EWR → Manhattan Chevrolet Suburban Premier special applied. Tolls included.",
         "success"
       );
 
@@ -1271,7 +1304,7 @@ form.addEventListener(
 
             body:
               JSON.stringify(
-                {...bookingData,paymentChoice}
+                {...bookingData,paymentChoice,...(currentQuote.quoteRevision?{quoteRevision:currentQuote.quoteRevision}:{})}
               )
           }
         );
@@ -1280,6 +1313,11 @@ form.addEventListener(
         await response.json();
 
       if (!response.ok) {
+        if(response.status===409 && data.error==='Your quote changed. Please get a new quote before reserving.')resetQuote();
+        if(data.code==='TOLL_ESTIMATE_UNAVAILABLE'){
+          resetQuote();sumTotal.textContent='Contact us';sumTotalLabel.textContent='Final quote required';
+          if(typeof renderFareBreakdown==='function')renderFareBreakdown(null,true);
+        }
 
         throw new Error(
           data.error ||
@@ -1304,13 +1342,12 @@ form.addEventListener(
         "Unable to start checkout."
       );
 
-      payBtn.disabled =
-        false;
+      payBtn.disabled = !currentQuote;
 
       payBtn.textContent =
         "RESERVE & PAY NOW";
       reservationBusy=false;
-      if(payLaterBtn)payLaterBtn.disabled=false;
+      if(payLaterBtn)payLaterBtn.disabled=!currentQuote;
     }
   }
 );
