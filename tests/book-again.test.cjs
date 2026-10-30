@@ -116,9 +116,11 @@ test('PostgreSQL Book Again source ownership is relational; template creates no 
  // Real PostgreSQL source markers restore only offer intent, not an old stored fare.
  ewrPricingFixture(h);
  const specialSource=await h.request('/api/checkout',{...ewrTrip,offerCode:'EWR_MANHATTAN_SUV',paymentChoice:'later'}, {cookie:cookie(a)});assert.equal(specialSource.status,200);
- await store.update(specialSource.body.bookingId,r=>{r.quote.total=999;});
+ const acceptedSpecialQuote=(await store.get(specialSource.body.bookingId)).quote;
+ assert.equal(require('../services/route-tolls').validQuote(acceptedSpecialQuote),true);
  const specialTemplate=await h.request(templateUrl(specialSource.body.bookingId),undefined,{cookie:cookie(a)});assert.equal(specialTemplate.body.template.offerCode,'EWR_MANHATTAN_SUV');
- const renewed=await h.request('/api/checkout',{...booking,...specialTemplate.body.template,pickupTerminal:'a',bookingFlow:specialTemplate.body.flowReference,date:'2026-12-11',paymentChoice:'later'}, {cookie:cookie(a)});assert.equal(renewed.status,200);assert.equal((await store.get(renewed.body.bookingId)).quote.total,150);assert.notEqual(renewed.body.bookingId,specialSource.body.bookingId);assert.equal((await store.get(specialSource.body.bookingId)).quote.total,999);
+ assert.ok(!Object.hasOwn(specialTemplate.body.template,'total'));
+ const renewed=await h.request('/api/checkout',{...booking,...specialTemplate.body.template,pickupTerminal:'a',bookingFlow:specialTemplate.body.flowReference,date:'2026-12-11',paymentChoice:'later',total:999,amount:999}, {cookie:cookie(a)});assert.equal(renewed.status,200);assert.equal((await store.get(renewed.body.bookingId)).quote.total,150);assert.notEqual(renewed.body.bookingId,specialSource.body.bookingId);assert.deepEqual((await store.get(specialSource.body.bookingId)).quote,acceptedSpecialQuote);
 });
 
 test('all approved EWR terminal templates reselect canonical identities and require fresh verification',async t=>{
@@ -160,14 +162,15 @@ test('reproduction: canonical Terminal A identity alone uses normal $129.24; exp
 });
 test('Book Again restores prior verified EWR special selection through real prefill/payload and fresh server verification, never old fare',async t=>{
  const h=await harness(t);ewrPricingFixture(h);const a=await register(h),auth={cookie:cookie(a)},source=await h.request('/api/checkout',{...ewrTrip,offerCode:'EWR_MANHATTAN_SUV',paymentChoice:'later'},auth);assert.equal(source.status,200);
- await h.testStore.update(source.body.bookingId,r=>{r.quote.total=999;});
+ const acceptedSpecialQuote=h.records().find(r=>r.id===source.body.bookingId).quote;
+ assert.equal(require('../services/route-tolls').validQuote(acceptedSpecialQuote),true);
  const response=await h.request(templateUrl(source.body.bookingId),undefined,auth);assert.equal(response.status,200);
  const ui=bookingUi();ui.ctx.applyPromoBtn={disabled:false};ui.ctx.showSpecialPromoMessage=()=>{};ui.ctx.applyBookAgainTemplate(response.body.template,response.body.flowReference);
  ui.fields.dateInput.value='2026-12-10';ui.fields.timeInput.value='12:00';
  const payload=formPayload(ui,response.body.template);assert.equal(payload.pickupPlaceId,terminalAId);assert.equal(payload.pickupTerminal,'a');assert.equal(payload.dropoff,timesSquare);assert.equal(payload.vehicle,'suv');
  assert.equal(payload.offerCode,'EWR_MANHATTAN_SUV','Book Again must retain the selected public offer, not just its airport identity');assert.equal(ui.fields.promoCode.disabled,true);assert.equal(ui.ctx.applyPromoBtn.disabled,true);assert.ok(!Object.hasOwn(payload,'total'));assert.ok(!Object.hasOwn(payload,'amount'));
  const normalSpecial=await h.request('/api/quote',{...ewrTrip,date:payload.date,time:payload.time,offerCode:'EWR_MANHATTAN_SUV'}),again=await h.request('/api/quote',payload);assert.equal(again.status,200);assert.equal(again.body.total,150);assert.equal(again.body.total,normalSpecial.body.total);assert.equal(again.body.fixedOffer.code,normalSpecial.body.fixedOffer.code);assert.equal(again.body.discount,0);
- const unpaid=await h.request('/api/checkout',{...payload,paymentChoice:'later'},auth);assert.equal(unpaid.status,200);assert.notEqual(unpaid.body.bookingId,source.body.bookingId);assert.equal(h.records().find(r=>r.id===unpaid.body.bookingId).quote.total,150);assert.equal(h.records().find(r=>r.id===source.body.bookingId).quote.total,999);
+ const unpaid=await h.request('/api/checkout',{...payload,paymentChoice:'later',total:999,amount:999},auth);assert.equal(unpaid.status,200);assert.notEqual(unpaid.body.bookingId,source.body.bookingId);assert.equal(h.records().find(r=>r.id===unpaid.body.bookingId).quote.total,150);assert.deepEqual(h.records().find(r=>r.id===source.body.bookingId).quote,acceptedSpecialQuote);
  const missingIdentity={...payload};delete missingIdentity.pickupPlaceId;assert.equal((await h.request('/api/quote',missingIdentity)).status,400);
  const nonManhattan='Jersey City, NJ, USA';h.state.searchResults[nonManhattan]=[{id:'mock_jersey',addressComponents:[{types:['administrative_area_level_2'],longText:'Hudson County'}]}];assert.equal((await h.request('/api/quote',{...payload,dropoff:nonManhattan})).status,400);
  assert.equal((await h.request('/api/quote',{...payload,promoCode:'FIRST15'})).body.total,150);

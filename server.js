@@ -8,6 +8,8 @@ const crypto = require("crypto");
 const { isIP } = require("net");
 const pricing = require("./pricing");
 const ewrPickups = require("./ewr-pickups");
+const routeTollPricing = require('./services/route-tolls');
+const tollPricingEnabled = process.env.ROUTE_TOLLS_ENABLED === 'true';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -82,6 +84,8 @@ for(const message of ['Please log in to continue.','Reservation access unavailab
 customerErrorMessages.set('Authentication required.',{message:'Please log in to continue.',status:401});
 customerErrorMessages.set('Customer trip unavailable.',{message:'Reservation unavailable.',status:404});
 customerErrorMessages.set('Too many requests. Please try again later.',{message:'Too many requests. Please try again later.',status:429});
+customerErrorMessages.set(routeTollPricing.REVIEW_MESSAGE,{message:routeTollPricing.REVIEW_MESSAGE,status:422});
+customerErrorMessages.set('Your quote changed. Please get a new quote before reserving.',{message:'Your quote changed. Please get a new quote before reserving.',status:409});
 function sendSafeError(req,res,error,fallbackStatus=500) {
   if(res.headersSent) {
     logDiagnostic(req,500,'response_interrupted');
@@ -109,7 +113,8 @@ function sendSafeError(req,res,error,fallbackStatus=500) {
   if(!message)message=requestOperation(req)==='quote'?'Quote is temporarily unavailable. Please try again.':
     requestOperation(req)==='checkout'?'Checkout is temporarily unavailable. Please try again.':'Service temporarily unavailable. Please try again.';
   req.diagnosticCategory=category;req.diagnosticProvider=provider;
-  return res.status(status).json({error:trusted?message:`${message} Reference: ${req.referenceId}`});
+  return res.status(status).json({error:trusted?message:`${message} Reference: ${req.referenceId}`,
+    ...(error?.tollReview===true?{code:'TOLL_ESTIMATE_UNAVAILABLE',tollStatus:'review_required',checkoutAllowed:false}:{})});
 }
 
 
@@ -135,7 +140,7 @@ app.set("trust proxy", process.env.TRUSTED_PROXY_CIDRS
 const productionHttps = process.env.NODE_ENV === "production" || process.env.RENDER === "true";
 const contentSecurityPolicy = [
   "default-src 'self'",
-  "script-src 'self' 'sha256-y+CcCOcuYiyX0j8FOryCRopbap8acZTqH4e9ZFjdFZM='",
+  "script-src 'self' 'sha256-shgUY9M1Hvm3yuczPXFj3MuYxEUUpH6Ieal+VKZVEro='",
   "script-src-attr 'none'",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data:",
@@ -596,7 +601,8 @@ function validateBookingInput(body) {
 async function getRouteEstimate(
   origin,
   destination,
-  departureTime
+  departureTime,
+  tollOptions = {}
 ) {
   const key =
     process.env.GOOGLE_MAPS_API_KEY;
@@ -607,7 +613,8 @@ async function getRouteEstimate(
     );
   }
 
-  const data =
+  let data;
+  try { data =
     await googleJson(
       "https://routes.googleapis.com/directions/v2:computeRoutes",
       {
@@ -621,7 +628,7 @@ async function getRouteEstimate(
             key,
 
           "X-Goog-FieldMask":
-            "routes.distanceMeters,routes.duration"
+            "routes.distanceMeters,routes.duration" + (tollOptions.enabled ? ',routes.travelAdvisory.tollInfo' : '')
         },
 
         body: JSON.stringify({
@@ -634,6 +641,7 @@ async function getRouteEstimate(
           },
 
           ...(departureTime ? { departureTime } : {}),
+          ...(tollOptions.enabled ? {extraComputations:['TOLLS'],routeModifiers:routeTollPricing.requestModifiers(tollOptions.profile)} : {}),
 
           travelMode: "DRIVE",
 
@@ -642,6 +650,15 @@ async function getRouteEstimate(
         })
       }
     );
+  } catch(error) {
+    // Toll-provider failure must not alter or block an otherwise valid flat offer.
+    if(tollOptions.enabled && tollOptions.special) {
+      const fallback=await getRouteEstimate(origin,destination,departureTime);
+      return {...fallback,tolls:{status:'unknown',amountCents:null}};
+    }
+    if(tollOptions.enabled)throw Object.assign(new Error(routeTollPricing.REVIEW_MESSAGE),{status:422,tollReview:true});
+    throw error;
+  }
 
   const route =
     data.routes &&
@@ -664,9 +681,15 @@ async function getRouteEstimate(
       ).replace("s", "")
     );
 
+  if(typeof route.distanceMeters!=='number' || !Number.isFinite(route.distanceMeters) || route.distanceMeters<0 ||
+    typeof route.duration!=='string' || !/^\d+(?:\.\d{1,9})?s$/.test(route.duration) || !Number.isFinite(seconds) || seconds<0){
+    throw new Error('Route estimate is temporarily unavailable. Please try again.');
+  }
+
   return {
     miles,
-    minutes: seconds / 60
+    minutes: seconds / 60,
+    ...(tollOptions.enabled ? {tolls:routeTollPricing.routeTolls(route)} : {})
   };
 }
 
@@ -756,6 +779,18 @@ function componentEquals(
       );
     }
   );
+}
+
+async function verifyTollLocation(text, airportProof) {
+  // Airport proof exists only after the maintained EWR identity/location checks.
+  // Its verified EWR geography establishes NJ, including Terminal C's fallback.
+  if(airportProof)return {state:'NJ',placeId:airportProof.placeId};
+  // Resolve the requested address on the server. Browser state/ID fields never
+  // choose the jurisdiction; routing uses this same provider-verified place ID.
+  const place=await lookupPlace(text,true);
+  const state=routeTollPricing.verifiedState(place);
+  if(!state)throw Error('Unverified location.');
+  return {state,placeId:place.id};
 }
 
 
@@ -890,6 +925,8 @@ async function verifyFixedOffer(body,req) {
     );
   }
 
+  if(offer.price !== 150)throw new Error('Fixed offer pricing is not configured correctly.');
+
   if (
     body.vehicle !== "suv" ||
     offer.vehicle !== "suv"
@@ -950,6 +987,24 @@ async function verifyFixedOffer(body,req) {
   const verifiedOffer = {code,label:offer.label,price:money(offer.price)};
   Object.defineProperty(verifiedOffer,"verifiedPickup",{value:verifiedPickup});
   return verifiedOffer;
+}
+
+async function verifyBookingLocations(body,req) {
+  const fixedOffer = await verifyFixedOffer(body,req);
+  let verifiedPickup = fixedOffer?.verifiedPickup;
+  if (!fixedOffer && body.pickupTerminal !== undefined) {
+    const terminalKeys={general:"ChIJ7wzsxeFSwokRhvLXxTe087M",a:"ChIJ2dQDPZNSwokRVJr9XE2SPt0",b:"ChIJ-6uTxfZSwokR-VfW-WSM53k",c:"ChIJMYEleJSwokRawcDBeH8NVg"};
+    if (!Object.hasOwn(terminalKeys,body.pickupTerminal) || terminalKeys[body.pickupTerminal]!==body.pickupPlaceId) throw new Error("Invalid request.");
+    verifiedPickup=await verifyEwrPickup(body,req);
+  }
+  let verifiedDropoff;
+  if (fixedOffer && body.dropoffTerminal !== undefined) throw new Error("Invalid request.");
+  if (!fixedOffer && body.dropoffTerminal !== undefined) {
+    const terminalKeys={general:"ChIJ7wzsxeFSwokRhvLXxTe087M",a:"ChIJ2dQDPZNSwokRVJr9XE2SPt0",b:"ChIJ-6uTxfZSwokR-VfW-WSM53k",c:"ChIJMYEleJSwokRawcDBeH8NVg"};
+    if (!Object.hasOwn(terminalKeys,body.dropoffTerminal) || terminalKeys[body.dropoffTerminal]!==body.dropoffPlaceId) throw new Error("Invalid request.");
+    verifiedDropoff=await verifyEwrPickup({pickupPlaceId:body.dropoffPlaceId,pickup:body.dropoff},req,false);
+  }
+  return {fixedOffer,verifiedPickup,verifiedDropoff};
 }
 
 
@@ -1092,6 +1147,7 @@ function roundTripLeg(body, rate, route, isReturn) {
 }
 
 async function validateCheckoutQuote(body, quote) {
+  if(!routeTollPricing.validQuote(quote))throw new Error('Calculated Checkout amount is invalid.');
   validateCalculatedFare(body.vehicle, quote.total);
   if (quote.vehicleKey !== body.vehicle || !Number.isSafeInteger(Math.round(quote.total * 100)) ||
       Math.round(quote.total * 100) <= 0) throw new Error("Calculated Checkout amount is invalid.");
@@ -1117,6 +1173,10 @@ async function validateCheckoutQuote(body, quote) {
     throw new Error("Invalid Round Trip promotion.");
   }
   const totals = calculateFareTotals(combined, promotion);
+  if(quote.pricingBreakdown){
+    totals.total=routeTollPricing.sum([routeTollPricing.cents(totals.total),quote.tolls.amountCents])/100;
+    totals.originalTotal=routeTollPricing.sum([routeTollPricing.cents(totals.originalTotal),quote.tolls.amountCents])/100;
+  }
   for (const [key, value] of Object.entries(totals)) {
     if (quote[key] !== value) throw new Error("Invalid Round Trip total.");
   }
@@ -1140,28 +1200,30 @@ async function calculateQuote(body,req) {
     throw new Error("The EWR → Manhattan special cannot be used for hourly bookings.");
   }
 
-  const fixedOffer = await verifyFixedOffer(body,req);
-  let verifiedPickup = fixedOffer?.verifiedPickup;
-  if (!fixedOffer && body.pickupTerminal !== undefined) {
-    const terminalKeys={general:"ChIJ7wzsxeFSwokRhvLXxTe087M",a:"ChIJ2dQDPZNSwokRVJr9XE2SPt0",b:"ChIJ-6uTxfZSwokR-VfW-WSM53k",c:"ChIJMYEleJSwokRawcDBeH8NVg"};
-    if (!Object.hasOwn(terminalKeys,body.pickupTerminal) || terminalKeys[body.pickupTerminal]!==body.pickupPlaceId) throw new Error("Invalid request.");
-    verifiedPickup=await verifyEwrPickup(body,req);
-  }
-  let verifiedDropoff;
-  if (fixedOffer && body.dropoffTerminal !== undefined) throw new Error("Invalid request.");
-  if (!fixedOffer && body.dropoffTerminal !== undefined) {
-    const terminalKeys={general:"ChIJ7wzsxeFSwokRhvLXxTe087M",a:"ChIJ2dQDPZNSwokRVJr9XE2SPt0",b:"ChIJ-6uTxfZSwokR-VfW-WSM53k",c:"ChIJMYEleJSwokRawcDBeH8NVg"};
-    if (!Object.hasOwn(terminalKeys,body.dropoffTerminal) || terminalKeys[body.dropoffTerminal]!==body.dropoffPlaceId) throw new Error("Invalid request.");
-    verifiedDropoff=await verifyEwrPickup({pickupPlaceId:body.dropoffPlaceId,pickup:body.dropoff},req,false);
+  const {fixedOffer,verifiedPickup,verifiedDropoff} = await verifyBookingLocations(body,req);
+  const tollProfile = tollPricingEnabled ? routeTollPricing.vehicleProfile(process.env,body.vehicle) : null;
+  const tollOptions = {enabled:tollPricingEnabled,profile:tollProfile,special:!!fixedOffer};
+  let tollEligibility=null,routePickup=verifiedPickup?{placeId:verifiedPickup.placeId}:body.pickup,
+    routeDropoff=verifiedDropoff?{placeId:verifiedDropoff.placeId}:body.dropoff;
+  if(tollPricingEnabled && !fixedOffer && !isHourly){
+    try {
+      const [from,to]=await Promise.all([verifyTollLocation(body.pickup,verifiedPickup),verifyTollLocation(body.dropoff,verifiedDropoff)]);
+      tollEligibility=routeTollPricing.eligibility(from,to);
+      routePickup={placeId:from.placeId};routeDropoff={placeId:to.placeId};
+      // A same-state waiver does not imply the physical route has no tolls.
+      // Do not request/charge toll estimates or require an E-ZPass profile there.
+      tollOptions.enabled=from.state!==to.state;
+    }catch(_){throw Object.assign(new Error(routeTollPricing.REVIEW_MESSAGE),{status:422,tollReview:true});}
   }
   const route = isHourly ? null :
     await getRouteEstimate(
-      verifiedPickup ? {placeId:verifiedPickup.placeId} : body.pickup,
-      verifiedDropoff ? {placeId:verifiedDropoff.placeId} : body.dropoff,
-      isRoundTrip ? new Date(parseServiceDateTime(body.date, body.time, "pickup")).toISOString() : undefined
+      routePickup,
+      routeDropoff,
+      isRoundTrip || tollPricingEnabled ? new Date(parseServiceDateTime(body.date, body.time, "pickup")).toISOString() : undefined,
+      tollOptions
     );
-  const returnRoute = isRoundTrip ? await getRouteEstimate(verifiedDropoff ? {placeId:verifiedDropoff.placeId} : body.dropoff, verifiedPickup ? {placeId:verifiedPickup.placeId} : body.pickup,
-    new Date(parseServiceDateTime(body.returnDate, body.returnTime, "return")).toISOString()) : null;
+  const returnRoute = isRoundTrip ? await getRouteEstimate(routeDropoff,routePickup,
+    new Date(parseServiceDateTime(body.returnDate, body.returnTime, "return")).toISOString(),tollOptions) : null;
 
   /*
     Verify fixed offer before
@@ -1170,7 +1232,7 @@ async function calculateQuote(body,req) {
 
   if (fixedOffer) {
     validateCalculatedFare(body.vehicle, fixedOffer.price);
-    return {
+    const specialQuote = {
       vehicle:
         rate.label,
 
@@ -1210,6 +1272,9 @@ async function calculateQuote(body,req) {
 
       fixedOffer
     };
+    // This offer is $150 all-inclusive, even when the internal toll cost is unknown.
+    const internalTolls=routeTollPricing.aggregateTolls([route?.tolls || {status:'unknown',amountCents:null}],tollProfile);
+    return routeTollPricing.attachTolls(specialQuote,internalTolls,true);
   }
 
 
@@ -1281,6 +1346,17 @@ async function calculateQuote(body,req) {
   };
   if (verifiedPickup) Object.defineProperty(normalQuote,"verifiedPickup",{value:verifiedPickup});
   if (verifiedDropoff) Object.defineProperty(normalQuote,"verifiedDropoff",{value:verifiedDropoff});
+  // Hourly bookings have no complete route. Preserve their existing fare and
+  // booking flow; absence of a toll snapshot is not a zero-cost toll estimate.
+  if(tollPricingEnabled && !isHourly){
+    try {
+      const legs=isHourly?[]:[route.tolls,...(returnRoute?[returnRoute.tolls]:[])];
+      const allowance=routeTollPricing.cents(pricing.tollAllowance)*(isRoundTrip?2:1);
+      const tolls=routeTollPricing.aggregateTolls(legs,tollProfile,isHourly,allowance,tollEligibility);
+      if(tolls.status==='unknown')throw Error('Unknown tolls.');
+      routeTollPricing.attachTolls(normalQuote,tolls);
+    }catch(_){throw Object.assign(new Error(routeTollPricing.REVIEW_MESSAGE),{status:422,tollReview:true});}
+  }
   return normalQuote;
 }
 
@@ -2182,8 +2258,19 @@ async function createCheckout(body, ip, fingerprint, req, res) {
     if(owner && owner!==req.customer.id)throw Object.assign(new Error('Checkout is temporarily unavailable. Please try again.'),{status:503});
   }
 
+  if(booking?.deferredPayment && await expireDeferredUnderLock(booking))throw Object.assign(new Error('Reservation unavailable.'),{status:409});
+  // Recheck the original offer/terminal protections before every owned form
+  // retry shortcut. Verification never replaces the accepted fare or session.
+  if(booking)await verifyBookingLocations(body,req);
+  // An accepted trip can predate toll activation or carry a different frozen fare.
+  // Show that owned reservation before payment rather than charging an amount
+  // different from the new form quote, repricing it, or requiring endless requotes.
+  if(booking && ((tollPricingEnabled && body.quoteRevision===undefined) ||
+    (body.quoteRevision!==undefined && body.quoteRevision!==booking.quote.quoteRevision))){
+    return {url:`${SITE_URL}/success.html?booking=${booking.id}`,bookingId:booking.id};
+  }
+
   if(booking?.deferredPayment){
-    if(await expireDeferredUnderLock(booking))throw Object.assign(new Error('Reservation unavailable.'),{status:409});
     if(payLater){if(booking.paymentStatus==='paid')throw Object.assign(new Error('Reservation unavailable.'),{status:409});return {url:`${SITE_URL}/success.html?booking=${booking.id}`,bookingId:booking.id};}
     return checkoutStoredBooking(booking.trip,booking,req);
   }
@@ -2196,12 +2283,14 @@ async function createCheckout(body, ip, fingerprint, req, res) {
     Stripe payment amount.
   */
 
-  let quote =
-    await calculateQuote(
-      body,req
-    );
-
-  if(booking)quote=booking.quote;
+  // Accepted reservations retain their frozen fare, including legacy toll policy.
+  let quote = booking ? booking.quote : await calculateQuote(body,req);
+  if(!booking && tollPricingEnabled && body.tripType!=='hourly' && !quote.fixedOffer && body.quoteRevision===undefined){
+    throw Object.assign(new Error('Your quote changed. Please get a new quote before reserving.'),{status:409});
+  }
+  if(body.quoteRevision!==undefined && (typeof body.quoteRevision!=='string' || !/^[a-f0-9]{64}$/.test(body.quoteRevision) || body.quoteRevision!==quote.quoteRevision)) {
+    throw Object.assign(new Error('Your quote changed. Please get a new quote before reserving.'),{status:409});
+  }
   // Independently validate the final server quote before storing a booking
   // or creating a Stripe session, even if quote calculation changes later.
   await validateCheckoutQuote(body, quote);
@@ -2683,7 +2772,8 @@ app.get(
         date: booking.trip.date, time: booking.trip.time,
         ...(booking.trip.tripType==='roundtrip'?{returnDate:booking.trip.returnDate,returnTime:booking.trip.returnTime}:{})
       },
-      quote: {vehicle: booking.trip.vehicle==='suv'?'Luxury SUV':booking.quote.vehicle, total: booking.quote.total,currency:booking.quote.currency},
+      quote: {vehicle: booking.trip.vehicle==='suv'?'Luxury SUV':booking.quote.vehicle, total: booking.quote.total,currency:booking.quote.currency,
+        ...(booking.quote.pricingBreakdown?{pricingBreakdown:routeTollPricing.customerPricing(booking.quote)}:{})},
       dispatch: driverVisible ? {
         driver: booking.dispatch?.driver || "", driverPhone: booking.dispatch?.driverPhone || "",
         vehicle: booking.dispatch?.vehicle || "", plate: booking.dispatch?.plate || ""

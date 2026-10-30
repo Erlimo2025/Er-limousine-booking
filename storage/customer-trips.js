@@ -1,5 +1,6 @@
 const ewr=require('../ewr-pickups');
 const pricing=require('../pricing');
+const {customerPricing}=require('../services/route-tolls');
 const uuid=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const iso=value=>typeof value==='string' && Number.isFinite(Date.parse(value)) && new Date(value).toISOString()===value;
 function tripQuery(query,now) {
@@ -53,6 +54,7 @@ function tripDto(record,management=null) {
   ...(t.tripType==='roundtrip'?{returnDate:t.returnDate,returnTime:t.returnTime}:{}),
   ...(t.tripType==='hourly'?{hours:Number(t.hours)}:{}),vehicle:t.vehicle==='suv'?'Luxury SUV':record.quote.vehicle,passengers:t.passengers,
   pickupTerminal:terminal(t.pickupPlaceId),dropoffTerminal:terminal(t.dropoffPlaceId),
+  ...(record.quote.pricingBreakdown?{pricingBreakdown:customerPricing(record.quote)}:{}),
   total:record.quote.total,currency:record.quote.currency,createdAt:record.createdAt};
 }
 function customerTripsStorage(pool,safe,validate) {
