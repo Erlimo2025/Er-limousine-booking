@@ -1,5 +1,10 @@
 # Official 2026 toll tariffs — inactive preparation
 
+**Draft review finding:** exact-route/address-pair approval is too restrictive
+for general bookings. See [Reusable coverage review](toll-route-coverage-review.md)
+for a facility/road-network replacement design and its evidence requirements.
+That replacement is not yet implemented; the current safety guard remains.
+
 This is a new implementation from the operator's supplied specification. The
 original package's JavaScript was unavailable; its 13-test transcript is not
 claimed as a run of this code. The new arithmetic suite has its own 13 tests.
