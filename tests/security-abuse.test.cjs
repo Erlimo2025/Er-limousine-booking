@@ -90,6 +90,7 @@ async function harness(t, env = {}, saved = "[]", injectedStore) {
     }},
     fetch: async (url, options) => {
       state.googleCalls++;
+      if(state.googleDelay)await new Promise(resolve=>setTimeout(resolve,state.googleDelay));
       (state.detailsRequests ||= []);
       if(url.includes("/v1/places/")) state.detailsRequests.push(decodeURIComponent(url.split("/").at(-1)));
       if(state.rejectTerminalCDetails && url.endsWith('ChIJMYEleJSwokRawcDBeH8NVg')) throw new Error('Terminal C provider rejects this identity');
@@ -139,6 +140,7 @@ async function harness(t, env = {}, saved = "[]", injectedStore) {
       if (name === "./routes/customer-trip-management") return require("../routes/customer-trip-management");
       if (name === "./pricing") return testPricing;
       if (name === "./services/route-tolls") return require('../services/route-tolls');
+      if (name === "./services/admin-toll-validation") return require('../services/admin-toll-validation');
       if (name === "./ewr-pickups") return require("../ewr-pickups");
       if (name === "./storage/postgres") return {createStore: () => {if(injectedStore instanceof Error)throw injectedStore;return testStore;}, StorageError: require("../storage/postgres").StorageError};
       return require(name);

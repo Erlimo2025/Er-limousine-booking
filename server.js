@@ -10,6 +10,9 @@ const pricing = require("./pricing");
 const ewrPickups = require("./ewr-pickups");
 const routeTollPricing = require('./services/route-tolls');
 const tollPricingEnabled = process.env.ROUTE_TOLLS_ENABLED === 'true';
+const {createTollValidation,TollValidationError}=require('./services/admin-toll-validation');
+const adminTollValidation=createTollValidation({enabled:process.env.ADMIN_TOLL_VALIDATION_ENABLED==='true',
+  key:process.env.GOOGLE_MAPS_API_KEY,googleJson,lookupPlace,parseServiceDateTime,now:()=>Date.now()});
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -226,6 +229,7 @@ function consumeLimit(scope, key, limit, windowMs) {
 }
 
 const counterCleanup = setInterval(() => {
+  adminTollValidation.prune();
   const now = Date.now();
   for (const [key, entry] of abuseCounters) if (entry.resetAt <= now) abuseCounters.delete(key);
   for (const [key, session] of adminSessions) {
@@ -1842,12 +1846,33 @@ app.post("/api/admin/login", (req, res) => {
 
 app.get("/api/admin/session", requireAdmin, (req, res) => res.json({authenticated: true}));
 
+app.get('/api/admin/toll-validation/config',requireAdmin,(req,res)=>res.json(adminTollValidation.config()));
+app.post('/api/admin/toll-validation/estimate',requireAdmin,async(req,res)=>{
+  if(req.get('origin')!==new URL(SITE_URL).origin || !req.is('application/json'))return res.status(403).json({error:'Unauthorized'});
+  if(Object.keys(req.query).length)return res.status(400).json({error:'Invalid toll validation request.'});
+  if(!adminTollValidation.config().enabled)return res.status(404).json({error:'Toll validation is disabled.'});
+  const client=clientKey(req),actor=req.adminArchiveAuthority;
+  for(const [scope,key,limit,windowMs] of [['toll-validation-minute',client,5,MINUTE],['toll-validation-hour',client,20,60*MINUTE],
+    ['toll-validation-admin',actor.actorId,20,60*MINUTE],['toll-validation-global','all',20,60*MINUTE]]){
+    const retry=consumeLimit(scope,key,limit,windowMs);if(retry)return tooManyRequests(res,retry);
+  }
+  try {res.json(await adminTollValidation.estimate(req.body,actor,client));}
+  catch(error){
+    if(error instanceof TollValidationError){
+      req.diagnosticCategory=error.code==='provider'?'provider_error':'validation_error';
+      if(error.code==='provider')req.diagnosticProvider='google';
+      return res.status(error.status).json({error:error.message});
+    }
+    req.diagnosticCategory='unexpected_error';return res.status(503).json({error:'Toll validation is temporarily unavailable.'});
+  }
+});
+
 app.post("/api/admin/logout", (req, res) => {
   if (!validAdminOrigin(req) || !req.is("application/json")) {
     return res.status(403).json({error: "Unauthorized"});
   }
   const key = adminSessionKey(req);
-  if (key) adminSessions.delete(key);
+  if (key) {adminTollValidation.clear(adminSessions.get(key)?.auditActorId);adminSessions.delete(key);}
   clearAdminCookie(res);
   res.json({authenticated: false});
 });

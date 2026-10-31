@@ -6,6 +6,7 @@
   <title>Dispatch | ER Limousine Service</title>
   <meta name="robots" content="noindex, nofollow">
   <link rel="stylesheet" href="/styles.css?v=dispatch-archive-1">
+  <link rel="stylesheet" href="/admin-toll-validation.css?v=1">
 </head>
 <body>
   <nav class="nav">
@@ -37,6 +38,51 @@
         <div id="notice" class="notice"></div>
       </div>
 
+      <details id="tvPanel" class="booking-card toll-validation" hidden>
+        <summary>Toll Validation — Estimate Only</summary>
+        <p>No customer fare, reservation or payment is changed. Google API requests may incur a small usage charge.</p>
+        <p id="tvFleet"></p>
+        <ul id="tvWarnings"></ul>
+        <form id="tvForm" autocomplete="off">
+          <div class="form-grid">
+            <div class="field full"><label for="tvPickup">Validation pickup address</label><input id="tvPickup" maxlength="200" required autocomplete="off"></div>
+            <div class="field full"><label for="tvDropoff">Validation destination address</label><input id="tvDropoff" maxlength="200" required autocomplete="off"></div>
+            <div class="field full"><label for="tvVia">Optional via address or crossing investigation point</label><input id="tvVia" maxlength="200" autocomplete="off"><small>A via point does not prove the route crosses that tunnel or bridge.</small></div>
+            <div class="field"><label for="tvDate">Future departure date — New York time</label><input id="tvDate" type="date" required></div>
+            <div class="field"><label for="tvTime">Departure time — New York time</label><input id="tvTime" type="time" required></div>
+            <div class="field"><label for="tvVehicle">Validation vehicle</label><select id="tvVehicle"><option value="suburban_2025">2025 Chevrolet Suburban — NJ OL / 2Ax</option></select></div>
+            <div class="field"><label for="tvFuel">Actual vehicle fuel type</label><select id="tvFuel" required><option value="">Choose the actual fuel type</option><option value="GASOLINE">Gasoline</option><option value="DIESEL">Diesel</option></select></div>
+            <div class="field full"><label for="tvDirections">Directions to investigate</label><select id="tvDirections"><option value="outbound">Outbound only</option><option value="both">Outbound and return, estimated independently</option></select></div>
+            <div id="tvReturnFields" class="full" hidden><div class="form-grid">
+              <div class="field"><label for="tvReturnDate">Return departure date — New York time</label><input id="tvReturnDate" type="date"></div>
+              <div class="field"><label for="tvReturnTime">Return departure time — New York time</label><input id="tvReturnTime" type="time"></div>
+            </div></div>
+          </div>
+          <div class="hero-actions"><button id="tvEstimate" type="submit" class="btn btn-primary" disabled>Get toll estimate</button><button id="tvNew" type="button" class="btn btn-secondary">New estimate / clear comparison</button></div>
+        </form>
+        <p id="tvStatus" role="status" aria-live="polite"></p>
+        <div id="tvResults"></div>
+        <form id="tvComparison" hidden autocomplete="off">
+          <h3>Manual comparison — no customer billing</h3>
+          <p>Keep the original Google total unchanged. Enter only tolls and credits for the matching trip, not fares or account top-ups. Do not enter plate, tag, account or payment identifiers.</p>
+          <div class="form-grid">
+            <div class="field full"><label for="tvCompareDirection">Direction being compared</label><select id="tvCompareDirection"></select></div>
+            <div class="field"><label for="tvActualDate">Actual travel date</label><input id="tvActualDate" type="date"></div>
+            <div class="field"><label for="tvActualTime">Actual departure time — New York time</label><input id="tvActualTime" type="time"></div>
+            <div class="field"><label for="tvDaily">Manhattan daily-entry context</label><select id="tvDaily"><option value="unknown">Unknown — needs review</option><option value="first">First chargeable entry that calendar day</option><option value="paid">Daily congestion toll already paid</option><option value="outside">Route did not enter the zone</option></select></div>
+            <div class="field"><label for="tvCredits">Crossing-credit reconciliation</label><select id="tvCredits"><option value="unknown">Unknown — needs review</option><option value="pending">Credits missing or still pending</option><option value="reconciled">Applicable credits settled and matched</option></select></div>
+            <label class="full tv-check"><input id="tvMatched" type="checkbox"> I checked that the actual route and crossings match the Google-returned route.</label>
+          </div>
+          <div id="tvRows"></div>
+          <button id="tvAdd" type="button" class="btn btn-secondary">Add toll charge or credit</button>
+          <p id="tvTotals" aria-live="polite"></p>
+          <p id="tvReview" class="tv-review"></p>
+          <label for="tvSummary">Copyable comparison summary — held only in this page</label>
+          <textarea id="tvSummary" readonly rows="9" spellcheck="false"></textarea>
+          <p>Nothing is saved automatically. Record the original estimate yourself if needed later. Closing, leaving or signing out clears this tool; a later Google request cannot recreate a past driving estimate.</p>
+        </form>
+      </details>
+
       <form id="reservationFilters" class="booking-card dispatch-filters" hidden>
         <div class="form-grid">
           <div class="field full"><label for="filterView">Trip view</label><select id="filterView"><option value="dispatch">Dispatch trips</option><option value="archived">Archived Trips</option></select></div>
@@ -55,6 +101,7 @@
     </div>
   </main>
 
-  <script src="/admin.js?v=dispatch-archive-1"></script>
+  <script src="/admin-toll-validation.js?v=1"></script>
+  <script src="/admin.js?v=dispatch-archive-1-toll-validation-1"></script>
 </body>
 </html>

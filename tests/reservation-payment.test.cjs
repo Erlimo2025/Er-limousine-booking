@@ -113,7 +113,8 @@ test('PostgreSQL Pay Later: atomic FIRST15 creation, owner SQL, payment reuse an
  assert.equal((await pool.query('SELECT customer_id FROM er_reservations WHERE id=$1',[id])).rows[0].customer_id,own);
 });
 test('booking choice double submit is blocked and browser sends only intent, never authoritative price',async()=>{
- const src=fs.readFileSync(path.join(__dirname,'../public/app.js'),'utf8'),start=src.indexOf('form.addEventListener(\n  "submit"'),end=src.indexOf('/* =========================================',start+20);
+ const src=fs.readFileSync(path.join(__dirname,'../public/app.js'),'utf8').replace(/\r\n/g,'\n'),start=src.indexOf('form.addEventListener(\n  "submit"'),end=src.indexOf('/* =========================================',start+20);
+ assert.ok(start>=0&&end>start,'Booking-submit test source boundaries must exist.');
  let handler,release,calls=0,sent;
  const ctx={form:{addEventListener:(e,f)=>handler=f},payBtn:{disabled:false},payLaterBtn:{disabled:false},reservationBusy:false,currentQuote:{total:80},vehicle:{disabled:false},clearNotice(){},getFormData:()=>({...booking,vehicle:'suv'}),showNotice(){},window:{location:{}},
  fetch:async(url,options)=>{calls++;sent=JSON.parse(options.body);await new Promise(r=>release=r);return {ok:true,json:async()=>({url:'http://localhost:3000/success.html?booking=fixture'})};}};

@@ -40,7 +40,7 @@ function ui(){
  for(const id of ids)elements[id]={value:'',innerHTML:'',textContent:'',disabled:false,hidden:true,options:[{textContent:id}],selectedIndex:0,classList:{toggle(){}},addEventListener:(event,fn)=>events[id+':'+event]=fn,insertAdjacentHTML(_,html){this.innerHTML+=html;}};
  const html=fs.readFileSync(path.join(__dirname,'../public/admin.html'),'utf8');
  for(const select of html.matchAll(/<select id="([^"]+)">([\s\S]*?)<\/select>/g)){
-  const element=elements[select[1]];element.options=[...select[2].matchAll(/<option value="([^"]+)">([^<]+)<\/option>/g)].map(option=>({value:option[1],textContent:option[2]}));
+  const element=elements[select[1]];if(!element)continue;element.options=[...select[2].matchAll(/<option value="([^"]+)">([^<]+)<\/option>/g)].map(option=>({value:option[1],textContent:option[2]}));
   let value=element.options[0].value;Object.defineProperty(element,'value',{get:()=>value,set:next=>{value=next;element.selectedIndex=element.options.findIndex(option=>option.value===next);}});
  }
  elements.reservationFilters.reset=()=>{elements.reservationSearch.value='';elements.filterView.value='dispatch';for(const key of ['Status','Payment','Timing','Airport','Vehicle'])elements['filter'+key].value=key==='Status'?'active':key==='Timing'?'upcoming':'all';};elements.reservationFilters.reset();

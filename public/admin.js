@@ -25,6 +25,7 @@ function setLoggedIn(value) {
   logoutBtn.classList.toggle("hidden-field", !value);
   loadBtn.textContent = value ? "Load bookings" : "Admin login";
   filters.hidden=!value;
+  window.erTollValidation?.setAuthenticated(value,adminFetch);
   if (!value) {
     archiveRequests.clear();
     authGeneration++;
@@ -130,6 +131,7 @@ async function restoreSession() {
 }
 
 async function logout() {
+  window.erTollValidation?.setAuthenticated(false);
   loadBtn.disabled = true;
   logoutBtn.disabled = true;
   authGeneration++;
