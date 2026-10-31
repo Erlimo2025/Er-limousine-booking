@@ -71,9 +71,11 @@ test('typing, selection, resets/navigation and programmatic edits win over slow 
 });
 
 test('autocomplete ignores delayed suggestions after manual choice or GPS commit; drop-off retains manual selection behavior',async()=>{
- const app=fs.readFileSync(path.join(__dirname,'../public/app.js'),'utf8'),elements=[],input={value:'Market',dataset:{},events:{},addEventListener(e,f){this.events[e]=f;}},dropoff={...input,dataset:{},events:{}},container={innerHTML:'',appendChild:x=>elements.push(x)},timers=[],results=[];
+ const app=fs.readFileSync(path.join(__dirname,'../public/app.js'),'utf8').replace(/\r\n/g,'\n'),elements=[],input={value:'Market',dataset:{},events:{},addEventListener(e,f){this.events[e]=f;}},dropoff={...input,dataset:{},events:{}},container={innerHTML:'',appendChild:x=>elements.push(x)},timers=[],results=[];
  const ctx={pickup:input,dropoff,syncPickupTerminal(){},syncDropoffTerminal(){},suggestionTimers:{},clearTimeout(){},setTimeout(fn){timers.push(fn);},specialOfferActive:()=>false,resetQuote(){},document:{createElement:()=>({addEventListener(e,f){this[e]=f;}})},findAddresses:async()=>await new Promise(r=>results.push(r))};
- vm.createContext(ctx);vm.runInContext(app.slice(app.indexOf('function renderSuggestions('),app.indexOf('/* =========================================\n   QUOTE',app.indexOf('function enableAddressAutocomplete('))),ctx);
+ const start=app.indexOf('function renderSuggestions('),end=app.indexOf('/* =========================================\n   QUOTE',app.indexOf('function enableAddressAutocomplete('));
+ assert.ok(start>=0&&end>start,'Autocomplete test source boundaries must exist.');
+ vm.createContext(ctx);vm.runInContext(app.slice(start,end),ctx);
  ctx.enableAddressAutocomplete(input,container,'pickup');input.events.input();const pending=timers.shift()();ctx.renderSuggestions(container,input,[{description:'Chosen address',placeId:'ChIJ_chosen'}]);elements.at(-1).mousedown({preventDefault(){}});results.shift()([{description:'Stale address',placeId:'stale'}]);await pending;assert.equal(input.value,'Chosen address');assert.equal(input.dataset.placeId,'ChIJ_chosen');assert.equal(elements.length,1);
  ctx.renderSuggestions(container,dropoff,[{description:'Drop-off selected',placeId:'ChIJ_dropoff'}]);elements.at(-1).mousedown({preventDefault(){}});assert.equal(dropoff.value,'Drop-off selected');assert.equal(dropoff.dataset.placeId,'ChIJ_dropoff');
 });

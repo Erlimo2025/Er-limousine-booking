@@ -1,0 +1,22 @@
+.toll-validation{margin-bottom:18px;min-width:0;overflow-wrap:anywhere}
+.toll-validation[hidden],.toll-validation [hidden]{display:none!important}
+.toll-validation>summary{cursor:pointer;font-weight:700;color:var(--gold,#c5a15a)}
+.toll-validation p,.toll-validation li{font-size:.88rem;line-height:1.55}
+.toll-validation ul{padding-left:20px}
+.toll-validation .form-grid>.full{grid-column:1/-1;min-width:0}
+.toll-validation input,.toll-validation select,.toll-validation textarea{max-width:100%;min-width:0}
+.toll-validation .hero-actions{flex-wrap:wrap}
+.toll-validation .tv-route{border-top:1px solid #c5a15a55;margin-top:18px;padding-top:14px;min-width:0}
+.toll-validation .tv-route dl{display:grid;grid-template-columns:minmax(95px,1fr) minmax(0,3fr);gap:8px}
+.toll-validation .tv-route dt{font-weight:700}
+.toll-validation .tv-attribution{font-family:Arial,sans-serif;font-style:normal;font-weight:400;font-size:14px;letter-spacing:normal;white-space:nowrap;color:#1f1f1f;background:#fff;display:inline-block;padding:5px 8px;border-radius:4px}
+.toll-validation .tv-route dd{margin:0;min-width:0}
+.toll-validation .tv-check{display:flex;align-items:flex-start;gap:10px;font-size:.88rem}
+.toll-validation .tv-check input{width:18px;height:18px;flex:0 0 18px;margin-top:3px}
+.toll-validation .tv-row{display:grid;grid-template-columns:100px minmax(0,2fr) minmax(90px,1fr) 110px auto;gap:8px;align-items:end;margin:12px 0}
+.toll-validation .tv-row label{display:block;min-width:0;font-size:.8rem}
+.toll-validation .tv-row input,.toll-validation .tv-row select{width:100%;box-sizing:border-box}
+.toll-validation .tv-row button{padding:10px}
+.toll-validation .tv-review{font-weight:600}
+.toll-validation textarea{display:block;width:100%;box-sizing:border-box;margin-top:8px}
+@media(max-width:700px){.toll-validation .tv-row{grid-template-columns:1fr 1fr}.toll-validation .tv-row .tv-description{grid-column:1/-1}.toll-validation .tv-route dl{grid-template-columns:1fr}.toll-validation .tv-route dd{margin-bottom:7px}.toll-validation .hero-actions .btn{max-width:100%;white-space:normal}}
