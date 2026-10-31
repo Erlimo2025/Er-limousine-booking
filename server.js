@@ -632,7 +632,7 @@ async function getRouteEstimate(
             key,
 
           "X-Goog-FieldMask":
-            "routes.distanceMeters,routes.duration" + (tollOptions.enabled ? ',routes.travelAdvisory.tollInfo' : '')
+            tollOptions.official ? routeTollPricing.officialFieldMask : "routes.distanceMeters,routes.duration" + (tollOptions.enabled ? ',routes.travelAdvisory.tollInfo' : '')
         },
 
         body: JSON.stringify({
@@ -646,6 +646,7 @@ async function getRouteEstimate(
 
           ...(departureTime ? { departureTime } : {}),
           ...(tollOptions.enabled ? {extraComputations:['TOLLS'],routeModifiers:routeTollPricing.requestModifiers(tollOptions.profile)} : {}),
+          ...(tollOptions.official ? {polylineQuality:'HIGH_QUALITY',computeAlternativeRoutes:false} : {}),
 
           travelMode: "DRIVE",
 
@@ -664,11 +665,14 @@ async function getRouteEstimate(
     throw error;
   }
 
+  if(tollOptions.official&&(!data||typeof data!=='object'||Array.isArray(data)||Object.hasOwn(data,'fallbackInfo')))
+    throw Object.assign(new Error(routeTollPricing.REVIEW_MESSAGE),{status:422,tollReview:true});
   const route =
     data.routes &&
     data.routes[0];
 
   if (!route) {
+    if(tollOptions.official)throw Object.assign(new Error(routeTollPricing.REVIEW_MESSAGE),{status:422,tollReview:true});
     throw new Error(
       "No drivable route was found."
     );
@@ -687,13 +691,15 @@ async function getRouteEstimate(
 
   if(typeof route.distanceMeters!=='number' || !Number.isFinite(route.distanceMeters) || route.distanceMeters<0 ||
     typeof route.duration!=='string' || !/^\d+(?:\.\d{1,9})?s$/.test(route.duration) || !Number.isFinite(seconds) || seconds<0){
+    if(tollOptions.official)throw Object.assign(new Error(routeTollPricing.REVIEW_MESSAGE),{status:422,tollReview:true});
     throw new Error('Route estimate is temporarily unavailable. Please try again.');
   }
 
   return {
     miles,
     minutes: seconds / 60,
-    ...(tollOptions.enabled ? {tolls:routeTollPricing.routeTolls(route)} : {})
+    ...(tollOptions.enabled ? {tolls:routeTollPricing.routeTolls(route)} : {}),
+    ...(tollOptions.official ? {officialRoute:{data:route,origin:origin.placeId,destination:destination.placeId,departure:departureTime}} : {})
   };
 }
 
@@ -1217,6 +1223,8 @@ async function calculateQuote(body,req) {
       // A same-state waiver does not imply the physical route has no tolls.
       // Do not request/charge toll estimates or require an E-ZPass profile there.
       tollOptions.enabled=from.state!==to.state;
+      tollOptions.official=tollOptions.enabled;
+      if(tollOptions.official&&!tollProfile?.official)throw Error('Unverified official vehicle profile.');
     }catch(_){throw Object.assign(new Error(routeTollPricing.REVIEW_MESSAGE),{status:422,tollReview:true});}
   }
   const route = isHourly ? null :
@@ -1354,9 +1362,10 @@ async function calculateQuote(body,req) {
   // booking flow; absence of a toll snapshot is not a zero-cost toll estimate.
   if(tollPricingEnabled && !isHourly){
     try {
-      const legs=isHourly?[]:[route.tolls,...(returnRoute?[returnRoute.tolls]:[])];
       const allowance=routeTollPricing.cents(pricing.tollAllowance)*(isRoundTrip?2:1);
-      const tolls=routeTollPricing.aggregateTolls(legs,tollProfile,isHourly,allowance,tollEligibility);
+      const tolls=tollOptions.official ? routeTollPricing.priceOfficialRoutes([route.officialRoute,...(returnRoute?[returnRoute.officialRoute]:[])],tollProfile,process.env,tollEligibility) :
+        routeTollPricing.aggregateTolls([route.tolls,...(returnRoute?[returnRoute.tolls]:[])],tollProfile,false,allowance,tollEligibility);
+      if(tollOptions.official){tolls.allowanceCents=allowance;tolls.amountCents=Math.max(0,tolls.estimatedRouteCents-allowance);}
       if(tolls.status==='unknown')throw Error('Unknown tolls.');
       routeTollPricing.attachTolls(normalQuote,tolls);
     }catch(_){throw Object.assign(new Error(routeTollPricing.REVIEW_MESSAGE),{status:422,tollReview:true});}

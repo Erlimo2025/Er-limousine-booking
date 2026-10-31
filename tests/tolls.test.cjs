@@ -2,15 +2,23 @@ const test=require('node:test'),assert=require('node:assert/strict'),fs=require(
 const factoryPath=path.join(__dirname,'security-abuse.test.cjs'),factorySource=fs.readFileSync(factoryPath,'utf8');
 const {harness,booking}=new Function('require','__dirname',factorySource.slice(0,factorySource.indexOf('test("approved prices'))+'\nreturn {harness,booking};')(createRequire(factoryPath),__dirname);
 const tolls=require('../services/route-tolls');
+const official=require('./helpers/official-toll-fixtures.cjs');
 // Synthetic reviewed profile is a test fixture, not a claim about the ER fleet.
-const profile={emissionType:'GASOLINE',tollPasses:['US_NJ_EZPASSNJ'],vehicleClass:'two_axle_passenger_equivalent',commercialRatesVerified:true,congestionCoverageVerified:true};
-const enabled={ROUTE_TOLLS_ENABLED:'true',TOLL_VEHICLE_PROFILES_JSON:JSON.stringify({suv:profile,escalade:profile})};
+const profile={emissionType:'GASOLINE',tollPasses:['US_NJ_EZPASSNJ'],vehicleClass:'two_axle_passenger_equivalent',commercialRatesVerified:true,congestionCoverageVerified:true,official2026:official.profile().official2026};
 const normal={...booking,vehicle:'suv',pickup:'Newark Penn Station, Newark, NJ',dropoff:'Midtown Manhattan, NY'};
 const origin={origin:'http://localhost:3000','sec-fetch-site':'same-origin'};
-const googleRoute=amount=>({distanceMeters:16093.44,duration:'1200s',...(amount===undefined?{}:{travelAdvisory:{tollInfo:amount===null?{}:{estimatedPrice:[{currencyCode:'USD',units:String(Math.floor(amount/100)),nanos:amount%100*10000000}]}}})});
+const googleRoute=(amount,request)=>{const result=official.googleRoute('lincoln',request?.origin?.placeId===ids.midtown?'nj_bound':'ny_bound',amount);if(amount===undefined)delete result.travelAdvisory;return result;};
 const place=(state,id,address)=>({id,formattedAddress:address,displayName:{text:address},location:{latitude:40.7,longitude:-74.1},
  addressComponents:[{types:['country'],shortText:'US',longText:'United States'},{types:['administrative_area_level_1'],shortText:state,longText:{NJ:'New Jersey',NY:'New York',CT:'Connecticut',PA:'Pennsylvania'}[state]},...(state==='NY'?[{types:['administrative_area_level_2'],shortText:'New York County',longText:'New York County'}]:[])]});
 const ids={newark:'ChIJ_toll_newark',midtown:'ChIJ_toll_midtown',trenton:'ChIJ_toll_trenton',stamford:'ChIJ_toll_stamford',ewr:'ChIJ7wzsxeFSwokRhvLXxTe087M'};
+const coverage=official.catalog();
+for(const source of [ids.newark,ids.ewr])for(const reverse of [false,true]){
+ const route=official.googleRoute('lincoln',reverse?'nj_bound':'ny_bound');
+ coverage.routes.push(official.manifest(coverage,route,reverse?ids.midtown:source,reverse?source:ids.midtown,{direction:reverse?'nj_bound':'ny_bound',crzEntries:reverse?0:1}));
+}
+const enabled={ROUTE_TOLLS_ENABLED:'true',TOLL_VEHICLE_PROFILES_JSON:JSON.stringify({suv:profile,escalade:{...profile,official2026:{...profile.official2026,vehicleKey:'escalade'}}}),OFFICIAL_TOLL_COVERAGE_JSON:JSON.stringify(coverage)};
+function editCoverage(h,change){const c=JSON.parse(h.context.process.env.OFFICIAL_TOLL_COVERAGE_JSON);change(c);h.context.process.env.OFFICIAL_TOLL_COVERAGE_JSON=JSON.stringify(c);}
+const roadCost=amount=>({id:'nj_road_fixture',label:'Verified NJ road',amountCents:amount,evidence:'synthetic-road-inventory',tariffVersion:'synthetic-road-tariff-2026',segments:[0,0],validFrom:'2026-01-04T05:01:00Z',validUntil:'2027-01-01T04:59:59Z'});
 function configureLocations(h){h.state.searchResults={
  [normal.pickup]:[place('NJ',ids.newark,normal.pickup)],[normal.dropoff]:[place('NY',ids.midtown,normal.dropoff)],
  'Trenton, NJ':[place('NJ',ids.trenton,'Trenton, NJ')],'Stamford, CT':[place('CT',ids.stamford,'Stamford, CT')],
@@ -18,7 +26,7 @@ function configureLocations(h){h.state.searchResults={
  EWR:[place('NJ',ids.ewr,'Newark Liberty International Airport (EWR)')],
  'Newark Liberty International Airport (EWR)':[place('NJ',ids.ewr,'Newark Liberty International Airport (EWR)')],
  Manhattan:[place('NY',ids.midtown,'Manhattan, NY')]};return h;}
-async function fixture(t,amount=1375,env=enabled){const h=configureLocations(await harness(t,env));h.state.routeResult=()=>googleRoute(amount);return h;}
+async function fixture(t,amount=1375,env=enabled){const h=configureLocations(await harness(t,env));h.state.routeResult=request=>googleRoute(amount,request);return h;}
 const cookie=r=>r.headers.getSetCookie().find(value=>value.includes('er_customer_session'))?.split(';')[0];
 const access=r=>r.headers.getSetCookie().filter(value=>value.includes('er_booking_')).map(value=>value.split(';')[0]).join('; ');
 
@@ -34,30 +42,32 @@ test('toll states use only the route-level total and never sum duplicate leg tot
  route.travelAdvisory.tollInfo.estimatedPrice.push({currencyCode:'CAD',units:'1'});assert.equal(tolls.routeTolls(route).status,'unknown');
 });
 
-test('a valid explicit zero-priced toll estimate adds no customer charge and is distinguished from an unknown cost',async t=>{
- const h=await fixture(t,0),q=await h.request('/api/quote',normal);assert.equal(q.status,200);assert.equal(q.body.tolls.status,'estimated');assert.equal(q.body.tolls.amountCents,0);assert.equal(q.body.total,80);assert.equal(q.body.pricingBreakdown.tollAllowanceCents,0);
- const receipt=require('../services/booking-emails').bookingMessage({trip:normal,quote:q.body,customer:{firstName:'Toll',lastName:'Fixture',email:'fixture@example.test'},paymentStatus:'unpaid',id:crypto.randomUUID()},'customer_reservation_created',{email:'support@example.test',phone:''});assert.match(receipt.text,/Tolls: No additional charge/);assert.doesNotMatch(receipt.text,/Tolls: Included in fare allowance/);
+test('a reviewed reverse route has no PA or new zone charge; a Google zero is not billing authority',async t=>{
+ const h=await fixture(t,0),q=await h.request('/api/quote',{...normal,pickup:normal.dropoff,dropoff:normal.pickup});assert.equal(q.status,200);assert.equal(q.body.tolls.status,'estimated');assert.equal(q.body.tolls.amountCents,0);assert.equal(q.body.total,80);assert.equal(q.body.pricingBreakdown.tollAllowanceCents,0);
+ const receipt=require('../services/booking-emails').bookingMessage({trip:normal,quote:q.body,customer:{firstName:'Toll',lastName:'Fixture',email:'fixture@example.test'},paymentStatus:'unpaid',id:crypto.randomUUID()},'customer_reservation_created',{email:'support@example.test',phone:''});assert.match(receipt.text,/Port Authority crossing: \$0.00/);assert.doesNotMatch(receipt.text,/Included in fare allowance/);
 });
 
 test('Routes requests retain distance/duration, request TOLLS once, and send only the server vehicle profile and scheduled departure',async t=>{
  const h=await fixture(t),r=await h.request('/api/quote',{...normal,tollPasses:['forged'],emissionType:'ELECTRIC',tollAmount:1});
  assert.equal(r.status,200);assert.deepEqual(h.state.routes[0].extraComputations,['TOLLS']);assert.deepEqual(h.state.routes[0].routeModifiers,{vehicleInfo:{emissionType:'GASOLINE'},tollPasses:['US_NJ_EZPASSNJ']});
- assert.equal(h.state.routeHeaders[0]['X-Goog-FieldMask'],'routes.distanceMeters,routes.duration,routes.travelAdvisory.tollInfo');assert.ok(!h.state.routeHeaders[0]['X-Goog-FieldMask'].includes('legs'));
- assert.equal(h.state.routes[0].departureTime,'2026-11-10T17:00:00.000Z');assert.equal(r.body.total,93.75);assert.equal(r.body.totalCents,9375);assert.equal(r.body.pricingBreakdown.tripFareCents,8000);assert.equal(r.body.pricingBreakdown.tollsCents,1375);
+ assert.equal(h.state.routeHeaders[0]['X-Goog-FieldMask'],tolls.officialFieldMask);assert.match(h.state.routeHeaders[0]['X-Goog-FieldMask'],/steps.polyline.encodedPolyline/);assert.equal(h.state.routes[0].polylineQuality,'HIGH_QUALITY');
+ assert.equal(h.state.routes[0].departureTime,'2026-11-10T17:00:00.000Z');assert.equal(r.body.total,100.79);assert.equal(r.body.totalCents,10079);assert.equal(r.body.pricingBreakdown.tripFareCents,8000);assert.equal(r.body.pricingBreakdown.tollsCents,2079);
  assert.ok(!JSON.stringify(r.body).includes('mock-google-key'));assert.equal(h.records().length,0);
 });
 
-test('eligible interstate pricing counts the entire reported route including in-state roads, crossings and congestion, without adding duplicate leg prices',async t=>{
- const h=await fixture(t);h.state.routeResult=()=>{const route=googleRoute(2900);route.legs=[googleRoute(600),googleRoute(1400),googleRoute(900)];return route;};
- const q=await h.request('/api/quote',normal);assert.equal(q.status,200);assert.equal(q.body.tolls.estimatedRouteCents,2900);assert.equal(q.body.tolls.amountCents,2900);assert.equal(q.body.total,109);
- const r=await h.request('/api/checkout',{...normal,quoteRevision:q.body.quoteRevision});assert.equal(r.status,200);assert.equal(h.records()[0].quote.total,109);assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount,10900);
+test('verified road costs and official components replace the Google aggregate without adding route or leg prices twice',async t=>{
+ const h=await fixture(t);h.state.routeResult=()=>{const route=googleRoute(2900);route.legs[0].travelAdvisory={tollInfo:{estimatedPrice:[{currencyCode:'USD',units:'99'}]}};return route;};
+ editCoverage(h,c=>{c.routes.find(r=>r.originPlaceId===ids.newark).otherTolls=[roadCost(225)];});
+ const q=await h.request('/api/quote',normal);assert.equal(q.status,200);assert.equal(q.body.tolls.estimatedRouteCents,2304);assert.equal(q.body.tolls.amountCents,2304);assert.equal(q.body.total,103.04);
+ const r=await h.request('/api/checkout',{...normal,quoteRevision:q.body.quoteRevision});assert.equal(r.status,200);assert.equal(h.records()[0].quote.total,103.04);assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount,10304);
 });
 
 test('verified interstate endpoints follow actual directional tolls while same-state tolled routes are waived',async t=>{
- const h=await fixture(t);h.state.routeResult=route=>googleRoute(route.origin.placeId===ids.midtown?250:route.destination.placeId===ids.trenton?400:route.destination.placeId===ids.stamford?undefined:1375);
- for(const [trip,amount,total,status]of [[normal,1375,93.75,'estimated'],[{...normal,pickup:normal.dropoff,dropoff:normal.pickup},250,82.50,'estimated'],[{...normal,dropoff:'Trenton, NJ'},0,80,'waived'],[{...normal,dropoff:'Stamford, CT'},0,80,'none']]){
+ const h=await fixture(t);h.state.routeResult=route=>googleRoute(route.origin.placeId===ids.midtown?250:route.destination.placeId===ids.trenton?400:1375,route);
+ for(const [trip,amount,total,status]of [[normal,2079,100.79,'estimated'],[{...normal,pickup:normal.dropoff,dropoff:normal.pickup},0,80,'estimated'],[{...normal,dropoff:'Trenton, NJ'},0,80,'waived']]){
   const r=await h.request('/api/quote',trip);assert.equal(r.status,200);assert.equal(r.body.tolls.amountCents,amount);assert.equal(r.body.total,total);assert.equal(r.body.tolls.status,status);
  }
+ assert.equal((await h.request('/api/quote',{...normal,dropoff:'Stamford, CT'})).status,422);
 });
 
 test('same-state NJ and NY trips waive real or unknown road tolls, even without a verified company toll profile',async t=>{
@@ -72,7 +82,7 @@ test('same-state NJ and NY trips waive real or unknown road tolls, even without 
 
 test('state eligibility ignores forged browser state/ID JSON and uses the very same verified IDs for routing',async t=>{
  const h=await fixture(t),r=await h.request('/api/quote',{...normal,pickupState:'NJ',dropoffState:'NJ',pickupPlaceId:'forged_nj',dropoffPlaceId:ids.newark,verifiedLocations:{pickupState:'NJ',dropoffState:'NJ'},tolls:{eligibility:{pickupState:'NJ',dropoffState:'NJ'}}});
- assert.equal(r.status,200);assert.equal(r.body.total,93.75);assert.equal(r.body.tolls.eligibility.pickupState,'NJ');assert.equal(r.body.tolls.eligibility.dropoffState,'NY');assert.equal(h.state.routes[0].origin.placeId,ids.newark);assert.equal(h.state.routes[0].destination.placeId,ids.midtown);
+ assert.equal(r.status,200);assert.equal(r.body.total,100.79);assert.equal(r.body.tolls.eligibility.pickupState,'NJ');assert.equal(r.body.tolls.eligibility.dropoffState,'NY');assert.equal(h.state.routes[0].origin.placeId,ids.newark);assert.equal(h.state.routes[0].destination.placeId,ids.midtown);
  const misleading=await fixture(t);misleading.state.searchResults[normal.dropoff]=[place('NJ',ids.trenton,'Provider-verified Trenton, NJ')];const q=await misleading.request('/api/quote',normal);assert.equal(q.status,200);assert.equal(q.body.tolls.status,'waived');assert.equal(misleading.state.routes[0].destination.placeId,ids.trenton);
 });
 
@@ -117,11 +127,11 @@ test('previously accepted same-state toll snapshots retain their stored price un
 });
 
 test('Round Trip obtains separate outbound/return estimates and applies FIRST15 only to the original combined fare',async t=>{
- const h=await fixture(t);h.state.routeResult=route=>googleRoute(route.origin.placeId===ids.midtown?250:1375);
+ const h=await fixture(t);h.state.routeResult=route=>googleRoute(route.origin.placeId===ids.midtown?250:1375,route);
  const body={...normal,tripType:'roundtrip',returnDate:'2026-11-12',returnTime:'18:00',promoCode:'FIRST15'},r=await h.request('/api/quote',body);
  assert.equal(r.status,200);assert.equal(h.state.routes.length,2);assert.equal(h.state.routes[0].origin.placeId,ids.newark);assert.equal(h.state.routes[1].origin.placeId,ids.midtown);assert.equal(h.state.routes[1].departureTime,'2026-11-12T23:00:00.000Z');
- assert.deepEqual(r.body.tolls.legs.map(leg=>leg.amountCents),[1375,250]);assert.equal(r.body.tolls.amountCents,1625);assert.equal(r.body.roundTrip.outbound.fare,80);assert.equal(r.body.roundTrip.return.fare,80);assert.equal(r.body.discount,24);assert.equal(r.body.total,152.25);
- const reserved=await h.request('/api/checkout',{...body,paymentChoice:'now',quoteRevision:r.body.quoteRevision});assert.equal(reserved.status,200);assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount,15225);
+ assert.deepEqual(r.body.tolls.legs.map(leg=>leg.amountCents),[2079,0]);assert.equal(r.body.tolls.amountCents,2079);assert.equal(r.body.roundTrip.outbound.fare,80);assert.equal(r.body.roundTrip.return.fare,80);assert.equal(r.body.discount,24);assert.equal(r.body.total,156.79);
+ const reserved=await h.request('/api/checkout',{...body,paymentChoice:'now',quoteRevision:r.body.quoteRevision});assert.equal(reserved.status,200);assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount,15679);
 });
 
 test('each maintained EWR identity retains eligibility and reverse/foreign destinations cannot inherit the inclusive special',async t=>{
@@ -170,20 +180,51 @@ test('ordinary EWR pickup/drop-off retries retain their terminal checks and pick
  }
 });
 
-test('unknown tolls, invalid USD money, unsupported currencies and Google failure block both reservation choices without storing or charging',async t=>{
- const cases=[()=>googleRoute(null),()=>({distanceMeters:16093.44,duration:'1200s',travelAdvisory:{tollInfo:{estimatedPrice:[{currencyCode:'EUR',units:'9'}]}}}),()=>({distanceMeters:16093.44,duration:'1200s',travelAdvisory:{tollInfo:{estimatedPrice:[{currencyCode:'USD',units:'-1'}]}}}),()=>{throw Error('private provider failure');}];
+test('missing route geometry or Google failure blocks both reservation choices without storing or charging',async t=>{
+ const cases=[()=>{const r=googleRoute(null);delete r.legs;return r;},()=>({distanceMeters:16093.44,duration:'1200s',travelAdvisory:{tollInfo:{estimatedPrice:[{currencyCode:'EUR',units:'9'}]}}}),()=>({distanceMeters:16093.44,duration:'1200s',travelAdvisory:{tollInfo:{estimatedPrice:[{currencyCode:'USD',units:'-1'}]}}}),()=>{throw Error('private provider failure');}];
  for(const result of cases){const h=await fixture(t);h.state.routeResult=result;
   for(const endpoint of ['/api/quote','/api/checkout'])for(const paymentChoice of ['later','now']){const r=await h.request(endpoint,{...normal,paymentChoice,total:0,tolls:{amountCents:0},tollAmount:0});assert.equal(r.status,422);assert.equal(r.body.error,tolls.REVIEW_MESSAGE);assert.equal(r.body.code,'TOLL_ESTIMATE_UNAVAILABLE');assert.equal(r.body.checkoutAllowed,false);assert.ok(!JSON.stringify(r.body).includes('private provider'));}
   assert.equal(h.records().length,0);assert.equal(h.state.creates.length,0);
  }
+ const fallback=await fixture(t);vm.runInContext("const originalTollGoogle=googleJson;googleJson=async(url,...rest)=>{const data=await originalTollGoogle(url,...rest);if(url.includes('computeRoutes'))data.fallbackInfo={reason:'synthetic-fallback'};return data;};",fallback.context);
+ for(const path of ['/api/quote','/api/checkout']){const denied=await fallback.request(path,normal);assert.equal(denied.status,422);assert.equal(denied.body.code,'TOLL_ESTIMATE_UNAVAILABLE');}
+ assert.equal(fallback.records().length,0);assert.equal(fallback.state.creates.length,0);
 });
 
-test('commercial/pass/congestion settings must be verified; disabled mode keeps legacy requests and fares unchanged',async t=>{
- for(const configured of [undefined,'invalid',JSON.stringify({suv:{emissionType:'GASOLINE',vehicleClass:'2Ax'}}),JSON.stringify({suv:{...profile,commercialRatesVerified:false}}),JSON.stringify({suv:{...profile,congestionCoverageVerified:false}}),JSON.stringify({suv:{...profile,vehicleClass:'commercial_bus'}}),JSON.stringify({suv:{...profile,tollPasses:['invented']}}),JSON.stringify({suv:{...profile,tollPasses:['US_NY_EZPASSNY']}}),JSON.stringify({suv:{...profile,tollPasses:[]}}),JSON.stringify({suv:{...profile,emissionType:'unknown'}})]){
-  const h=await fixture(t,1375,{ROUTE_TOLLS_ENABLED:'true',TOLL_VEHICLE_PROFILES_JSON:configured});const r=await h.request('/api/quote',normal);assert.equal(r.status,422);assert.equal(r.body.checkoutAllowed,false);
+test('specific official class/tag/plan evidence is mandatory; old verification booleans cannot enable a quote',async t=>{
+ const badClass=structuredClone(profile);badClass.official2026.fleet.classEvidence='';
+ const badPlan=structuredClone(profile);badPlan.official2026.fleet.mtaPlan='tlc_per_trip';
+ for(const configured of [undefined,'invalid',JSON.stringify({suv:{emissionType:'GASOLINE',vehicleClass:'2Ax'}}),JSON.stringify({suv:badClass}),JSON.stringify({suv:badPlan}),JSON.stringify({suv:{...profile,official2026:undefined}}),JSON.stringify({suv:{...profile,tollPasses:['invented']}}),JSON.stringify({suv:{...profile,tollPasses:['US_NY_EZPASSNY']}}),JSON.stringify({suv:{...profile,tollPasses:[]}}),JSON.stringify({suv:{...profile,emissionType:'unknown'}})]){
+  const h=await fixture(t,1375,{...enabled,TOLL_VEHICLE_PROFILES_JSON:configured});const r=await h.request('/api/quote',normal);assert.equal(r.status,422);assert.equal(r.body.checkoutAllowed,false);
  }
  const h=await fixture(t,1375,{}),r=await h.request('/api/quote',normal);assert.equal(r.status,200);assert.equal(r.body.total,80);assert.equal(r.body.tolls,undefined);assert.equal(h.state.routes[0].extraComputations,undefined);
  const ny=tolls.vehicleProfile({TOLL_VEHICLE_PROFILES_JSON:JSON.stringify({escalade:{...profile,tollPasses:['US_NY_EZPASSNY'],emissionType:'HYBRID'}})},'escalade');assert.deepEqual(tolls.requestModifiers(ny),{vehicleInfo:{emissionType:'HYBRID'},tollPasses:['US_NY_EZPASSNY']});
+});
+
+test('browser crossing names, copied geometry, account attestations, coverage and daily context cannot fill missing server proofs',async t=>{
+ const forged={...normal,crossing:'lincoln',direction:'ny_bound',routeVerified:true,coverageVerified:true,official2026:profile.official2026,
+  OFFICIAL_TOLL_COVERAGE_JSON:enabled.OFFICIAL_TOLL_COVERAGE_JSON,coverage,googleRoute:googleRoute(0),dailyContext:{status:'already_charged'},tollAmount:0};
+ for(const env of [{ROUTE_TOLLS_ENABLED:'true'},{...enabled,OFFICIAL_TOLL_COVERAGE_JSON:undefined}]){
+  const h=await fixture(t,0,env);
+  for(const path of ['/api/quote','/api/checkout'])for(const paymentChoice of ['now','later']){
+   const response=await h.request(path,{...forged,paymentChoice});assert.equal(response.status,422);assert.equal(response.body.code,'TOLL_ESTIMATE_UNAVAILABLE');
+  }
+  assert.equal(h.records().length,0);assert.equal(h.state.creates.length,0);assert.equal(h.state.payments.calls.length,0);
+ }
+ const h=await fixture(t,0),q=await h.request('/api/quote',forged);assert.equal(q.status,200);assert.equal(q.body.tolls.amountCents,2079);
+ assert.doesNotMatch(JSON.stringify(q.body),/synthetic-|latitude|longitude|encodedPolyline|classEvidence|tagEvidence/);
+});
+
+test('unsupported future tariff years and unreviewed Brooklyn/JFK additional-crossing routes require review while future flat/hourly fares remain unchanged',async t=>{
+ const h=await fixture(t),future={...normal,date:'2027-01-10'};
+ for(const endpoint of ['/api/quote','/api/checkout'])assert.equal((await h.request(endpoint,future)).status,422);
+ for(const [dropoff,id]of [['Brooklyn, NY','ChIJ_unreviewed_brooklyn'],['JFK Airport, NY','ChIJ_unreviewed_jfk']]){
+  h.state.searchResults[dropoff]=[place('NY',id,dropoff)];
+  for(const endpoint of ['/api/quote','/api/checkout'])assert.equal((await h.request(endpoint,{...normal,dropoff})).status,422);
+ }
+ assert.equal(h.records().length,0);assert.equal(h.state.creates.length,0);
+ assert.equal((await h.request('/api/quote',{...future,tripType:'hourly',hours:3})).body.total,390);
+ const special=await h.request('/api/quote',{...booking,vehicle:'suv',date:'2027-01-10',offerCode:'EWR_MANHATTAN_SUV'});assert.equal(special.status,200);assert.equal(special.body.total,150);
 });
 
 test('confirmed Suburban NJ E-ZPass business/2Ax facts never imply verified commercial or congestion rates or apply to the Escalade',()=>{
@@ -206,8 +247,8 @@ test('$150 EWR special remains all-inclusive, coupon/surcharge-free and payable 
 
 test('normal airport pricing retains surcharges/discount/gratuity order, credits an existing toll allowance and never tips or discounts new tolls',async t=>{
  const h=await fixture(t,2000);vm.runInContext('pricing.airportSurcharge=11;pricing.lateNightSurcharge=7;pricing.tollAllowance=4;pricing.gratuityPercent=10;',h.context);
- const q=await h.request('/api/quote',{...normal,pickup:'Newark Liberty International Airport (EWR)',time:'23:30',promoCode:'FIRST15'});assert.equal(q.status,200);assert.equal(q.body.fixedOffer,null);assert.equal(q.body.baseTotal,102);assert.equal(q.body.discount,15.30);assert.equal(q.body.gratuity,8.67);assert.equal(q.body.tolls.estimatedRouteCents,2000);assert.equal(q.body.tolls.allowanceCents,400);assert.equal(q.body.tolls.amountCents,1600);assert.equal(q.body.total,111.37);assert.equal(q.body.originalTotal,128.20);assert.ok(tolls.validQuote(q.body));
- const p=q.body.pricingBreakdown;assert.equal(p.tripFareCents,8400);assert.equal(p.surcharges.reduce((n,item)=>n+item.amountCents,0),1800);assert.equal(p.tollsCents,1600);assert.equal(p.discountCents,1530);assert.equal(p.gratuityCents,867);
+ const q=await h.request('/api/quote',{...normal,pickup:'Newark Liberty International Airport (EWR)',time:'23:30',promoCode:'FIRST15'});assert.equal(q.status,200);assert.equal(q.body.fixedOffer,null);assert.equal(q.body.baseTotal,102);assert.equal(q.body.discount,15.30);assert.equal(q.body.gratuity,8.67);assert.equal(q.body.tolls.estimatedRouteCents,1704);assert.equal(q.body.tolls.allowanceCents,400);assert.equal(q.body.tolls.amountCents,1304);assert.equal(q.body.total,108.41);assert.equal(q.body.originalTotal,125.24);assert.ok(tolls.validQuote(q.body));
+ const p=q.body.pricingBreakdown;assert.equal(p.tripFareCents,8400);assert.equal(p.surcharges.reduce((n,item)=>n+item.amountCents,0),1800);assert.equal(p.tollsCents,1304);assert.equal(p.discountCents,1530);assert.equal(p.gratuityCents,867);
 });
 
 test('hourly route unknown preserves the exact existing quote, discounts and both payment choices without invented tolls or route calls',async t=>{
@@ -226,16 +267,18 @@ test('Pay Now and Pay Later save the displayed backend total; browser money is i
   const h=await fixture(t,1375),q=await h.request('/api/quote',normal),r=await h.request('/api/checkout',{...normal,paymentChoice:choice,quoteRevision:q.body.quoteRevision,total:1,amount:1,discount:100,tolls:{amountCents:1}});
   assert.equal(r.status,200);const saved=h.records()[0];assert.equal(saved.quote.totalCents,q.body.totalCents);assert.deepEqual(saved.quote.pricingBreakdown,q.body.pricingBreakdown);assert.equal(h.state.creates.length,choice==='later'?0:1);
   h.state.routeResult=()=>{throw Error('future provider unavailable');};const calls=h.state.googleCalls;
-  const completed=await h.request('/api/booking/'+r.body.bookingId+'/checkout',{}, {...origin,cookie:access(r)});assert.equal(completed.status,200);assert.equal(h.state.googleCalls,calls);assert.equal(h.records().length,1);assert.equal(h.state.creates.length,1);assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount,9375);
-  const session=[...h.state.sessions.values()][0];session.status='complete';session.payment_status='paid';assert.equal((await h.webhook(session)).status,200);assert.equal((await h.webhook(session)).status,200);assert.equal(h.records()[0].paymentStatus,'paid');assert.equal(h.records()[0].quote.total,93.75);
+  const completed=await h.request('/api/booking/'+r.body.bookingId+'/checkout',{}, {...origin,cookie:access(r)});assert.equal(completed.status,200);assert.equal(h.state.googleCalls,calls);assert.equal(h.records().length,1);assert.equal(h.state.creates.length,1);assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount,10079);
+  const session=[...h.state.sessions.values()][0];session.status='complete';session.payment_status='paid';assert.equal((await h.webhook(session)).status,200);assert.equal((await h.webhook(session)).status,200);assert.equal(h.records()[0].paymentStatus,'paid');assert.equal(h.records()[0].quote.total,100.79);
  }
 });
 
 test('changed displayed quote revision fails before reservation/Stripe; retrying the fresh server quote succeeds',async t=>{
  const h=await fixture(t,500),q=await h.request('/api/quote',normal);h.state.routeResult=()=>googleRoute(650);
+ assert.equal((await h.request('/api/quote',normal)).body.quoteRevision,q.body.quoteRevision); // Google aggregate is not billing authority.
+ editCoverage(h,c=>{c.routes.find(r=>r.originPlaceId===ids.newark).otherTolls=[roadCost(150)];});
  assert.equal((await h.request('/api/checkout',normal)).status,409);assert.equal(h.records().length,0);
  const stale=await h.request('/api/checkout',{...normal,quoteRevision:q.body.quoteRevision});assert.equal(stale.status,409);assert.match(stale.body.error,/quote changed/);assert.equal(h.records().length,0);assert.equal(h.state.creates.length,0);
- const fresh=await h.request('/api/quote',normal);assert.notEqual(fresh.body.quoteRevision,q.body.quoteRevision);assert.equal((await h.request('/api/checkout',{...normal,quoteRevision:fresh.body.quoteRevision})).status,200);assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount,8650);
+ const fresh=await h.request('/api/quote',normal);assert.notEqual(fresh.body.quoteRevision,q.body.quoteRevision);assert.equal((await h.request('/api/checkout',{...normal,quoteRevision:fresh.body.quoteRevision})).status,200);assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount,10229);
 });
 
 test('legacy accepted reservations remain payable across restart without toll fields, repricing, Google calls or new claims',async t=>{
@@ -246,7 +289,7 @@ test('legacy accepted reservations remain payable across restart without toll fi
 test('a fresh form quote cannot replace an accepted fare: owned retries review the existing reservation before payment',async t=>{
  for(const legacyMode of [true,false])for(const choice of ['later','now']){
   const before=await fixture(t,500,legacyMode?{}:enabled),oldQuote=await before.request('/api/quote',normal),reserved=await before.request('/api/checkout',{...normal,paymentChoice:choice,...(oldQuote.body.quoteRevision?{quoteRevision:oldQuote.body.quoteRevision}:{})}),id=reserved.body.bookingId,accepted=before.records()[0].quote;
-  const h=configureLocations(await harness(t,enabled,before.data));h.state.sessions=before.state.sessions;h.state.routeResult=()=>googleRoute(1375);const fresh=await h.request('/api/quote',normal),calls=h.state.googleCalls;
+  const h=configureLocations(await harness(t,enabled,before.data));h.state.sessions=before.state.sessions;h.state.routeResult=()=>googleRoute(1375);editCoverage(h,c=>{c.routes.find(r=>r.originPlaceId===ids.newark).otherTolls=[roadCost(150)];});const fresh=await h.request('/api/quote',normal),calls=h.state.googleCalls;
   assert.equal((await h.request('/api/checkout',{...normal,quoteRevision:fresh.body.quoteRevision})).status,503);assert.equal(h.state.creates.length,0);
   for(const revision of [fresh.body.quoteRevision,undefined]){
    const retry=await h.request('/api/checkout',{...normal,...(revision?{quoteRevision:revision}:{})},{cookie:access(reserved)});assert.equal(retry.status,200);assert.equal(retry.body.url,'http://localhost:3000/success.html?booking='+id);assert.equal(h.state.creates.length,0);assert.equal(h.records().length,1);assert.equal(h.state.googleCalls,calls);assert.deepEqual(h.records()[0].quote,accepted);
@@ -267,16 +310,19 @@ test('JSONB key reordering is deterministic; corrupt toll totals are rejected wh
 test('authenticated owner receipt and guest status expose the same safe breakdown and preserve existing ownership denial',async t=>{
  const h=await fixture(t),account={fullName:'Toll Owner',email:'toll-owner@example.test',phone:'2025550181',password:'Synthetic toll owner password'},a=await h.request('/api/customer/register',account),b=await h.request('/api/customer/register',{...account,email:'toll-other@example.test',phone:'2035550181'}),auth={cookie:cookie(a)};
  const q=await h.request('/api/quote',normal),r=await h.request('/api/checkout',{...normal,paymentChoice:'later',quoteRevision:q.body.quoteRevision},auth),id=r.body.bookingId;
- const owned=await h.request('/api/customer/trips/'+id,undefined,auth);assert.equal(owned.status,200);assert.equal(owned.body.trip.pricingBreakdown.totalCents,9375);assert.equal(owned.body.trip.pricingBreakdown.tollsCents,1375);
+ const owned=await h.request('/api/customer/trips/'+id,undefined,auth);assert.equal(owned.status,200);assert.equal(owned.body.trip.pricingBreakdown.totalCents,10079);assert.equal(owned.body.trip.pricingBreakdown.tollsCents,2079);
  assert.equal((await h.request('/api/customer/trips/'+id,undefined,{cookie:cookie(b)})).status,404);
- const guest=await h.request('/api/booking/'+id,undefined,{cookie:access(r)});assert.equal(guest.body.quote.pricingBreakdown.totalCents,9375);assert.equal(guest.body.quote.total,93.75);assert.ok(!JSON.stringify(guest.body).includes('commercialRatesVerified'));
- const receipt=require('../services/booking-emails').bookingMessage(h.records()[0],'customer_reservation_created',{email:'support@example.test',phone:''});assert.match(receipt.text,/Estimated Interstate Tolls: \$13.75/);assert.match(receipt.text,/Total: \$93.75/);
+ const guest=await h.request('/api/booking/'+id,undefined,{cookie:access(r)});assert.equal(guest.body.quote.pricingBreakdown.totalCents,10079);assert.equal(guest.body.quote.total,100.79);assert.ok(!JSON.stringify(guest.body).includes('commercialRatesVerified'));
+ const receipt=require('../services/booking-emails').bookingMessage(h.records()[0],'customer_reservation_created',{email:'support@example.test',phone:''});assert.match(receipt.text,/Port Authority crossing: \$14.79/);assert.match(receipt.text,/MTA congestion: \$9.00/);assert.match(receipt.text,/Eligible credit: -\$3.00/);assert.match(receipt.text,/Total: \$100.79/);
 });
 
 test('Trip Summary uses server cents, shows inclusive $150 without a lower invented fare, and does not display unknown tolls as zero',()=>{
  const app=fs.readFileSync(path.join(__dirname,'../public/app.js'),'utf8'),make=()=>({children:[],hidden:false,textContent:'',replaceChildren(){this.children=[];this.textContent='';},append(...items){this.children.push(...items);}}),container=make(),context={document:{getElementById:()=>container,createElement:make},formatMoney:n=>'$'+n.toFixed(2)};
  vm.createContext(context);vm.runInContext(app.slice(app.indexOf('function renderFareBreakdown('),app.indexOf('async function requestQuote(')),context);
  const q={currency:'usd',tolls:{status:'estimated'},pricingBreakdown:{version:1,tripFareCents:8000,surcharges:[],tollsCents:1375,discountCents:0,gratuityCents:0,tollAllowanceCents:0,tollsIncluded:false}};context.renderFareBreakdown(q);assert.equal(container.children[0].children[1].textContent,'$80.00');assert.equal(container.children[1].children[1].textContent,'$13.75');
+ const itemized={...q,pricingBreakdown:{...q.pricingBreakdown,tollComponents:[{label:'Port Authority crossing',amountCents:1479},{label:'MTA congestion',amountCents:900},{label:'Eligible credit',amountCents:-300}],tollAssumptions:['Synthetic policy note']}};
+ context.renderFareBreakdown(itemized);assert.equal(container.children[1].children[0].textContent,'Port Authority crossing');assert.equal(container.children[1].children[1].textContent,'$14.79');
+ assert.equal(container.children[3].children[0].textContent,'Eligible credit');assert.equal(container.children[3].children[1].textContent,'$-3.00');assert.equal(container.children[4].textContent,'Synthetic policy note');
  context.renderFareBreakdown({...q,pricingBreakdown:{...q.pricingBreakdown,tollScope:'interstate_only',interstate:true}});assert.equal(container.children[1].children[0].textContent,'Estimated Interstate Tolls');
  context.renderFareBreakdown({...q,tolls:{status:'waived'},pricingBreakdown:{...q.pricingBreakdown,tollScope:'interstate_only',interstate:false,tollsCents:0}});assert.equal(container.children[1].children[1].textContent,'No added tolls — same-state trip');
  context.renderFareBreakdown({...q,pricingBreakdown:{...q.pricingBreakdown,tollsCents:0}});assert.equal(container.children[1].children[1].textContent,'No additional charge');
@@ -291,7 +337,7 @@ test('full refunds use the captured total including accepted tolls and never rep
  const session=[...h.state.sessions.values()][0];session.status='complete';session.payment_status='paid';assert.equal((await h.webhook(session)).status,200);
  const before=h.records()[0].quote,trip=(await h.request('/api/customer/trips/'+id,undefined,{cookie:c})).body.trip,calls=h.state.googleCalls;
  h.state.routeResult=()=>{throw Error('no repricing allowed');};
- const cancelled=await h.request('/api/customer/trips/'+id+'/cancel',{expectedPickupAt:trip.management.pickupAt,requestId:crypto.randomUUID(),confirmed:true},{...origin,cookie:c});assert.equal(cancelled.status,200);assert.equal(h.state.googleCalls,calls);assert.equal(h.state.refundRequests.length,1);assert.equal(h.state.refundRequests[0].params.amount,9375);assert.deepEqual(h.records()[0].quote,before);assert.equal(h.records()[0].status,'cancelled');
+ const cancelled=await h.request('/api/customer/trips/'+id+'/cancel',{expectedPickupAt:trip.management.pickupAt,requestId:crypto.randomUUID(),confirmed:true},{...origin,cookie:c});assert.equal(cancelled.status,200);assert.equal(h.state.googleCalls,calls);assert.equal(h.state.refundRequests.length,1);assert.equal(h.state.refundRequests[0].params.amount,10079);assert.deepEqual(h.records()[0].quote,before);assert.equal(h.records()[0].status,'cancelled');
 });
 
 test('PostgreSQL toll snapshots survive JSONB/restart, preserve owner payment amount and roll back corrupt totals',{skip:!process.env.ER_TEST_DATABASE_URL},async t=>{
@@ -304,9 +350,9 @@ test('PostgreSQL toll snapshots survive JSONB/restart, preserve owner payment am
  const {createStore}=require('../storage/postgres'),store=createStore({},pool),second=createStore({},secondPool);await store.migrate();
  const h=configureLocations(await harness(t,enabled,'[]',store));h.state.routeResult=()=>googleRoute(1375);
  const account={fullName:'PG Toll Owner',email:'pg-toll-owner@example.test',phone:'2025550185',password:'Synthetic PostgreSQL toll owner'},c=cookie(await h.request('/api/customer/register',account)),q=await h.request('/api/quote',normal),r=await h.request('/api/checkout',{...normal,paymentChoice:'later',quoteRevision:q.body.quoteRevision},{cookie:c}),id=r.body.bookingId;
- assert.equal(r.status,200);const owner=await store.reservationOwner(id),stored=await store.get(id);assert.equal(stored.quote.totalCents,9375);assert.equal(stored.quote.tolls.eligibility.pickupState,'NJ');assert.equal(stored.quote.tolls.eligibility.dropoffState,'NY');assert.ok(tolls.validQuote(stored.quote));
+ assert.equal(r.status,200);const owner=await store.reservationOwner(id),stored=await store.get(id);assert.equal(stored.quote.totalCents,10079);assert.equal(stored.quote.tolls.eligibility.pickupState,'NJ');assert.equal(stored.quote.tolls.eligibility.dropoffState,'NY');assert.ok(tolls.validQuote(stored.quote));
  const restarted=await harness(t,{ROUTE_TOLLS_ENABLED:'true'},'[]',second);restarted.state.routeResult=()=>{throw Error('cannot recalculate accepted tolls');};
- const payment=await restarted.request('/api/customer/trips/'+id+'/payment',{}, {...origin,cookie:c});assert.equal(payment.status,200);assert.equal(restarted.state.googleCalls,0);assert.equal(restarted.state.creates[0].params.line_items[0].price_data.unit_amount,9375);assert.equal(await second.reservationOwner(id),owner);
- await assert.rejects(second.update(id,record=>{record.quote.tolls.amountCents=1;}));assert.equal((await store.get(id)).quote.tolls.amountCents,1375);
- const session=[...restarted.state.sessions.values()][0];session.status='complete';session.payment_status='paid';assert.equal((await restarted.webhook(session)).status,200);assert.equal(Number((await store.capturedPayment(id)).amount_cents),9375);
+ const payment=await restarted.request('/api/customer/trips/'+id+'/payment',{}, {...origin,cookie:c});assert.equal(payment.status,200);assert.equal(restarted.state.googleCalls,0);assert.equal(restarted.state.creates[0].params.line_items[0].price_data.unit_amount,10079);assert.equal(await second.reservationOwner(id),owner);
+ await assert.rejects(second.update(id,record=>{record.quote.tolls.amountCents=1;}));assert.equal((await store.get(id)).quote.tolls.amountCents,2079);
+ const session=[...restarted.state.sessions.values()][0];session.status='complete';session.payment_status='paid';assert.equal((await restarted.webhook(session)).status,200);assert.equal(Number((await store.capturedPayment(id)).amount_cents),10079);
 });

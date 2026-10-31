@@ -1,5 +1,18 @@
 # Route toll estimates
 
+**Current customer-toll integration:** see [Official 2026 tariffs](official-toll-tariffs.md).
+New toll-enabled regular quotes require that verified tariff/evidence path. A Google
+aggregate and the earlier generic commercial/congestion booleans no longer authorize
+a new customer toll amount. With `ROUTE_TOLLS_ENABLED` false/unset, prices are unchanged.
+The separate admin estimate-only tool below still shows Google's original estimate.
+
+## Historical Google pricing and accepted-snapshot compatibility
+
+The following description, up to the Admin Toll Validation section, records the
+earlier implementation and legacy accepted snapshots. **Do not activate new
+customer charging using its historical profile instructions.** Existing accepted
+amounts are preserved, including older Google-based tolls.
+
 Customer toll calculation is disabled by default. No Google, Render,
 Stripe or database configuration is changed. ER confirmed a NJ E-ZPass business
 account and Suburban class **2Ax**. Commercial-rate equivalence and congestion

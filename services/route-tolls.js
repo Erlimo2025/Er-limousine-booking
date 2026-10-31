@@ -1,4 +1,6 @@
 const crypto = require('node:crypto');
+const officialRates = require('./official-toll-rates');
+const officialRoutes = require('./toll-route-evidence');
 
 const REVIEW_MESSAGE = 'Toll estimate unavailable — contact us for a final quote';
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -63,7 +65,8 @@ function vehicleProfile(env, vehicle) {
     const compatibleClass = suburban ? p.vehicleClass === undefined || ['2Ax','two_axle_passenger_equivalent'].includes(p.vehicleClass) : p.vehicleClass === 'two_axle_passenger_equivalent';
     return {emissionType:p.emissionType,tollPasses:[...tollPasses],
       ...(suburban ? {accountType:'business',vehicleClass:'2Ax',axles:2} : {}),
-      verified:compatibleClass && p.commercialRatesVerified === true && p.congestionCoverageVerified === true};
+      verified:compatibleClass && p.commercialRatesVerified === true && p.congestionCoverageVerified === true,
+      ...(plain(p.official2026)&&p.official2026.vehicleKey===vehicle?{official:p.official2026}:{})};
   } catch (_) { return null; }
 }
 function requestModifiers(profile) {
@@ -112,12 +115,39 @@ function priceBreakdown(quote, tolls, special = false) {
   const totalCents = sum([cents(quote.discountedFare),cents(quote.gratuity),tollsCents]);
   return {version:1,tripFareCents,surcharges,discountCents:cents(quote.discount),gratuityCents:cents(quote.gratuity),
     tollsCents:special ? null : tollsCents,tollAllowanceCents:special ? 0 : tolls.allowanceCents,tollsIncluded:special,totalCents,currency:'usd',
-    ...(!special && tolls.eligibility?{tollScope:'interstate_only',interstate:tolls.eligibility.pickupState!==tolls.eligibility.dropoffState}:{})};
+    ...(!special && tolls.eligibility?{tollScope:'interstate_only',interstate:tolls.eligibility.pickupState!==tolls.eligibility.dropoffState}:{}),
+    ...(!special && tolls.format==='official_2026'?{tariffVersion:tolls.tariffVersion,
+      tollComponents:tolls.legs.flatMap((leg,index)=>leg.components.map(c=>({...c,label:(tolls.legs.length===2?(index?'Return — ':'Outbound — '):'')+c.label}))),
+      tollAssumptions:[...new Set(tolls.legs.map(leg=>leg.dailyAssumption).filter(Boolean))]}:{})};
 }
 function quoteRevision(quote) {
   return crypto.createHash('sha256').update(canonical({pricing:quote.pricingBreakdown,total:quote.total,
     offer:quote.fixedOffer?.code || null,promo:quote.promotion?.code || null,
-    ...(quote.tolls?.eligibility?{eligibility:quote.tolls.eligibility}:{})})).digest('hex');
+    ...(quote.tolls?.eligibility?{eligibility:quote.tolls.eligibility}:{}),
+    ...(quote.tolls?.format==='official_2026'?{official:{coverageHash:quote.tolls.coverageHash,fleetHash:quote.tolls.fleetHash,
+      routes:quote.tolls.legs.map(leg=>({geometryHash:leg.geometryHash,crossing:leg.crossing,direction:leg.direction,congestionDay:leg.congestionDay}))}}:{})})).digest('hex');
+}
+function validOfficial(t) {
+  if(t.tariffVersion!==officialRates.VERSION||![t.coverageHash,t.fleetHash].every(value=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value)))return false;
+  for(const leg of t.legs){
+    if(!['lincoln','holland','gwb'].includes(leg.crossing)||!['ny_bound','nj_bound'].includes(leg.direction)||
+      typeof leg.geometryHash!=='string'||!/^[a-f0-9]{64}$/.test(leg.geometryHash)||
+      leg.congestionDay!==null&&(typeof leg.congestionDay!=='string'||!/^2026-\d{2}-\d{2}$/.test(leg.congestionDay))||
+      leg.dailyAssumption!==null&&(typeof leg.dailyAssumption!=='string'||leg.dailyAssumption.length>200)||
+      !Array.isArray(leg.components)||leg.components.length<3||leg.components.length>23)return false;
+    const [pa,mta,credit,...other]=leg.components;
+    if(pa.kind!=='port_authority'||pa.label!=='Port Authority crossing'||pa.facility!==leg.crossing||
+      !(leg.direction==='ny_bound'?[1479,1679]:[0]).includes(pa.amountCents)||
+      mta.kind!=='mta_congestion'||mta.label!=='MTA congestion'||mta.facility!=='manhattan_crz'||![0,225,900].includes(mta.amountCents)||
+      credit.kind!=='crossing_credit'||credit.label!=='Eligible credit'||credit.facility!=='manhattan_crz_credit'||![0,-300].includes(credit.amountCents)||
+      credit.amountCents<0&&(leg.direction!=='ny_bound'||leg.crossing==='gwb'||mta.amountCents!==900))return false;
+    const ids=new Set([pa.facility,mta.facility,credit.facility]);
+    for(const c of other){if(c.kind!=='other'||typeof c.facility!=='string'||!/^[a-z0-9_-]{3,60}$/.test(c.facility)||ids.has(c.facility)||
+      typeof c.label!=='string'||!c.label.trim()||c.label.length>80||/[\x00-\x1f<>]/.test(c.label)||
+      !Number.isSafeInteger(c.amountCents)||c.amountCents<0||c.amountCents>100000)return false;ids.add(c.facility);}
+    if(leg.components.reduce((n,c)=>n+c.amountCents,0)!==leg.amountCents)return false;
+  }
+  return true;
 }
 function attachTolls(quote, tolls, special = false) {
   quote.tolls = special ? {...tolls,status:'included',internalStatus:tolls.status,amountCents:null} : tolls;
@@ -135,6 +165,7 @@ function validQuote(quote) {
     if (!plain(p) || p.version !== 1 || !plain(t) || t.version !== 1 || p.currency !== 'usd' || quote.currency !== 'usd' ||
         !Array.isArray(p.surcharges) || !Array.isArray(t.legs) || t.legs.length > 2 ||
         !['none','estimated','included','waived'].includes(t.status)) return false;
+    if(t.format!==undefined&&(t.format!=='official_2026'||t.status!=='estimated'||!validOfficial(t)))return false;
     if(t.eligibility !== undefined || p.tollScope !== undefined || p.interstate !== undefined){
       const e=t.eligibility;
       if(!plain(e) || e.policy!=='interstate_only' || p.tollScope!=='interstate_only' ||
@@ -169,4 +200,5 @@ function customerPricing(quote) {
   if (!quote.pricingBreakdown || !validQuote(quote)) return null;
   return {...quote.pricingBreakdown,tollStatus:quote.tolls.status};
 }
-module.exports={REVIEW_MESSAGE,cents,sum,usdCents,routeTolls,vehicleProfile,requestModifiers,verifiedState,eligibility,aggregateTolls,attachTolls,validQuote,customerPricing};
+module.exports={REVIEW_MESSAGE,cents,sum,usdCents,routeTolls,vehicleProfile,requestModifiers,verifiedState,eligibility,aggregateTolls,attachTolls,validQuote,customerPricing,
+  officialFieldMask:officialRoutes.FIELD_MASK,priceOfficialRoutes:officialRoutes.priceRoutes};

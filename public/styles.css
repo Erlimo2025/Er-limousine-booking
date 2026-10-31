@@ -689,6 +689,7 @@ textarea:focus {
 .fare-breakdown[hidden]{display:none}
 .fare-breakdown-row{display:flex;justify-content:space-between;gap:12px;padding:5px 0}
 .fare-breakdown-row strong{text-align:right;flex-shrink:0;max-width:75%}
+.fare-breakdown-note{font-size:.78rem;line-height:1.45;margin:6px 0}
 
 
 /* =========================

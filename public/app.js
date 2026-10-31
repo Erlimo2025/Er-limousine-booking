@@ -937,6 +937,10 @@ function renderFareBreakdown(data, review = false) {
   row(p.tollsIncluded?'EWR → Manhattan Special':'Trip Fare',amount(p.tripFareCents));
   for(const item of p.surcharges)row(item.label,amount(item.amountCents));
   if(p.tollsIncluded)row('Tolls','Included');
+  else if(Array.isArray(p.tollComponents)){
+    for(const c of p.tollComponents)row(c.label,amount(c.amountCents));
+    for(const note of p.tollAssumptions||[]){const item=document.createElement('p');item.className='fare-breakdown-note';item.textContent=note;container.append(item);}
+  }
   else if(data.tolls.status==='waived')row('Tolls','No added tolls — same-state trip');
   else if(data.tolls.status==='none')row(p.interstate?'Estimated Interstate Tolls':'Tolls','None expected');
   else if(p.tollsCents>0)row((p.interstate?'Estimated Interstate Tolls':'Estimated Tolls')+(p.tollAllowanceCents?' (additional)':''),amount(p.tollsCents));
