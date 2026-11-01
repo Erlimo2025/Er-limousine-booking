@@ -346,7 +346,27 @@
       }
     ],
     "blankCells": "unknown_or_not_applicable; never zero",
-    "excludedDiscounts": "No senior, Green Pass, post-paid-volume, trailer or other special discount assumed"
+    "excludedDiscounts": "No senior, Green Pass, post-paid-volume, trailer or other special discount assumed",
+    "collectionAdjustments": [
+      {
+        "id": "18w_then_19w",
+        "sourceIds": [
+          "njta_turnpike_2026",
+          "njta_18w_19w_resolution"
+        ],
+        "status": "published_reference_not_runtime_implemented",
+        "firstExit": "18W",
+        "subsequentExit": "19W",
+        "maximumElapsedMinutes": 20,
+        "requires": "Actual exit sequence, paid E-ZPass 18W toll, eligible vehicle/tag and 19W exit within the published window; exit movements only",
+        "scope": "Meadowlands access adjustment; not a general waiver and not proof that any Orange/Newark-to-Manhattan route uses either exit",
+        "effect": "The published condition waives the additional 19W toll; do not add both independently or apply a waiver by road name",
+        "effectiveDate": null,
+        "effectiveDateLimit": "Resolution authorizes the adjustment with Trustee notice/certification and a no-earlier-than-30-days commencement condition. Historical effective date was not independently established.",
+        "routeEligibility": "unverified",
+        "runtimeImplementation": "none; any affected unmodelled collection history requires manual review"
+      }
+    ]
   },
   "parkway": {
     "sourceId": "njta_parkway_2026",

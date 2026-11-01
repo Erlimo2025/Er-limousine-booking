@@ -1,8 +1,9 @@
 # 2026 toll network acceptance package
 
-Prepared November 1, 2026 against engine commit
-`320a2e9800243f9c1d161fa48908c017692648d6` on
-`codex/official-toll-tariffs`, for draft PR #1.
+Prepared November 1, 2026 on `codex/official-toll-tariffs`, for draft PR #1.
+The original source package targeted engine `320a2e9`; the first-route controls
+now test runtime `8cf3b47494560331f3e5e2f6aba5aa1a4c43251e` with corrected daily
+credits. Source/candidate artifacts are not runtime approvals.
 
 **Ready for source review and acceptance planning; not ready for activation.**
 This package adds public research data and offline checks. A follow-up correction
@@ -23,7 +24,11 @@ Same-state added tolls remain waived and hourly behavior is unchanged.
 | --- | --- |
 | [sources.json](sources.json) | Agency URLs, source scope, retrieval limits and available PDF hashes. |
 | [candidate-nj-roads.geojson](candidate-nj-roads.geojson) | 3,722 actual public NJOGIS road features, with original coordinates and source IDs; all candidate/unreviewed, toll status unknown. |
+| [candidate-nyc-roads.geojson](candidate-nyc-roads.geojson) / [provenance](nyc-geometry-provenance.json) | 409 original NYC OTI/CSCL features for named crossings/approaches; bounded public query, no geometry edits, all unapproved. |
 | [geometry-provenance.json](geometry-provenance.json) | Exact bounded query, fields, four response-page hashes/counts, retrieval times, attribution and transformations. |
+| [road-evidence-review.json](road-evidence-review.json) | Reproducible independent provenance/attribute/topology desk review; zero runtime approvals. |
+| [first-route-review.md](first-route-review.md) / [cases](first-route-cases.json) | Six Orange/Newark-to-Midtown trials; isolated software controls executed, real routes and E-ZPass comparisons pending. |
+| [first-route-software-results.json](first-route-software-results.json) | Explicit synthetic-provider result snapshot; 12 payment flows and six manual-review cases, zero actual route/account validations. |
 | [network-inventory.json](network-inventory.json) | Feature references, facility/approach inventory, missing portals/corridors, CRZ/exclusions and credit connectors. **Zero approved links/facilities.** |
 | [published-tariff-reference.json](published-tariff-reference.json) | Conditional PA/MTA rates and selected NJTA entry/exit cells; unresolved amounts remain null. No runtime tariff table is configured. |
 | [route-testing-matrix.csv](route-testing-matrix.csv) / [JSON](route-testing-matrix.json) | 45 planned cases, 17 public locations and 15 time/replay profiles; all real-route results are empty. |
@@ -64,6 +69,15 @@ corridor widths, NYC approaches and road coverage, and the georeferenced CRZ and
 excluded-road polygons. Even any source features extending into New York require
 independent review. The PA guide and NJTA overview map establish network context;
 they are not accurate enough to invent narrow runtime geofences.
+
+The first-route follow-up adds attributed NYC centerline candidates, not a joined
+or approved network. NJ/NY seams, tube/level permissions, complete Manhattan
+approaches and the CRZ/exclusion geofences still need independent review. Run
+`node scripts/audit-toll-road-candidates.cjs` to reproduce the public desk review.
+The operator has explicitly deferred actual E-ZPass/class verification and has
+neither a local approved Google test key nor a server-fetched route export;
+real-route execution is pending. Successful software simulations are not
+real-world route passes. See the linked first-route review for exact status.
 
 ## Published components and unresolved rates
 

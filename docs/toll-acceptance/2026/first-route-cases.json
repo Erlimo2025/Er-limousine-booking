@@ -1,0 +1,330 @@
+{
+  "schema": "er-first-route-acceptance-cases-v1",
+  "preparedOn": "2026-11-01",
+  "engineCommit": "8cf3b47494560331f3e5e2f6aba5aa1a4c43251e",
+  "approvedForActivation": false,
+  "approvedRoadLinks": 0,
+  "approvedRuntimeFacilities": 0,
+  "userEvidenceDecision": "Operator confirmed that redacted settled transactions and official vehicle-class confirmation are not ready; mark both pending.",
+  "locations": [
+    {
+      "id": "orange_hall",
+      "input": "29 North Day Street, Orange, NJ",
+      "sourceId": "orange_city_hall",
+      "expectedState": "NJ",
+      "placeId": null,
+      "coordinates": null,
+      "routingVerification": "pending_server_lookup_and_legal_curb_review"
+    },
+    {
+      "id": "newark_penn",
+      "input": "Raymond Plaza between Raymond Boulevard and Market Street, Newark, NJ",
+      "sourceId": "newark_penn",
+      "expectedState": "NJ",
+      "placeId": null,
+      "coordinates": null,
+      "routingVerification": "pending_server_lookup_and_legal_curb_review"
+    },
+    {
+      "id": "midtown_east",
+      "input": "89 East 42nd Street, Manhattan, NY",
+      "sourceId": "grand_central",
+      "expectedState": "NY",
+      "placeId": null,
+      "coordinates": null,
+      "routingVerification": "pending_server_lookup_and_legal_curb_review"
+    }
+  ],
+  "notes": [
+    "Requested crossings are experiment targets; names, via points and street addresses cannot prove the actual provider route.",
+    "Public road source and conditional tariffs can be independently desk-reviewed without certifying routes or vehicles.",
+    "Software simulations use explicit synthetic geometry, vehicle/day proofs and Stripe mocks; they are not real-route or E-ZPass acceptance results.",
+    "Operator explicitly confirmed that neither an approved local Google test key nor a server route export is available. No paid Google request was made.",
+    "Actual transaction rows, vehicle identifiers and any private route exports belong outside Git."
+  ],
+  "cases": [
+    {
+      "id": "F001",
+      "pickup": "orange_hall",
+      "destination": "midtown_east",
+      "requestedCrossing": "lincoln",
+      "observedCrossing": null,
+      "routeGeometrySha256": null,
+      "departureTime": null,
+      "observedFacilityTime": null,
+      "verifiedEndpointStates": null,
+      "verifiedVehicleClass": null,
+      "completeVehicleDayHistory": null,
+      "googleEstimateCents": null,
+      "officialFullRouteTollsCents": null,
+      "settledNetTollsCents": null,
+      "realRouteStatus": "unverified",
+      "settledComparisonStatus": "pending_user_records",
+      "vehicleClassStatus": "pending_user_confirmation",
+      "blockers": [
+        "server_verified_selected_route_missing",
+        "NY_approaches_and_portals_unapproved",
+        "complete_route_toll_coverage_unapproved",
+        "vehicle_class_and_tag_plan_evidence_pending",
+        "complete_vehicle_day_charge_credit_history_pending",
+        "settled_account_rows_pending"
+      ],
+      "conditionalReferences": {
+        "paSourceId": "pa_tolls_2026",
+        "paNyBoundOffPeakCents": 1479,
+        "paNyBoundPeakCents": 1679,
+        "mtaSourceId": "mta_crz_schedule",
+        "firstEligiblePeakZoneChargeCents": 900,
+        "eligiblePeakEntryCreditCents": 300,
+        "otherActualRouteTollsCents": null,
+        "note": "Published components only; actual crossing time, zone entry, class, tag, remaining daily credit and every additional road must be proved. No full-route price is asserted."
+      },
+      "softwareSimulation": {
+        "scope": "isolated_HTTP_mock_provider_control_only",
+        "testNames": [
+          "SIMULATION orange_hall lincoln Pay Now",
+          "SIMULATION orange_hall lincoln Pay Later"
+        ],
+        "proofOfRealRoute": false,
+        "usesRealCustomer": false,
+        "usesLiveStripe": false
+      }
+    },
+    {
+      "id": "F002",
+      "pickup": "orange_hall",
+      "destination": "midtown_east",
+      "requestedCrossing": "holland",
+      "observedCrossing": null,
+      "routeGeometrySha256": null,
+      "departureTime": null,
+      "observedFacilityTime": null,
+      "verifiedEndpointStates": null,
+      "verifiedVehicleClass": null,
+      "completeVehicleDayHistory": null,
+      "googleEstimateCents": null,
+      "officialFullRouteTollsCents": null,
+      "settledNetTollsCents": null,
+      "realRouteStatus": "unverified",
+      "settledComparisonStatus": "pending_user_records",
+      "vehicleClassStatus": "pending_user_confirmation",
+      "blockers": [
+        "server_verified_selected_route_missing",
+        "NY_approaches_and_portals_unapproved",
+        "complete_route_toll_coverage_unapproved",
+        "vehicle_class_and_tag_plan_evidence_pending",
+        "complete_vehicle_day_charge_credit_history_pending",
+        "settled_account_rows_pending"
+      ],
+      "conditionalReferences": {
+        "paSourceId": "pa_tolls_2026",
+        "paNyBoundOffPeakCents": 1479,
+        "paNyBoundPeakCents": 1679,
+        "mtaSourceId": "mta_crz_schedule",
+        "firstEligiblePeakZoneChargeCents": 900,
+        "eligiblePeakEntryCreditCents": 300,
+        "otherActualRouteTollsCents": null,
+        "note": "Published components only; actual crossing time, zone entry, class, tag, remaining daily credit and every additional road must be proved. No full-route price is asserted."
+      },
+      "softwareSimulation": {
+        "scope": "isolated_HTTP_mock_provider_control_only",
+        "testNames": [
+          "SIMULATION orange_hall holland Pay Now",
+          "SIMULATION orange_hall holland Pay Later"
+        ],
+        "proofOfRealRoute": false,
+        "usesRealCustomer": false,
+        "usesLiveStripe": false
+      }
+    },
+    {
+      "id": "F003",
+      "pickup": "orange_hall",
+      "destination": "midtown_east",
+      "requestedCrossing": "gwb",
+      "observedCrossing": null,
+      "routeGeometrySha256": null,
+      "departureTime": null,
+      "observedFacilityTime": null,
+      "verifiedEndpointStates": null,
+      "verifiedVehicleClass": null,
+      "completeVehicleDayHistory": null,
+      "googleEstimateCents": null,
+      "officialFullRouteTollsCents": null,
+      "settledNetTollsCents": null,
+      "realRouteStatus": "unverified",
+      "settledComparisonStatus": "pending_user_records",
+      "vehicleClassStatus": "pending_user_confirmation",
+      "blockers": [
+        "server_verified_selected_route_missing",
+        "NY_approaches_and_portals_unapproved",
+        "complete_route_toll_coverage_unapproved",
+        "vehicle_class_and_tag_plan_evidence_pending",
+        "complete_vehicle_day_charge_credit_history_pending",
+        "settled_account_rows_pending"
+      ],
+      "conditionalReferences": {
+        "paSourceId": "pa_tolls_2026",
+        "paNyBoundOffPeakCents": 1479,
+        "paNyBoundPeakCents": 1679,
+        "mtaSourceId": "mta_crz_schedule",
+        "firstEligiblePeakZoneChargeCents": 900,
+        "eligiblePeakEntryCreditCents": 0,
+        "otherActualRouteTollsCents": null,
+        "note": "Published components only; actual crossing time, zone entry, class, tag, remaining daily credit and every additional road must be proved. No full-route price is asserted."
+      },
+      "softwareSimulation": {
+        "scope": "isolated_HTTP_mock_provider_control_only",
+        "testNames": [
+          "SIMULATION orange_hall gwb Pay Now",
+          "SIMULATION orange_hall gwb Pay Later"
+        ],
+        "proofOfRealRoute": false,
+        "usesRealCustomer": false,
+        "usesLiveStripe": false
+      }
+    },
+    {
+      "id": "F004",
+      "pickup": "newark_penn",
+      "destination": "midtown_east",
+      "requestedCrossing": "lincoln",
+      "observedCrossing": null,
+      "routeGeometrySha256": null,
+      "departureTime": null,
+      "observedFacilityTime": null,
+      "verifiedEndpointStates": null,
+      "verifiedVehicleClass": null,
+      "completeVehicleDayHistory": null,
+      "googleEstimateCents": null,
+      "officialFullRouteTollsCents": null,
+      "settledNetTollsCents": null,
+      "realRouteStatus": "unverified",
+      "settledComparisonStatus": "pending_user_records",
+      "vehicleClassStatus": "pending_user_confirmation",
+      "blockers": [
+        "server_verified_selected_route_missing",
+        "NY_approaches_and_portals_unapproved",
+        "complete_route_toll_coverage_unapproved",
+        "vehicle_class_and_tag_plan_evidence_pending",
+        "complete_vehicle_day_charge_credit_history_pending",
+        "settled_account_rows_pending"
+      ],
+      "conditionalReferences": {
+        "paSourceId": "pa_tolls_2026",
+        "paNyBoundOffPeakCents": 1479,
+        "paNyBoundPeakCents": 1679,
+        "mtaSourceId": "mta_crz_schedule",
+        "firstEligiblePeakZoneChargeCents": 900,
+        "eligiblePeakEntryCreditCents": 300,
+        "otherActualRouteTollsCents": null,
+        "note": "Published components only; actual crossing time, zone entry, class, tag, remaining daily credit and every additional road must be proved. No full-route price is asserted."
+      },
+      "softwareSimulation": {
+        "scope": "isolated_HTTP_mock_provider_control_only",
+        "testNames": [
+          "SIMULATION newark_penn lincoln Pay Now",
+          "SIMULATION newark_penn lincoln Pay Later"
+        ],
+        "proofOfRealRoute": false,
+        "usesRealCustomer": false,
+        "usesLiveStripe": false
+      }
+    },
+    {
+      "id": "F005",
+      "pickup": "newark_penn",
+      "destination": "midtown_east",
+      "requestedCrossing": "holland",
+      "observedCrossing": null,
+      "routeGeometrySha256": null,
+      "departureTime": null,
+      "observedFacilityTime": null,
+      "verifiedEndpointStates": null,
+      "verifiedVehicleClass": null,
+      "completeVehicleDayHistory": null,
+      "googleEstimateCents": null,
+      "officialFullRouteTollsCents": null,
+      "settledNetTollsCents": null,
+      "realRouteStatus": "unverified",
+      "settledComparisonStatus": "pending_user_records",
+      "vehicleClassStatus": "pending_user_confirmation",
+      "blockers": [
+        "server_verified_selected_route_missing",
+        "NY_approaches_and_portals_unapproved",
+        "complete_route_toll_coverage_unapproved",
+        "vehicle_class_and_tag_plan_evidence_pending",
+        "complete_vehicle_day_charge_credit_history_pending",
+        "settled_account_rows_pending"
+      ],
+      "conditionalReferences": {
+        "paSourceId": "pa_tolls_2026",
+        "paNyBoundOffPeakCents": 1479,
+        "paNyBoundPeakCents": 1679,
+        "mtaSourceId": "mta_crz_schedule",
+        "firstEligiblePeakZoneChargeCents": 900,
+        "eligiblePeakEntryCreditCents": 300,
+        "otherActualRouteTollsCents": null,
+        "note": "Published components only; actual crossing time, zone entry, class, tag, remaining daily credit and every additional road must be proved. No full-route price is asserted."
+      },
+      "softwareSimulation": {
+        "scope": "isolated_HTTP_mock_provider_control_only",
+        "testNames": [
+          "SIMULATION newark_penn holland Pay Now",
+          "SIMULATION newark_penn holland Pay Later"
+        ],
+        "proofOfRealRoute": false,
+        "usesRealCustomer": false,
+        "usesLiveStripe": false
+      }
+    },
+    {
+      "id": "F006",
+      "pickup": "newark_penn",
+      "destination": "midtown_east",
+      "requestedCrossing": "gwb",
+      "observedCrossing": null,
+      "routeGeometrySha256": null,
+      "departureTime": null,
+      "observedFacilityTime": null,
+      "verifiedEndpointStates": null,
+      "verifiedVehicleClass": null,
+      "completeVehicleDayHistory": null,
+      "googleEstimateCents": null,
+      "officialFullRouteTollsCents": null,
+      "settledNetTollsCents": null,
+      "realRouteStatus": "unverified",
+      "settledComparisonStatus": "pending_user_records",
+      "vehicleClassStatus": "pending_user_confirmation",
+      "blockers": [
+        "server_verified_selected_route_missing",
+        "NY_approaches_and_portals_unapproved",
+        "complete_route_toll_coverage_unapproved",
+        "vehicle_class_and_tag_plan_evidence_pending",
+        "complete_vehicle_day_charge_credit_history_pending",
+        "settled_account_rows_pending"
+      ],
+      "conditionalReferences": {
+        "paSourceId": "pa_tolls_2026",
+        "paNyBoundOffPeakCents": 1479,
+        "paNyBoundPeakCents": 1679,
+        "mtaSourceId": "mta_crz_schedule",
+        "firstEligiblePeakZoneChargeCents": 900,
+        "eligiblePeakEntryCreditCents": 0,
+        "otherActualRouteTollsCents": null,
+        "note": "Published components only; actual crossing time, zone entry, class, tag, remaining daily credit and every additional road must be proved. No full-route price is asserted."
+      },
+      "softwareSimulation": {
+        "scope": "isolated_HTTP_mock_provider_control_only",
+        "testNames": [
+          "SIMULATION newark_penn gwb Pay Now",
+          "SIMULATION newark_penn gwb Pay Later"
+        ],
+        "proofOfRealRoute": false,
+        "usesRealCustomer": false,
+        "usesLiveStripe": false
+      }
+    }
+  ],
+  "routingEvidenceDecision": "Operator confirmed that neither an approved local Google test key nor a server-fetched route export is currently available; real provider routes remain pending."
+}

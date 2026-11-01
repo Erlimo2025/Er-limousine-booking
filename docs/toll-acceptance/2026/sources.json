@@ -4,7 +4,7 @@
   "engineCommit": "320a2e9800243f9c1d161fa48908c017692648d6",
   "approvedForActivation": false,
   "notes": [
-    "Tariff facts use PA/NJTA/MTA primary sources. Geometry uses separately attributed official NJ state data.",
+    "Tariff facts use PA/NJTA/MTA primary sources. Candidate geometry uses separately attributed official NJOGIS and NYC OTI/CSCL public data.",
     "Only small factual rate extracts are included; original PDFs are linked, not redistributed.",
     "Hash identifies a fetched response, not independent correctness or certification. Null hash means no downloadable byte snapshot was obtained.",
     "No paid Google API call, private account access or real route acceptance run was made.",
@@ -279,6 +279,37 @@
       "scope": "JFK and EWR facility identity only; terminal, access road and pickup curb not verified by this map",
       "reviewedOn": "2026-11-01",
       "retrieval": "web_pdf_text"
+    },
+    {
+      "reviewedOn": "2026-11-01",
+      "id": "nyc_oti_centerlines",
+      "agency": "NYC Office of Technology and Innovation (OTI)",
+      "title": "Citywide Street Centerline (CSCL), NYC Open Data inkn-q76z",
+      "url": "https://data.cityofnewyork.us/City-Government/Centerline/inkn-q76z",
+      "retrieval": "public_metadata_and_bounded_409_feature_Socrata_query; exact query/hash in nyc-geometry-provenance.json",
+      "scope": "Original MultiLineString geometry and selected public infrastructure attributes for named Hudson crossings and NY approaches; no address ranges",
+      "notProofOf": "Complete driving route, legal NJ OL access, direction/level interpretation, inter-agency topology, toll-free status, CRZ polygon, class or actual Google selection"
+    },
+    {
+      "reviewedOn": "2026-11-01",
+      "id": "nyc_open_data_terms",
+      "agency": "City of New York",
+      "title": "NYC Open Data Terms of Use and technical-standards public policies",
+      "url": "https://cityofnewyork.github.io/opendatatsm/publicpolicies.html",
+      "retrieval": "official_published_terms_text",
+      "scope": "Attribution, version/modification disclosure, agency source authority and lack of completeness/accuracy/fitness warranties",
+      "notProofOf": "Survey accuracy or suitability for automatically charging customers"
+    },
+    {
+      "reviewedOn": "2026-11-01",
+      "id": "njta_18w_19w_resolution",
+      "agency": "New Jersey Turnpike Authority",
+      "title": "Adopted April 21, 2026 minutes: resolution 2026-04-124 and Governor approval",
+      "url": "https://www.njta.gov/document/minutes-bm-4-21-2026/",
+      "retrieval": "official_pdf_web_reader; PDF pages 2 and 29-32",
+      "sha256": null,
+      "scope": "Conditional adjustment for exit 19W within 20 minutes after paying at exit 18W; adopted resolution and commencement conditions",
+      "notProofOf": "Ordinary Manhattan routes use 19W; exact historic commencement date, route eligibility, paid 18W, class, tag or settled adjustments"
     }
   ]
 }

@@ -18,7 +18,8 @@
       "sourceIds": [
         "pa_tolls_2026",
         "pa_guide_2026",
-        "njogis_centerlines"
+        "njogis_centerlines",
+        "nyc_oti_centerlines"
       ],
       "candidateFeatureIds": [
         "njogis_44512",
@@ -58,7 +59,46 @@
         "Connection to surrounding roads without gaps, frontage-road confusion or incorrectly joined grade-separated intersections"
       ],
       "tariffSourceId": "pa_tolls_2026",
-      "vehicleProof": "missing"
+      "vehicleProof": "missing",
+      "nycCoreCandidateFeatureIds": [
+        "nyc_cscl_1216",
+        "nyc_cscl_1217",
+        "nyc_cscl_1218",
+        "nyc_cscl_1219",
+        "nyc_cscl_1412",
+        "nyc_cscl_1413",
+        "nyc_cscl_1414",
+        "nyc_cscl_1415",
+        "nyc_cscl_1416",
+        "nyc_cscl_1417",
+        "nyc_cscl_80399",
+        "nyc_cscl_80400",
+        "nyc_cscl_80401",
+        "nyc_cscl_80402",
+        "nyc_cscl_80403",
+        "nyc_cscl_80404",
+        "nyc_cscl_101842",
+        "nyc_cscl_101843",
+        "nyc_cscl_101844",
+        "nyc_cscl_113403",
+        "nyc_cscl_113415",
+        "nyc_cscl_113416",
+        "nyc_cscl_113417",
+        "nyc_cscl_113418",
+        "nyc_cscl_113419",
+        "nyc_cscl_113422",
+        "nyc_cscl_113425",
+        "nyc_cscl_113427",
+        "nyc_cscl_113434",
+        "nyc_cscl_113452",
+        "nyc_cscl_113454",
+        "nyc_cscl_113523",
+        "nyc_cscl_113524",
+        "nyc_cscl_113526",
+        "nyc_cscl_113527",
+        "nyc_cscl_113528",
+        "nyc_cscl_113529"
+      ]
     },
     {
       "id": "holland",
@@ -67,7 +107,8 @@
       "sourceIds": [
         "pa_tolls_2026",
         "pa_guide_2026",
-        "njogis_centerlines"
+        "njogis_centerlines",
+        "nyc_oti_centerlines"
       ],
       "candidateFeatureIds": [
         "njogis_78995",
@@ -98,7 +139,48 @@
         "Connection to surrounding roads without gaps, frontage-road confusion or incorrectly joined grade-separated intersections"
       ],
       "tariffSourceId": "pa_tolls_2026",
-      "vehicleProof": "missing"
+      "vehicleProof": "missing",
+      "nycCoreCandidateFeatureIds": [
+        "nyc_cscl_438",
+        "nyc_cscl_439",
+        "nyc_cscl_440",
+        "nyc_cscl_441",
+        "nyc_cscl_442",
+        "nyc_cscl_452",
+        "nyc_cscl_508",
+        "nyc_cscl_509",
+        "nyc_cscl_510",
+        "nyc_cscl_511",
+        "nyc_cscl_512",
+        "nyc_cscl_513",
+        "nyc_cscl_514",
+        "nyc_cscl_69960",
+        "nyc_cscl_69961",
+        "nyc_cscl_69962",
+        "nyc_cscl_69963",
+        "nyc_cscl_101876",
+        "nyc_cscl_101877",
+        "nyc_cscl_101878",
+        "nyc_cscl_101879",
+        "nyc_cscl_113438",
+        "nyc_cscl_113439",
+        "nyc_cscl_113455",
+        "nyc_cscl_113456",
+        "nyc_cscl_113463",
+        "nyc_cscl_113464",
+        "nyc_cscl_113513",
+        "nyc_cscl_113514",
+        "nyc_cscl_113515",
+        "nyc_cscl_113516",
+        "nyc_cscl_113548",
+        "nyc_cscl_113549",
+        "nyc_cscl_113550",
+        "nyc_cscl_113551",
+        "nyc_cscl_114036",
+        "nyc_cscl_114037",
+        "nyc_cscl_114048",
+        "nyc_cscl_114049"
+      ]
     },
     {
       "id": "gwb",
@@ -107,7 +189,8 @@
       "sourceIds": [
         "pa_tolls_2026",
         "pa_guide_2026",
-        "njogis_centerlines"
+        "njogis_centerlines",
+        "nyc_oti_centerlines"
       ],
       "candidateFeatureIds": [
         "njogis_351020",
@@ -156,7 +239,36 @@
         "Connection to surrounding roads without gaps, frontage-road confusion or incorrectly joined grade-separated intersections"
       ],
       "tariffSourceId": "pa_tolls_2026",
-      "vehicleProof": "missing"
+      "vehicleProof": "missing",
+      "nycCoreCandidateFeatureIds": [
+        "nyc_cscl_80536",
+        "nyc_cscl_80538",
+        "nyc_cscl_80539",
+        "nyc_cscl_80540",
+        "nyc_cscl_80541",
+        "nyc_cscl_80542",
+        "nyc_cscl_80543",
+        "nyc_cscl_80544",
+        "nyc_cscl_89509",
+        "nyc_cscl_89510",
+        "nyc_cscl_89513",
+        "nyc_cscl_89514",
+        "nyc_cscl_89515",
+        "nyc_cscl_89516",
+        "nyc_cscl_89517",
+        "nyc_cscl_101753",
+        "nyc_cscl_101754",
+        "nyc_cscl_101755",
+        "nyc_cscl_101756",
+        "nyc_cscl_101758",
+        "nyc_cscl_101759",
+        "nyc_cscl_101760",
+        "nyc_cscl_101761",
+        "nyc_cscl_107205",
+        "nyc_cscl_132738",
+        "nyc_cscl_132748",
+        "nyc_cscl_133681"
+      ]
     }
   ],
   "njta": {
@@ -3519,5 +3631,25 @@
       "scope": "Complete same-vehicle/day charged and credited balances, later eligible crossings, overnight-first edge cases and settled adjustments"
     }
   ],
-  "activationGate": "All candidate/unresolved portions remain manual review. Never label unmatched roads free, copy these artifacts into a runtime setting, or promote a whole dataset based on one successful route."
+  "activationGate": "All candidate/unresolved portions remain manual review. Never label unmatched roads free, copy these artifacts into a runtime setting, or promote a whole dataset based on one successful route.",
+  "supplementalNyc": {
+    "artifact": "candidate-nyc-roads.geojson",
+    "provenanceArtifact": "nyc-geometry-provenance.json",
+    "sourceIds": [
+      "nyc_oti_centerlines",
+      "nyc_open_data_terms"
+    ],
+    "featureCount": 409,
+    "reviewStatus": "source_provenance_reviewed_geometry_not_approved",
+    "runtimeCatalog": null,
+    "approvedRoadLinks": 0,
+    "approvedFacilities": 0,
+    "gaps": [
+      "Not a complete Manhattan approach/local-street network",
+      "No source domains or relative levels automatically translated to runtime driving permissions",
+      "Bus, pedestrian/non-vehicle or cartographic segments may occur in selected labels; each requires exclusion/access review",
+      "No NJOGIS/CSCL seam snapping or invented connectors",
+      "CRZ and excluded-road geometry remain unapproved"
+    ]
+  }
 }

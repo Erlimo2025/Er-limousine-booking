@@ -5,11 +5,13 @@ const network=require('../services/toll-road-network'),{TollReviewError}=require
 test('public acceptance data preserves source integrity and all unknown/unapproved states',()=>{
  const report=validate();
  assert.equal(report.publicRoadCandidates,3722);assert.equal(report.approvedRoadLinks,0);
+ assert.equal(report.publicNycRoadCandidates,409);assert.equal(report.firstRouteTrials,6);
  assert.equal(report.plannedRouteCases,45);assert.equal(report.realRouteCasesExecuted,0);assert.equal(report.timeProfiles,15);
 });
 
 test('public candidate geometry cannot become runtime approved coverage',()=>{
- assert.throws(()=>network.coverage({OFFICIAL_TOLL_NETWORK_FILE:path.join(defaultRoot,'candidate-nj-roads.geojson')}),TollReviewError);
+ for(const file of ['candidate-nj-roads.geojson','candidate-nyc-roads.geojson'])
+  assert.throws(()=>network.coverage({OFFICIAL_TOLL_NETWORK_FILE:path.join(defaultRoot,file)}),TollReviewError);
 });
 
 test('acceptance inventory, tariff references and planned routes cannot authorize runtime tolls',()=>{

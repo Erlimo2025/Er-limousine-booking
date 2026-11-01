@@ -3,16 +3,22 @@
   "algorithm": "sha256_utf8_lf",
   "note": "Artifact integrity only; published arithmetic does not certify roads, fleet, history or activation.",
   "files": {
-    "README.md": "0a898dc93a6f596e6dd5c9fd2111b57404af031758ebae5c88f11661a13d3783",
+    "README.md": "8614fcd7cca3bf84fc8603a40ff7cb1d0bb0f4151fa5219a13c46c42527ee5dd",
     "candidate-nj-roads.geojson": "ad3620669acf14f6df33472e325d2b2dd6abb03ffee74fb3b1bdb2d087d00c3b",
+    "candidate-nyc-roads.geojson": "7d41dbc37c5f9726ed8c1e01410cfc49ef3a8fbef0410bf5e703b6b42cbc2cd2",
     "comparison-template.csv": "4a2251c5ce998bb299720b8385e5e0d4e07383e62dc5576ac2b7ea56988b2242",
     "credit-acceptance-scenarios.json": "7352b4a5df41a3e81869d1a5f4db2c0eae01228e7b94d40b5f32a47f546593fb",
+    "first-route-cases.json": "14c3e656e8f3012f9944fa4eb93e7361884ec6bc5425f2a4db2d44f0ac54f37f",
+    "first-route-review.md": "1071e4290fa0fc2ca0f2eed634a6cbaf35df0b93e5a2097a0cc0d35033f0717f",
+    "first-route-software-results.json": "80e2737b0ced40c9a471a727255862434e7cfe2cd231fc1beec2874070d74362",
     "geometry-provenance.json": "7382007abd13a63209fd2410b9d7626fc7286314ba1cd40db9569f51ff6a850d",
-    "network-inventory.json": "163fad1ef58925758f6176c4350893d418dcc7561d28e15d09c1f315083593fe",
-    "published-tariff-reference.json": "54b5565c13d856e6593a5cdcadf8cb8864693d88ba8f28a470afde833c3294ab",
+    "network-inventory.json": "3bb86c9ec1c5287367c2de9af9b3c9e9dcc2f1c012669d0b9ff2a9ef7fd4b1d3",
+    "nyc-geometry-provenance.json": "edc1fef3bd8a9692df86dc6f28e40e1ae88803ae9536860314372872a19392ec",
+    "published-tariff-reference.json": "f15934587bc5f38c363dfcc690a3ce595874491f28d5f630265c9cb080f3c094",
+    "road-evidence-review.json": "fafcb80e36050004a9cd79df1ba6c7dced92b061af98fdf96c3fe82e1fc63e5e",
     "route-testing-matrix.csv": "fd0b9a4ebf8bad13e7b112687a9473f6fcc6d9f099e351feb722ac66f9b67590",
     "route-testing-matrix.json": "7fd224430d811bf57ce77332f0858eea8c6d6f46b0c87d85a4cb0e922efda3cb",
-    "sources.json": "a429778a927301710494e51ff4f692baf6886bf70214e47cbfa2d473d02ea55d",
+    "sources.json": "475e3a0013561bb7383f3e98e3d634061ebabba3dbb122c0a8747f0dfd713fa8",
     "vehicle-evidence-checklist.md": "14f993ab253d488d6adaf3c08730f9e96441ae0c24c9d76819e2b9663deb9e83"
   }
 }
