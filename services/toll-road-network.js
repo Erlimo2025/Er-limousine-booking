@@ -80,6 +80,7 @@ function coverage(env){
     for(const key of cells(bounds(road.corridor))){const list=index.get(key)||[];if(list.length>=2000)fail('coverage_density_excessive');list.push(edge);index.set(key,list);}
   }
   for(const connector of c.crz.creditConnectors)if(!CREDITS.includes(connector?.source)||!ref(connector.evidence)||!validSpan(connector)||
+    connector.movement!==undefined&&!['entry','exit'].includes(connector.movement)||
     !Array.isArray(connector.roads)||!connector.roads.length||connector.roads.length>30||connector.roads.some(token=>typeof token!=='string'||
       !/^[a-z][a-z0-9_]{2,49}:[fr]$/.test(token)||!roads.has(token.slice(0,-2))))fail('credit_connector_invalid');
   const catalog={...c,catalogHash:geo.digest(c),nodesById:nodes,roadsById:roads,facilitiesById:facilities,index};
@@ -179,35 +180,50 @@ function creditSource(event,path,runs,c,departure,g,profile){
   const at=path.findIndex(item=>(event.segment>item.startSegment||event.segment===item.startSegment&&event.fraction>=item.startFraction-1e-9)&&
     (event.segment<item.endSegment||event.segment===item.endSegment&&event.fraction<=item.endFraction+1e-9));
   if(at<0)fail('zone_road_match_missing');
+  if(event.kind==='exit'){
+    const run=runs.find(run=>['queens_midtown','hugh_carey'].includes(run.id)&&run.end>=at);
+    if(!run)return null;
+    if(at>=run.start)return run;
+    const tokens=path.slice(at,run.start).map(item=>item.edge.token),window=geo.windowAt(g,event.segment,departure,profile);
+    const connectors=c.crz.creditConnectors.filter(item=>item.movement==='exit'&&item.source===run.id&&JSON.stringify(item.roads)===JSON.stringify(tokens)&&
+      covers(item,tariff.instant(window.earliest),tariff.instant(window.latest)));
+    if(connectors.length!==1)fail('credit_connector_unverified');return run;
+  }
   const candidates=runs.filter(run=>CREDITS.includes(run.id)&&run.start<=at&&(run.facility.kind!=='pa_2026'||run.direction==='ny_bound'));
   if(!candidates.length)return null;
   const run=candidates.at(-1);if(at<=run.end)return run;
   const tokens=path.slice(run.end+1,at+1).map(item=>item.edge.token),window=geo.windowAt(g,event.segment,departure,profile);
-  const connectors=c.crz.creditConnectors.filter(item=>item.source===run.id&&JSON.stringify(item.roads)===JSON.stringify(tokens)&&
+  const connectors=c.crz.creditConnectors.filter(item=>(item.movement||'entry')==='entry'&&item.source===run.id&&JSON.stringify(item.roads)===JSON.stringify(tokens)&&
     covers(item,tariff.instant(window.earliest),tariff.instant(window.latest)));
   if(connectors.length!==1)fail('credit_connector_unverified');return run;
 }
 function dailyContext(profile,day,seen,departure,latest=departure,now=Date.now()){
+  if(!(seen instanceof Map))fail('daily_context_unverified');
   const vehicle=profile.official.fleet.vehicleRef,key=vehicle+'|'+day;
-  if(seen.has(key))return {day,status:'already_charged',evidence:'same-quote-same-vehicle-day'};
+  if(seen.has(key)){
+    const previous=seen.get(key);if(!previous||tariff.instant(previous.validUntil)<=tariff.instant(latest))fail('daily_context_unverified');
+    return {...previous,...tariff.dailyLedger(previous)};
+  }
   const fact=profile.official.dailyFacts?.[day];
   if(fact){
     const observed=tariff.instant(fact.observedAt),until=tariff.instant(fact.validUntil);
-    if(fact.vehicleRef!==vehicle||fact.status!=='already_charged'||!ref(fact.evidence)||tariff.parts(observed).day!==day||
+    const amounts=tariff.dailyLedger(fact);
+    if(fact.vehicleRef!==vehicle||!['first_entry','already_charged'].includes(fact.status)||fact.historyComplete!==true||
+      (fact.status==='first_entry')!==(amounts.chargedCents===0)||!ref(fact.evidence)||tariff.parts(observed).day!==day||
       !Number.isFinite(now)||observed>now||observed>tariff.instant(departure)||until<=tariff.instant(latest)||tariff.parts(until-1).day!==day)fail('daily_context_unverified');
-    return {day,status:'already_charged',evidence:fact.evidence};
+    return {day,status:fact.status,...amounts,historyComplete:true,evidence:fact.evidence,validUntil:fact.validUntil};
   }
-  const policy=profile.official.dailyPolicy;
-  if(policy?.kind!=='assume_first_entry_estimate'||policy.operatorApproved!==true||policy.vehicleRef!==vehicle||!ref(policy.evidence))fail('daily_context_unknown');
-  return {day,status:'first_entry_estimate',operatorPolicyApproved:true,evidence:policy.evidence};
+  // A previously approved estimate policy is not complete daily history.
+  fail('daily_context_unknown');
 }
 function priceRoutes(routes,profile,env,eligibility,context={}){
   if(!profile?.official||!Array.isArray(routes)||routes.length<1||routes.length>2||eligibility?.policy!=='interstate_only'||
     eligibility.pickupState===eligibility.dropoffState||!ref(profile.official.fleet?.vehicleRef)||!ref(profile.official.fleet?.assignmentEvidence))fail('fleet_or_route_unverified');
-  const c=coverage(env),seen=new Set(),legs=[],proofs=[];
+  const c=coverage(env),seen=new Map(),legs=[],proofs=[];let previousEnd=null;
   for(const [index,route]of routes.entries()){
     if(route.origin!==(index?eligibility.dropoffPlaceId:eligibility.pickupPlaceId)||route.destination!==(index?eligibility.pickupPlaceId:eligibility.dropoffPlaceId))fail('route_endpoint_unverified');
     const g=geo.geometry(route.data),first=tariff.instant(route.departure),last=tariff.instant(geo.windowAt(g,g.segments.length-1,route.departure,profile).latest);
+    if(previousEnd!==null&&first<previousEnd)fail('route_time_order_unverified');previousEnd=last;
     if(!covers(c,first,last))fail('coverage_expired');tariff.verifiedFleet(profile.official.fleet,last);
     const path=matchRoute(g,c,first,last),start=path[0].edge,end=path.at(-1).edge;
     if(start.start.state!==start.end.state||end.start.state!==end.end.state||start.start.state!==(index?eligibility.dropoffState:eligibility.pickupState)||
@@ -223,27 +239,37 @@ function priceRoutes(routes,profile,env,eligibility,context={}){
       const rate=tableRate(run,g,profile,route.departure);run.amountCents=rate.amountCents;rateProofs.push(geo.digest(rate));
       other.push({kind:'other',label:run.facility.label,facility:run.id,amountCents:rate.amountCents});
     }
-    const entries=geo.zoneEvents(g.points,c.crz);let day=null,assumption=null,congestion=0,credit=0,sourceId=null;
-    if(entries.length){
-      const window=geo.windowAt(g,entries[0].segment,route.departure,profile);day=tariff.rateWindow(window,'mta').day;
-      for(const entry of entries)if(tariff.rateWindow(geo.windowAt(g,entry.segment,route.departure,profile),'mta').day!==day)fail('multiple_zone_days_unverified');
-      const source=creditSource(entries[0],path,runs,c,route.departure,g,profile),account=profile.official.crossingCredit;
-      const daily=dailyContext(profile,day,seen,window.earliest,window.latest,context.now??Date.now());
-      if(source&&daily.status!=='already_charged'&&tariff.rateWindow(window,'mta').peak&&(!account||tariff.instant(account.validUntil)<=tariff.instant(window.latest)))fail('crossing_credit_unverified');
-      const crz=tariff.calculateCongestion({zoneEntryTime:window,fleet:profile.official.fleet,dailyContext:daily,creditSource:source?.id||null,
-        crossingPaidCents:source?.amountCents||0,creditEligibility:account?.eligibility,creditEvidence:account?.evidence});
-      congestion=crz.amountCents;credit=crz.creditCents;assumption=crz.dailyAssumption;sourceId=source?.id||null;seen.add(profile.official.fleet.vehicleRef+'|'+day);
+    const entries=geo.zoneTransitions(g.points,c.crz),events=[],usedRuns=new Set(),sourceIds=new Set();let day=null,congestion=0,credit=0;
+    if(entries.length>32)fail('congestion_events_excessive');
+    for(const entry of entries){
+      let source=creditSource(entry,path,runs,c,route.departure,g,profile);
+      const token=source?geo.digest({leg:index,facility:source.id,roads:path.slice(source.start,source.end+1).map(item=>item.edge.token)}):null;
+      if(token&&usedRuns.has(token))source=null;
+      if(entry.kind==='exit'&&!source)continue;
+      const window=geo.windowAt(g,entry.segment,route.departure,profile),eventDay=tariff.rateWindow(window,'mta').day;
+      if(day!==null&&eventDay!==day)fail('multiple_zone_days_unverified');day=eventDay;
+      const crossingTime=source?{earliest:geo.windowAt(g,source.startSegment,route.departure,profile).earliest,
+        latest:geo.windowAt(g,source.endSegment,route.departure,profile).latest}:null;
+      const latest=crossingTime&&tariff.instant(crossingTime.latest)>tariff.instant(window.latest)?crossingTime.latest:window.latest;
+      const daily=dailyContext(profile,day,seen,window.earliest,latest,context.now??Date.now()),account=profile.official.crossingCredit;
+      if(source&&(!account||tariff.instant(account.validUntil)<=tariff.instant(latest)))fail('crossing_credit_unverified');
+      const crz=tariff.calculateCongestion({movement:entry.kind,zoneEntryTime:window,crossingTime,fleet:profile.official.fleet,dailyContext:daily,
+        creditSource:source?.id||null,crossingPaidCents:source?.amountCents||0,creditEligibility:account?.eligibility,creditEvidence:account?.evidence});
+      congestion+=crz.amountCents;credit+=crz.creditCents;
+      if(source){usedRuns.add(token);sourceIds.add(source.id);}
+      events.push({...crz.event,creditToken:source?token:null});
+      seen.set(profile.official.fleet.vehicleRef+'|'+day,{...daily,...crz.stateAfter,status:crz.stateAfter.chargedCents?'already_charged':'first_entry'});
     }
     const components=[base.components[0],{kind:'mta_congestion',label:'MTA congestion',facility:'manhattan_crz',amountCents:congestion},
       {kind:'crossing_credit',label:'Eligible credit',facility:'manhattan_crz_credit',amountCents:credit?-credit:0},...other];
     const amountCents=components.reduce((n,component)=>n+component.amountCents,0);
     if(!Number.isSafeInteger(amountCents)||amountCents<0)fail('invalid_total');
     legs.push({status:'estimated',amountCents,components,crossing:gate.crossing,direction:gate.direction,geometryHash:g.hash,
-      congestionDay:day,dailyAssumption:assumption,creditSource:sourceId});
+      congestionDay:day,dailyAssumption:null,creditSource:sourceIds.size===1?[...sourceIds][0]:null,congestionEvents:events});
     proofs.push(geo.digest({roads:path.map(item=>item.edge.token),rates:rateProofs}));
   }
   const amountCents=legs.reduce((n,leg)=>n+leg.amountCents,0);
-  return {version:1,format:'official_network_2026',networkVersion:VERSION,tariffVersion:tariff.VERSION,status:'estimated',amountCents,estimatedRouteCents:amountCents,
+  return {version:1,format:'official_network_2026',networkVersion:VERSION,tariffVersion:tariff.CREDIT_VERSION,status:'estimated',amountCents,estimatedRouteCents:amountCents,
     allowanceCents:0,eligibility,legs,coverageHash:geo.digest({catalog:c.catalogHash,proofs}),fleetHash:geo.digest(profile.official)};
 }
 module.exports={VERSION,coverage,clip,matchRoute,facilityRuns,tableRate,dailyContext,priceRoutes};

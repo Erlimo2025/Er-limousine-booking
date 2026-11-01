@@ -27,8 +27,9 @@ invented or included. Google aggregates are never added to component costs.
 Congestion entries and credit connectors are tied to the actual matched path.
 Queens Midtown/Hugh L. Carey can supply their own eligible credit, independently
 of the PA crossing name. Daily context belongs to the actual vehicle/day; future
-or stale history and browser claims cannot establish it. The disclosed first-entry
-estimate policy still needs separate operator acceptance.
+or stale history and browser claims cannot establish it. New quotes require
+complete daily charged/credited balances; the old first-entry estimate policy
+cannot establish that history.
 
 ## Synthetic validation coverage
 
@@ -49,10 +50,12 @@ The [2026 acceptance package](toll-acceptance/2026/README.md) contains actual
 public NJOGIS candidate geometry, official PA/NJTA/MTA rate/map references,
 explicit coverage gaps, a 45-case planned matrix and the exact private account
 evidence checklist. None of its geometry, vehicle facts or real-route outcomes
-is approved. It is deliberately not a runtime-loadable catalog. The detailed
-MTA NYC tunnel credit terms and later daily-credit settlement are unresolved
-acceptance blockers. No algorithm, fare or production configuration is changed
-by preparing those artifacts.
+is approved. It is deliberately not a runtime-loadable catalog. The follow-up
+credit correction implements $3 PA entry / $1.50 NYC entry-or-exit credits and
+the $5 daily limit with complete-history checks. Twelve additional planned
+credit scenarios cover later crossings and daily caps. Overnight-first peak
+credits and real vehicle/day evidence remain acceptance blockers. No production
+configuration is changed.
 
 ## Production evidence still required
 
@@ -62,8 +65,8 @@ by preparing those artifacts.
   tag eligibility. Unknown roads remain review cases.
 * Physical Class 1, readable tag, standard daily/non-TLC plan and actual dispatched
   vehicle/assignment evidence. NJ Business/OL/2Ax labels are insufficient.
-* A trustworthy daily/credit context or separately accepted estimate policy,
-  plus calibrated timing bounds and matching settled transaction comparisons.
+* Complete vehicle/day charged and credited history, calibrated timing bounds,
+  matching settled comparisons and resolution of overnight-first peak credits.
 * Controlled non-production booking/reservation/Stripe test-mode acceptance before
   separate production approval.
 

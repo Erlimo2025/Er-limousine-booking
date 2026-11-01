@@ -68,9 +68,10 @@ as part of this acceptance exercise.
 Request current written clarification of:
 
 * Peak Lincoln/Holland credit eligibility and readable-tag/plate conditions.
-* Queens-Midtown/Carey Phase 1 credit amount: the detailed schedule says $1.50
-  while the general page says up to $3 across the group. Ask which current
-  amount/rule governs this vehicle and whether an exit-only crossing qualifies.
+* Queens-Midtown/Carey eligibility for the published $1.50 Phase 1 peak per-trip
+  entry/exit credit; Lincoln/Holland eligibility for the $3 peak entry credit.
+  The published daily credit maximum is $5. Amounts are independently confirmed;
+  actual entitlement and complete remaining allowance still need evidence.
 * Same-vehicle repeat entry, overnight then peak, later eligible tunnel credits,
   combined daily credit limit, midnight/calendar-day reset and posting delays.
 * Any currently applied date-specific changes, gridlock adjustments or exemption.
@@ -93,6 +94,10 @@ transaction rows and associated later credits/adjustments. Keep:
 * For CRZ daily comparisons, the relevant entries/credits for this same vehicle
   for that New York calendar day, including prior/overnight entries. Other
   vehicles' fleet charges do not establish this vehicle's history.
+* Complete gross daily charged cents and already credited cents, including later
+  settled adjustments, plus the evidence's actual covered-through time. A flag
+  saying paid is insufficient. Unknown/future history and overnight-first peak
+  credits stay manual; do not extend validity or assume first entry.
 * The actual dispatched vehicle, intended route and any detour. A generic Luxury
   SUV product or a previous day's statement cannot prove future vehicle/history.
 

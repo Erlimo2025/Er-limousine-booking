@@ -1,6 +1,13 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),vm=require('node:vm'),crypto=require('node:crypto'),{createRequire}=require('node:module');
 const factoryPath=path.join(__dirname,'security-abuse.test.cjs'),factorySource=fs.readFileSync(factoryPath,'utf8');
-const {harness,booking}=new Function('require','__dirname',factorySource.slice(0,factorySource.indexOf('test("approved prices'))+'\nreturn {harness,booking};')(createRequire(factoryPath),__dirname);
+// Replay synthetic day-history proofs at the route's test date without moving
+// the independent auth/cancellation harness clock. No production clock changes.
+// Dedicated tests set tollHistoryNow to the actual harness clock to prove that
+// future-dated history is rejected, rather than bypassing that validation.
+const replaySource=factorySource.replace('if (name === "./services/route-tolls") return require(\'../services/route-tolls\');',
+ 'if (name === "./services/route-tolls") { const real=require(\'../services/route-tolls\');return {...real,priceOfficialRoutes:(routes,p,e,elig,ctx)=>real.priceOfficialRoutes(routes,p,e,elig,{...ctx,now:state.tollHistoryNow??Math.max(...routes.map(r=>Date.parse(r.departure)))})}; }');
+assert.notEqual(replaySource,factorySource);
+const {harness,booking}=new Function('require','__dirname',replaySource.slice(0,replaySource.indexOf('test("approved prices'))+'\nreturn {harness,booking};')(createRequire(factoryPath),__dirname);
 const tolls=require('../services/route-tolls');
 const official=require('./helpers/official-toll-fixtures.cjs');
 // Synthetic reviewed profile is a test fixture, not a claim about the ER fleet.
@@ -194,6 +201,33 @@ test('specific official class/tag/plan evidence is mandatory; old verification b
  }
  const h=await fixture(t,1375,{}),r=await h.request('/api/quote',normal);assert.equal(r.status,200);assert.equal(r.body.total,80);assert.equal(r.body.tolls,undefined);assert.equal(h.state.routes[0].extraComputations,undefined);
  const ny=tolls.vehicleProfile({TOLL_VEHICLE_PROFILES_JSON:JSON.stringify({escalade:{...profile,tollPasses:['US_NY_EZPASSNY'],emissionType:'HYBRID'}})},'escalade');assert.deepEqual(tolls.requestModifiers(ny),{vehicleInfo:{emissionType:'HYBRID'},tollPasses:['US_NY_EZPASSNY']});
+});
+
+test('incomplete, assumed, foreign or future history fails before any new reservation or payment session',async t=>{
+ for(const change of [p=>delete p.dailyFacts,p=>delete p.dailyFacts['2026-11-10'].creditedCents,p=>p.dailyFacts['2026-11-10'].historyComplete=false,
+  p=>p.dailyFacts['2026-11-10'].vehicleRef='foreign-vehicle',p=>{delete p.dailyFacts;p.dailyPolicy={kind:'assume_first_entry_estimate',operatorApproved:true,vehicleRef:p.fleet.vehicleRef,evidence:'synthetic-guess-policy'};}]){
+  const h=await fixture(t),profiles=JSON.parse(h.context.process.env.TOLL_VEHICLE_PROFILES_JSON);change(profiles.suv.official2026);h.context.process.env.TOLL_VEHICLE_PROFILES_JSON=JSON.stringify(profiles);
+  for(const path of ['/api/quote','/api/checkout'])for(const paymentChoice of ['now','later']){
+   const denied=await h.request(path,{...normal,paymentChoice,dailyFacts:{chargedCents:900,creditedCents:0,historyComplete:true},creditEligibility:'eligible'});
+   assert.equal(denied.status,422);assert.equal(denied.body.code,'TOLL_ESTIMATE_UNAVAILABLE');
+  }
+  assert.equal(h.records().length,0);assert.equal(h.state.creates.length,0);assert.equal(h.state.payments.calls.length,0);
+ }
+ const future=await fixture(t);future.state.tollHistoryNow=vm.runInContext('Date.now()',future.context);
+ assert.equal((await future.request('/api/quote',normal)).status,422);assert.equal(future.records().length,0);
+});
+test('a later verified credit is capped by day history and quote/reservation/Stripe cents stay identical',async t=>{
+ for(const paymentChoice of ['now','later']){
+  const h=await fixture(t),profiles=JSON.parse(h.context.process.env.TOLL_VEHICLE_PROFILES_JSON);
+  Object.assign(profiles.suv.official2026.dailyFacts['2026-11-10'],{status:'already_charged',chargedCents:900,creditedCents:300});
+  h.context.process.env.TOLL_VEHICLE_PROFILES_JSON=JSON.stringify(profiles);
+  const q=await h.request('/api/quote',normal);assert.equal(q.status,200);assert.equal(q.body.totalCents,9279);
+  assert.equal(q.body.tolls.legs[0].components[1].amountCents,0);assert.equal(q.body.tolls.legs[0].components[2].amountCents,-200);
+  const r=await h.request('/api/checkout',{...normal,paymentChoice,quoteRevision:q.body.quoteRevision});assert.equal(r.status,200);
+  assert.equal(h.records()[0].quote.totalCents,9279);
+  const complete=await h.request('/api/booking/'+r.body.bookingId+'/checkout',{}, {...origin,cookie:access(r)});assert.equal(complete.status,200);
+  assert.equal(h.state.creates.length,1);assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount,9279);
+ }
 });
 
 test('browser crossing names, copied geometry, account attestations, coverage and daily context cannot fill missing server proofs',async t=>{

@@ -106,7 +106,7 @@ function intersection(a,b,c,d){
   if(Math.abs(den)<1e-14)return null;const t=((c[0]-a[0])*v-(c[1]-a[1])*u)/den,s=((c[0]-a[0])*y-(c[1]-a[1])*x)/den;
   return t>0&&t<1&&s>=0&&s<=1?t:null;
 }
-function zoneEvents(path,zone){
+function zoneTransitions(path,zone){
   const polygons=[zone.polygon,...zone.excluded],inZone=p=>inside(p,zone.polygon)&&!zone.excluded.some(poly=>inside(p,poly));
   let prior=inZone(path[0]);const entries=[];
   for(let i=0;i<path.length-1;i++){
@@ -120,11 +120,12 @@ function zoneEvents(path,zone){
     cuts.sort((x,y)=>x-y);
     for(let j=1;j<cuts.length;j++){
       if(cuts[j]-cuts[j-1]<1e-10)continue;const t=(cuts[j]+cuts[j-1])/2,now=inZone([a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t]);
-      if(now&&!prior)entries.push({segment:i,fraction:cuts[j-1]});prior=now;
+      if(now!==prior)entries.push({segment:i,fraction:cuts[j-1],kind:now?'entry':'exit'});prior=now;
     }
   }
   return entries;
 }
+function zoneEvents(path,zone){return zoneTransitions(path,zone).filter(event=>event.kind==='entry').map(({kind,...event})=>event);}
 function zoneEntries(path,zone){return zoneEvents(path,zone).map(event=>event.segment);}
 function windowAt(g,index,departure,profile){
   const timing=profile.official?.timing;
@@ -135,5 +136,5 @@ function windowAt(g,index,departure,profile){
 }
 function coverage(env){return require('./toll-road-network').coverage(env);}
 function priceRoutes(routes,profile,env,eligibility,context){return require('./toll-road-network').priceRoutes(routes,profile,env,eligibility,context);}
-module.exports={VERSION,FIELD_MASK,digest,decode,geometry,coverage,validateGeography,crossingEvents,zoneEntries,zoneEvents,windowAt,
+module.exports={VERSION,FIELD_MASK,digest,decode,geometry,coverage,validateGeography,crossingEvents,zoneEntries,zoneEvents,zoneTransitions,windowAt,
   priceRoutes,point,distance,nearSegment,inside,polygon,convex};

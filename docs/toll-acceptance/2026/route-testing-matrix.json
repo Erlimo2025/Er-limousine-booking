@@ -13,7 +13,8 @@
     "Record all actual facilities and ticket entry/exit pairs. Unknown values remain null, never zero.",
     "Keep redacted settled-account comparisons outside Git. No production database, reservation writes or live Stripe calls.",
     "Compare Google aggregate separately; never add aggregate to the itemized components or invent a residual.",
-    "Boundary, DST, holiday and future-year profiles are offline replays; never drive unsafely to hit a boundary or submit an unsupported past departure."
+    "Boundary, DST, holiday and future-year profiles are offline replays; never drive unsafely to hit a boundary or submit an unsupported past departure.",
+    "Known published amounts are not proof of eligibility: obtain complete charged/credited vehicle-day balances; reject unknown history and assumptions. Refer to the 12 dedicated credit scenarios."
   ],
   "locations": [
     {
@@ -957,7 +958,7 @@
         "weekday_overnight",
         "saturday_noon"
       ],
-      "goal": "Inventory every actual NJ/PA/NYC facility and zone entry; NYC tunnel credit details and other PA crossings remain review cases",
+      "goal": "Inventory every actual NJ/PA/NYC facility and zone entry; Facility-specific credits apply only with actual matched entry/exit and complete day history; other PA crossings remain review cases",
       "selectedRouteEvidence": null,
       "interchangesObserved": null,
       "googleAggregateCents": null,
@@ -980,7 +981,7 @@
         "weekday_overnight",
         "saturday_noon"
       ],
-      "goal": "Inventory every actual NJ/PA/NYC facility and zone entry; NYC tunnel credit details and other PA crossings remain review cases",
+      "goal": "Inventory every actual NJ/PA/NYC facility and zone entry; Facility-specific credits apply only with actual matched entry/exit and complete day history; other PA crossings remain review cases",
       "selectedRouteEvidence": null,
       "interchangesObserved": null,
       "googleAggregateCents": null,
@@ -1003,7 +1004,7 @@
         "weekday_overnight",
         "saturday_noon"
       ],
-      "goal": "Inventory every actual NJ/PA/NYC facility and zone entry; NYC tunnel credit details and other PA crossings remain review cases",
+      "goal": "Inventory every actual NJ/PA/NYC facility and zone entry; Facility-specific credits apply only with actual matched entry/exit and complete day history; other PA crossings remain review cases",
       "selectedRouteEvidence": null,
       "interchangesObserved": null,
       "googleAggregateCents": null,
@@ -1336,5 +1337,7 @@
     "Repeated Checkout reuses safe state; no duplicate payable session",
     "EWR remains exactly 15000 cents including tolls, FIRST15 excluded; ordinary FIRST15 fare rules preserved"
   ],
-  "privateResultTemplate": "comparison-template.csv"
+  "privateResultTemplate": "comparison-template.csv",
+  "creditImplementationVersion": "pa-class1-mta-daily-credits-2026-v2",
+  "creditScenariosArtifact": "credit-acceptance-scenarios.json"
 }

@@ -30,11 +30,12 @@ test('acceptance matrix covers public origins, both directions and preserved bus
  assert.match(m.paymentAcceptance.join(' '),/legacy|pre-existing/);assert.match(m.paymentAcceptance.join(' '),/15000/);
 });
 
-test('acceptance data records NYC credit conflict instead of inventing a verified credit or full route amount',()=>{
+test('accepted published credit references do not certify routes, fleet or a full route amount',()=>{
  const r=JSON.parse(fs.readFileSync(path.join(defaultRoot,'published-tariff-reference.json'),'utf8'));
  for(const source of ['queens_midtown','hugh_carey']){
-  const c=r.mtaCrz.credits.find(c=>c.source===source);assert.equal(c.peakMaximumCents,null);
+  const c=r.mtaCrz.credits.find(c=>c.source===source);assert.equal(c.peakMaximumCents,150);
   assert.equal(c.observations.find(o=>o.sourceId==='mta_crz_schedule').phase1Cents,150);
  }
  for(const e of r.conditionalComponentExamples)assert.equal(e.totalRouteTollsCents,null);
+ assert.equal(r.mtaCrz.dailyCreditLimitCents,500);assert.equal(r.approvedForActivation,false);
 });

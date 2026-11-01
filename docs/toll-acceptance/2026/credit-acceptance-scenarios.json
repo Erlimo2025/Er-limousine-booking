@@ -1,0 +1,282 @@
+{
+  "schema": "er-toll-credit-acceptance-v1",
+  "preparedOn": "2026-11-01",
+  "creditImplementationVersion": "pa-class1-mta-daily-credits-2026-v2",
+  "approvedForActivation": false,
+  "sourceIds": [
+    "mta_crz_schedule",
+    "mta_crz_connections"
+  ],
+  "notes": [
+    "Candidate route IDs only identify experiments; none is claimed to use the named tunnel until Google geometry is matched to approved infrastructure.",
+    "Run real comparisons only after separate authorization and evidence review. No Google or private account requests were made here.",
+    "Collect complete per-vehicle/day debits and credits, including later adjustments. Never sum Google aggregate plus component tolls.",
+    "Eligibility unknown, history unknown or an overnight-first/peak-credit settlement edge case requires manual review."
+  ],
+  "scenarios": [
+    {
+      "id": "C001",
+      "routeCaseIds": [
+        "R001",
+        "R002"
+      ],
+      "facility": "lincoln",
+      "movement": "entry",
+      "sourceId": "mta_crz_schedule",
+      "chargedBeforeCents": 0,
+      "creditedBeforeCents": 0,
+      "expectedNewChargeCents": 900,
+      "expectedCreditCents": 300,
+      "purpose": "First proven eligible peak entry",
+      "assumptions": "Conditional published arithmetic only; actual route, class, tag, credit eligibility, period and complete day evidence must be independently established",
+      "observedCrossing": null,
+      "actualGoogleEstimateCents": null,
+      "actualSettledCreditCents": null,
+      "actualHistoryEvidence": null,
+      "status": "not_run",
+      "coverageApproved": false
+    },
+    {
+      "id": "C002",
+      "routeCaseIds": [
+        "R018",
+        "R019"
+      ],
+      "facility": "holland",
+      "movement": "entry",
+      "sourceId": "mta_crz_schedule",
+      "chargedBeforeCents": 0,
+      "creditedBeforeCents": 0,
+      "expectedNewChargeCents": 900,
+      "expectedCreditCents": 300,
+      "purpose": "First proven eligible peak entry",
+      "assumptions": "Conditional published arithmetic only; actual route, class, tag, credit eligibility, period and complete day evidence must be independently established",
+      "observedCrossing": null,
+      "actualGoogleEstimateCents": null,
+      "actualSettledCreditCents": null,
+      "actualHistoryEvidence": null,
+      "status": "not_run",
+      "coverageApproved": false
+    },
+    {
+      "id": "C003",
+      "routeCaseIds": [
+        "R028",
+        "R029"
+      ],
+      "facility": "queens_midtown",
+      "movement": "entry",
+      "sourceId": "mta_crz_schedule",
+      "chargedBeforeCents": 0,
+      "creditedBeforeCents": 0,
+      "expectedNewChargeCents": 900,
+      "expectedCreditCents": 150,
+      "purpose": "Actual NYC tunnel path required; destination/via labels do not prove it",
+      "assumptions": "Conditional published arithmetic only; actual route, class, tag, credit eligibility, period and complete day evidence must be independently established",
+      "observedCrossing": null,
+      "actualGoogleEstimateCents": null,
+      "actualSettledCreditCents": null,
+      "actualHistoryEvidence": null,
+      "status": "not_run",
+      "coverageApproved": false
+    },
+    {
+      "id": "C004",
+      "routeCaseIds": [
+        "R028",
+        "R030"
+      ],
+      "facility": "hugh_carey",
+      "movement": "entry",
+      "sourceId": "mta_crz_schedule",
+      "chargedBeforeCents": 0,
+      "creditedBeforeCents": 0,
+      "expectedNewChargeCents": 900,
+      "expectedCreditCents": 150,
+      "purpose": "Actual NYC tunnel path required; check excluded-road/local-street transition",
+      "assumptions": "Conditional published arithmetic only; actual route, class, tag, credit eligibility, period and complete day evidence must be independently established",
+      "observedCrossing": null,
+      "actualGoogleEstimateCents": null,
+      "actualSettledCreditCents": null,
+      "actualHistoryEvidence": null,
+      "status": "not_run",
+      "coverageApproved": false
+    },
+    {
+      "id": "C005",
+      "routeCaseIds": [
+        "R031",
+        "R033"
+      ],
+      "facility": "queens_midtown",
+      "movement": "exit",
+      "sourceId": "mta_crz_schedule",
+      "chargedBeforeCents": 900,
+      "creditedBeforeCents": 300,
+      "expectedNewChargeCents": 0,
+      "expectedCreditCents": 150,
+      "purpose": "Later eligible exit after daily charge; verify directed exit connector",
+      "assumptions": "Conditional published arithmetic only; actual route, class, tag, credit eligibility, period and complete day evidence must be independently established",
+      "observedCrossing": null,
+      "actualGoogleEstimateCents": null,
+      "actualSettledCreditCents": null,
+      "actualHistoryEvidence": null,
+      "status": "not_run",
+      "coverageApproved": false
+    },
+    {
+      "id": "C006",
+      "routeCaseIds": [
+        "R031",
+        "R033"
+      ],
+      "facility": "hugh_carey",
+      "movement": "exit",
+      "sourceId": "mta_crz_schedule",
+      "chargedBeforeCents": 900,
+      "creditedBeforeCents": 450,
+      "expectedNewChargeCents": 0,
+      "expectedCreditCents": 50,
+      "purpose": "Later eligible exit capped at remaining 50 cents",
+      "assumptions": "Conditional published arithmetic only; actual route, class, tag, credit eligibility, period and complete day evidence must be independently established",
+      "observedCrossing": null,
+      "actualGoogleEstimateCents": null,
+      "actualSettledCreditCents": null,
+      "actualHistoryEvidence": null,
+      "status": "not_run",
+      "coverageApproved": false
+    },
+    {
+      "id": "C007",
+      "routeCaseIds": [
+        "R001",
+        "R018"
+      ],
+      "facility": "holland",
+      "movement": "entry",
+      "sourceId": "mta_crz_schedule",
+      "chargedBeforeCents": 900,
+      "creditedBeforeCents": 300,
+      "expectedNewChargeCents": 0,
+      "expectedCreditCents": 200,
+      "purpose": "Second eligible PA entry capped at daily 500 cents total",
+      "assumptions": "Conditional published arithmetic only; actual route, class, tag, credit eligibility, period and complete day evidence must be independently established",
+      "observedCrossing": null,
+      "actualGoogleEstimateCents": null,
+      "actualSettledCreditCents": null,
+      "actualHistoryEvidence": null,
+      "status": "not_run",
+      "coverageApproved": false
+    },
+    {
+      "id": "C008",
+      "routeCaseIds": [
+        "R028",
+        "R031"
+      ],
+      "facility": "queens_midtown",
+      "movement": "entry",
+      "sourceId": "mta_crz_schedule",
+      "chargedBeforeCents": 900,
+      "creditedBeforeCents": 500,
+      "expectedNewChargeCents": 0,
+      "expectedCreditCents": 0,
+      "purpose": "Daily credit exhausted; no new daily charge",
+      "assumptions": "Conditional published arithmetic only; actual route, class, tag, credit eligibility, period and complete day evidence must be independently established",
+      "observedCrossing": null,
+      "actualGoogleEstimateCents": null,
+      "actualSettledCreditCents": null,
+      "actualHistoryEvidence": null,
+      "status": "not_run",
+      "coverageApproved": false
+    },
+    {
+      "id": "C009",
+      "routeCaseIds": [
+        "R001",
+        "R018"
+      ],
+      "facility": "lincoln",
+      "movement": "entry",
+      "sourceId": "mta_crz_schedule",
+      "chargedBeforeCents": 0,
+      "creditedBeforeCents": 0,
+      "expectedNewChargeCents": 225,
+      "expectedCreditCents": 0,
+      "purpose": "Overnight first entry; no crossing credit",
+      "assumptions": "Conditional published arithmetic only; actual route, class, tag, credit eligibility, period and complete day evidence must be independently established",
+      "observedCrossing": null,
+      "actualGoogleEstimateCents": null,
+      "actualSettledCreditCents": null,
+      "actualHistoryEvidence": null,
+      "status": "not_run",
+      "coverageApproved": false
+    },
+    {
+      "id": "C010",
+      "routeCaseIds": [
+        "R001",
+        "R028"
+      ],
+      "facility": "queens_midtown",
+      "movement": "entry",
+      "sourceId": "mta_crz_schedule",
+      "chargedBeforeCents": 225,
+      "creditedBeforeCents": 0,
+      "expectedNewChargeCents": null,
+      "expectedCreditCents": null,
+      "purpose": "Overnight-first then peak credit: manual review pending settlement evidence",
+      "assumptions": "Conditional published arithmetic only; actual route, class, tag, credit eligibility, period and complete day evidence must be independently established",
+      "observedCrossing": null,
+      "actualGoogleEstimateCents": null,
+      "actualSettledCreditCents": null,
+      "actualHistoryEvidence": null,
+      "status": "not_run",
+      "coverageApproved": false
+    },
+    {
+      "id": "C011",
+      "routeCaseIds": [
+        "R044",
+        "R045"
+      ],
+      "facility": "lincoln",
+      "movement": "entry",
+      "sourceId": "mta_crz_schedule",
+      "chargedBeforeCents": null,
+      "creditedBeforeCents": null,
+      "expectedNewChargeCents": null,
+      "expectedCreditCents": null,
+      "purpose": "Unknown/incomplete/foreign/stale day history: manual review before reservation/payment",
+      "assumptions": "Conditional published arithmetic only; actual route, class, tag, credit eligibility, period and complete day evidence must be independently established",
+      "observedCrossing": null,
+      "actualGoogleEstimateCents": null,
+      "actualSettledCreditCents": null,
+      "actualHistoryEvidence": null,
+      "status": "not_run",
+      "coverageApproved": false
+    },
+    {
+      "id": "C012",
+      "routeCaseIds": [
+        "R032",
+        "R033"
+      ],
+      "facility": "holland",
+      "movement": "entry",
+      "sourceId": "mta_crz_schedule",
+      "chargedBeforeCents": 0,
+      "creditedBeforeCents": 0,
+      "expectedNewChargeCents": 900,
+      "expectedCreditCents": 300,
+      "purpose": "New New York calendar day needs its own known history; credit allowance resets",
+      "assumptions": "Conditional published arithmetic only; actual route, class, tag, credit eligibility, period and complete day evidence must be independently established",
+      "observedCrossing": null,
+      "actualGoogleEstimateCents": null,
+      "actualSettledCreditCents": null,
+      "actualHistoryEvidence": null,
+      "status": "not_run",
+      "coverageApproved": false
+    }
+  ]
+}

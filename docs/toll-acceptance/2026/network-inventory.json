@@ -3339,7 +3339,7 @@
       {
         "source": "queens_midtown",
         "runtimeRoadTokens": null,
-        "reviewStatus": "geometry_and_credit_terms_unresolved",
+        "reviewStatus": "geometry_missing_vehicle_eligibility_unverified",
         "sourceIds": [
           "mta_crz_connections",
           "mta_crz_schedule",
@@ -3349,7 +3349,7 @@
       {
         "source": "hugh_carey",
         "runtimeRoadTokens": null,
-        "reviewStatus": "geometry_and_credit_terms_unresolved",
+        "reviewStatus": "geometry_missing_vehicle_eligibility_unverified",
         "sourceIds": [
           "mta_crz_connections",
           "mta_crz_schedule",
@@ -3363,8 +3363,8 @@
     "missing": [
       "Obtain independently reviewed georeferenced zone/excluded-road polygons and both-direction local-street transitions",
       "Connect each actual tunnel path to a chargeable entry; a via point, Manhattan destination or NY state alone is insufficient",
-      "Resolve NYC tunnel credit detail conflict, later daily credits and overnight/peak/midnight settlement with MTA",
-      "Supply actual assigned vehicle/day facts or obtain separate acceptance of an explicit estimate policy; none is approved here"
+      "Provide actual assigned-vehicle/day complete charged/credited history; unknown history and estimate policies cannot authorize new quotes",
+      "Confirm settled later/exit tunnel credits and overnight-first then peak-credit treatment; published amounts do not establish actual eligibility"
     ]
   },
   "additionalNycFacilities": [
@@ -3516,7 +3516,7 @@
     {
       "id": "DAILY_AND_CREDITS",
       "status": "missing",
-      "scope": "Vehicle-specific daily entries, later credits, posted adjustments and current applicable MTA rules"
+      "scope": "Complete same-vehicle/day charged and credited balances, later eligible crossings, overnight-first edge cases and settled adjustments"
     }
   ],
   "activationGate": "All candidate/unresolved portions remain manual review. Never label unmatched roads free, copy these artifacts into a runtime setting, or promote a whole dataset based on one successful route."

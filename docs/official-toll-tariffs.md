@@ -8,11 +8,11 @@ public road-network dataset or additional commercial tariff table is certified
 for activation by this PR. Synthetic test evidence must never be copied into production.
 
 The [real-route acceptance package](toll-acceptance/2026/README.md) adds a sourced,
-unapproved public-road candidate dataset, selected tariff references, a planned
-route matrix and private vehicle-evidence requirements. It leaves the engine
-unchanged. In particular, the detailed MTA schedule's Queens-Midtown/Carey credit
-terms need clarification before those cases can be certified. The general
-up-to-$3 description below must not be treated as that missing proof.
+unapproved public-road candidate dataset, tariff references, planned routes and
+private vehicle-evidence requirements. Following the operator's independent MTA
+schedule review, new quotes use `pa-class1-mta-daily-credits-2026-v2`. Published
+arithmetic is established; actual road, fleet, account, history and settled
+transaction evidence remains unverified.
 
 ## Published arithmetic and preserved fares
 
@@ -26,16 +26,19 @@ years, dates and uncertain rate boundaries require manual review.
   16:00–20:00; weekend peak 11:00–21:00. NJ-bound PA charge is zero.
 * Standard daily small-commercial/passenger SUV CRZ: $9 peak or $2.25 overnight,
   weekday peak 05:00–21:00 and weekend peak 09:00–21:00.
-* Eligible peak entry through Lincoln, Holland, Queens Midtown or Hugh L. Carey
-  can receive up to $3 credit, capped by the applicable charge and crossing cost.
-  GWB itself supplies no credit. Overnight supplies none. Unknown eligibility
-  requires review.
+* Eligible peak Lincoln/Holland entry credit is $3 per crossing. Eligible
+  Queens-Midtown/Hugh L. Carey entry or exit credit is $1.50 per crossing.
+  The published Class 1 maximum daily credit is $5. Eligible credits can continue
+  after the once-daily charge, within the remaining allowance, charged balance
+  and actual crossing cost. GWB and overnight crossings supply no credit.
+  Unknown eligibility or daily balances require review.
 
 Sources checked October 31, 2026:
 
 * [PA schedules and Class 1 definition](https://www.portauthoritybuilds.com/bridges-tunnels/en/tolls.html)
 * [PA 2026 effective date and direction/time periods](https://www.portauthoritybuilds.com/content/dam/bridges-tunnels/2026-toll-rates/Truckers%20Guide_Eng_Jan%202026.pdf)
 * [MTA daily rates and credits](https://www.mta.info/fares-tolls/tolls/congestion-relief-zone/about)
+* [MTA detailed Phase 1 credit amounts and daily limit](https://www.mta.info/document/138931)
 * [MTA excluded-road connection maps](https://www.mta.info/map/36226)
 * [Google geometry/static-duration fields](https://developers.google.com/maps/documentation/routes/reference/rest/v2/TopLevel/computeRoutes)
 * [Google toll-estimate scope and commercial limitations](https://developers.google.com/maps/documentation/routes/calculate_toll_fees)
@@ -175,11 +178,15 @@ facility step, positive route traffic delay and explicit extra slack. Tariff or
 calendar-day boundaries within that window require review. It is an estimate
 model requiring real calibration, not a promise of exact future crossing time.
 
-CRZ entries come from the actual path, excluded-road polygons and local-street
+CRZ entries and exits come from the actual path, excluded-road polygons and local-street
 transitions. Reviewed credit connectors contain the reusable ordered road tokens
 (`road_id:f` or `road_id:r`), source facility, evidence and validity. Direct entry
 within a verified qualifying facility can supply that source; a later connection
-needs matching connector evidence. GWB itself never creates a tunnel credit.
+needs matching connector evidence. Connectors optionally specify
+`movement:'entry'|'exit'` (older connectors default to entry); NYC exits need a
+reviewed directed connector or a directly matched facility transition. One
+physical facility run receives at most one credit even with multiple geometric
+zone transitions. GWB itself never creates a tunnel credit.
 
 Peak credit also requires `official2026.crossingCredit` with explicit
 `eligibility:'eligible'|'ineligible'`, evidence and expiry. An unknown entitlement
@@ -188,29 +195,42 @@ Queens Midtown/Carey credit is associated with that actual entry, not the PA nam
 
 Daily context is keyed to the actual vehicle and New York calendar day:
 
-* Known same-quote/day charge prevents another CRZ charge or credit.
-* Optional server `dailyFacts[YYYY-MM-DD]` can assert `already_charged` only with
-  the matching `vehicleRef`, evidence, `observedAt` and `validUntil`. Future-dated
-  observations, wrong days/vehicles and expiry within the entry window fail.
-  The server clock is used; browser time/history cannot establish this.
-* Otherwise absent context means review. The separate
-  `dailyPolicy.kind:'assume_first_entry_estimate'` requires explicit
-  `operatorApproved:true`, matching vehicleRef and evidence. Its assumption
-  appears in the quote/email. **The operator has not approved this estimate
-  policy by approving implementation.** Do not set it to make tests pass.
+* Server `dailyFacts[YYYY-MM-DD]` needs matching `vehicleRef`, complete history,
+  evidence, `observedAt` and `validUntil`, plus integer `chargedCents` (0, 225 or
+  900) and `creditedCents` (0 through the smaller of charged cents and 500).
+  `first_entry` requires zero charged cents; `already_charged` requires nonzero.
+  `historyComplete` may be true only with actual complete evidence, never a
+  browser claim or forecast. A boolean already-paid flag is insufficient.
+* Future-dated observations, wrong days/vehicles, missing balances and expiry
+  within zone/crossing windows fail. Earlier dates' statements cannot establish
+  future history. Do not extend validity to pretend intervening trips are known.
+* An in-memory ledger carries balances between ordered events and both legs.
+  It prevents a second daily charge while allowing eligible later credits within
+  the remaining $5 cap. Every new day needs separate complete history.
+* Missing history and the old `assume_first_entry_estimate` policy require manual
+  review for new quotes, even if that policy was marked approved. Overnight-first
+  then eligible peak credit remains review pending settled/agency treatment;
+  neither another $9 charge nor an invented credit is applied. Uncertain rate/
+  day windows and zone/crossing period disagreement fail.
 
-No E-ZPass feed or persistent daily-history service is created. Evidence strings
+No E-ZPass feed or persistent daily-history service is created. The ledger exists
+only during a calculation. Evidence strings
 are attestations to separately reviewed records, not automatic agency-document
 verification. No tag/account numbers, plates, secrets or personal GPS history
 belong in infrastructure/evidence fields.
 
 ## Snapshot compatibility and release gates
 
-New snapshots use `format:'official_network_2026'`, the network schema version,
-strict component validation and road/tariff/fleet proof digests. They retain no
+New snapshots use `format:'official_network_2026'`, tariff version
+`pa-class1-mta-daily-credits-2026-v2`, the existing network schema, strict event/
+ledger/component validation and road/tariff/fleet proof digests. Compact events
+store day/period, entry/exit, balances, amounts and a deduplication proof token;
+quoteRevision binds them. They retain no
 route polylines, network data, raw evidence refs or vehicle identifier. Existing
 `official_2026`, older Google-based and no-toll-field accepted snapshots remain
-readable/payable without consulting new infrastructure or repricing.
+readable/payable without consulting new infrastructure or repricing. The original
+`pa-class1-mta-standard-2026-v1` arithmetic/reader is frozen for accepted snapshots;
+its previous credit rules cannot authorize a new network quote.
 
 Keep immutable 2026 readers when introducing later schedules. To roll back after
 accepted network snapshots exist, disable new customer charging while retaining
@@ -222,8 +242,9 @@ Before activation:
 1. Independently review real directed road coverage, PA portals, excluded roads,
    connector transitions and all relevant extra-facility entry/exit tariffs.
 2. Establish actual vehicle/tag, per-authority class and assignment evidence.
-3. Resolve reliable daily/credit history or separately accept the disclosed
-   estimate policy; calibrate crossing-time uncertainty.
+3. Establish complete vehicle/day charged and credited history, resolve the
+   overnight-first edge case and calibrate timing. An estimate policy cannot
+   replace unknown history for new quotes.
 4. Compare matching route/direction/date/time/vehicle settled E-ZPass charges,
    including Mid-Tier anomalies and additional road segments.
 5. Complete authorized non-production route/reservation/Stripe test-mode acceptance.

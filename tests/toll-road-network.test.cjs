@@ -128,11 +128,11 @@ test('an extra road cannot inherit PA classification, an NY-issued discount, inv
 });
 
 test('GWB plus a verified Queens Midtown entry earns that tunnel credit, without adding Google totals',()=>{
- const h=mtaFixture(),q=price(h);assert.equal(q.amountCents,1479+777+900-300);assert.equal(q.legs[0].creditSource,'queens_midtown');
- assert.equal(q.legs[0].components[2].amountCents,-300);assert.equal(q.legs[0].components.at(-1).amountCents,777);
+ const h=mtaFixture(),q=price(h);assert.equal(q.amountCents,1479+777+900-150);assert.equal(q.legs[0].creditSource,'queens_midtown');
+ assert.equal(q.legs[0].components[2].amountCents,-150);assert.equal(q.legs[0].components.at(-1).amountCents,777);
  h.route.data.travelAdvisory.tollInfo.estimatedPrice=[{currencyCode:'USD',units:'9999'}];assert.equal(price(h).amountCents,q.amountCents);
  const pricing=require('../services/route-tolls'),quote={baseTotal:80,discountedFare:80,discount:0,gratuity:0,originalTotal:80,total:80,currency:'usd',surcharges:[],promotion:null,vehicleKey:'suv'};
- pricing.attachTolls(quote,q);assert.ok(pricing.validQuote(quote));assert.equal(quote.totalCents,10856);
+ pricing.attachTolls(quote,q);assert.ok(pricing.validQuote(quote));assert.equal(quote.totalCents,11006);
  const changed=structuredClone(quote);changed.tolls.legs[0].creditSource='lincoln';assert.equal(pricing.validQuote(changed),false);
 });
 
@@ -142,10 +142,57 @@ test('NYC tunnel charges require that authority class and an unexpired supported
  }
 });
 
+function reverseMta(h,departure='2026-11-10T23:00:00Z'){
+ const points=geo.geometry(h.route.data).points.reverse();setPath(h,points,60);h.route.departure=departure;
+ [h.route.origin,h.route.destination]=[h.route.destination,h.route.origin];
+ h.eligibility={...h.eligibility,pickupState:'NY',dropoffState:'NJ',pickupPlaceId:h.route.origin,dropoffPlaceId:h.route.destination};
+ const facility=h.c.facilities.at(-1),rate=facility.rates[0];facility.rates.push({...rate,entry:rate.exit,exit:rate.entry});
+ return h;
+}
+test('both NYC tunnels use 150 cents and verified exit geometry can earn a later credit without a new daily charge',()=>{
+ for(const name of ['queens_midtown','hugh_carey']){
+  const h=mtaFixture();h.c.facilities.at(-1).id=name;h.c.roads.find(r=>r.facility==='queens_midtown').facility=name;
+  assert.equal(price(h).legs[0].components[2].amountCents,-150);
+  reverseMta(h);Object.assign(h.profile.official.dailyFacts['2026-11-10'],{status:'already_charged',chargedCents:900,creditedCents:300});
+  const q=price(h);assert.equal(q.amountCents,627);assert.equal(q.legs[0].components[1].amountCents,0);assert.equal(q.legs[0].components[2].amountCents,-150);
+  assert.equal(q.legs[0].congestionEvents[0].kind,'exit');assert.equal(q.legs[0].creditSource,name);
+ }
+});
+test('round-trip entry and exit credits share one complete day ledger and immutable snapshots enforce the chain',()=>{
+ const h=mtaFixture(),reverse=reverseMta(structuredClone(h));
+ h.c=reverse.c;
+ const q=network.priceRoutes([h.route,reverse.route],h.profile,{OFFICIAL_TOLL_COVERAGE_JSON:JSON.stringify(h.c)},h.eligibility,{now:Date.parse(h.route.departure)});
+ assert.equal(q.amountCents,1479+777*2+900-300);assert.equal(q.legs[1].components[1].amountCents,0);assert.equal(q.legs[1].components[2].amountCents,-150);
+ assert.equal(q.legs[1].congestionEvents[0].creditedBefore,150);
+ const pricing=require('../services/route-tolls'),quote={baseTotal:80,discountedFare:80,discount:0,gratuity:0,originalTotal:80,total:80,currency:'usd',surcharges:[],promotion:null,vehicleKey:'suv'};
+ pricing.attachTolls(quote,q);assert.ok(pricing.validQuote(quote));
+ for(const change of [x=>x.tolls.legs[1].congestionEvents[0].creditedBefore=0,x=>x.tolls.legs[1].congestionEvents[0].creditCents=300,
+  x=>x.tolls.legs[1].congestionEvents[0].creditToken=x.tolls.legs[0].congestionEvents[0].creditToken]){
+  const changed=structuredClone(quote);change(changed);pricing.attachTolls(changed,changed.tolls);assert.equal(pricing.validQuote(changed),false);
+ }
+});
+test('multiple zone transitions during one physical tunnel traversal never duplicate its per-trip credit',()=>{
+ const h=mtaFixture();h.c.crz.excluded=[f.rectangle(-73.966,40.743,-73.964,40.745)];
+ const q=price(h);assert.equal(q.amountCents,3006);assert.equal(q.legs[0].components[2].amountCents,-150);
+ assert.equal(q.legs[0].congestionEvents.length,2);assert.equal(q.legs[0].congestionEvents[1].creditCents,0);
+});
+test('a known 450-cent prior credit leaves only 50 cents for the actual NYC crossing',()=>{
+ const h=mtaFixture();Object.assign(h.profile.official.dailyFacts['2026-11-10'],{status:'already_charged',chargedCents:900,creditedCents:450});
+ const q=price(h);assert.equal(q.amountCents,2206);assert.equal(q.legs[0].components[1].amountCents,0);assert.equal(q.legs[0].components[2].amountCents,-50);
+});
+test('accepted network v1 snapshot amounts remain valid while new quotes use the corrected version',()=>{
+ const h=mtaFixture(),q=price(h),pricing=require('../services/route-tolls');
+ q.tariffVersion=rates.VERSION;delete q.legs[0].congestionEvents;q.legs[0].components[2].amountCents=-300;
+ q.legs[0].amountCents=q.amountCents=q.estimatedRouteCents=2856;
+ const quote={baseTotal:80,discountedFare:80,discount:0,gratuity:0,originalTotal:80,total:80,currency:'usd',surcharges:[],promotion:null,vehicleKey:'suv'};
+ pricing.attachTolls(quote,q);assert.equal(pricing.validQuote(quote),true);assert.equal(quote.totalCents,10856);
+ assert.equal(price(h).tariffVersion,rates.CREDIT_VERSION);assert.equal(price(h).amountCents,3006);
+});
+
 test('credit eligibility is separate evidence and an overnight entry has no credit',()=>{
  const h=fixture();h.profile.official.crossingCredit.eligibility='ineligible';assert.equal(price(h).amountCents,2379);
  h.profile.official.crossingCredit.eligibility='unknown';assert.throws(()=>price(h),rates.TollReviewError);
- h.route.departure='2026-11-11T03:00:00Z';assert.equal(price(h).amountCents,1704);
+ h.profile.official.crossingCredit.eligibility='eligible';h.route.departure='2026-11-11T03:00:00Z';assert.equal(price(h).amountCents,1704);
 });
 
 test('a reusable Holland-to-zone connector must match in order and remain current',()=>{
@@ -154,28 +201,28 @@ test('a reusable Holland-to-zone connector must match in order and remain curren
 });
 
 test('daily facts bind the actual vehicle/day and must cover the whole entry-time interval',()=>{
- const h=fixture(),day='2026-11-10',fact={vehicleRef:h.profile.official.fleet.vehicleRef,status:'already_charged',observedAt:'2026-11-10T12:00:00Z',validUntil:'2026-11-11T05:00:00Z',evidence:'synthetic-day-settlement-proof'};
+ const h=fixture(),day='2026-11-10',fact={vehicleRef:h.profile.official.fleet.vehicleRef,status:'already_charged',chargedCents:900,creditedCents:300,historyComplete:true,observedAt:'2026-11-10T12:00:00Z',validUntil:'2026-11-11T05:00:00Z',evidence:'synthetic-day-settlement-proof'};
  h.profile.official.dailyFacts={[day]:fact};delete h.profile.official.dailyPolicy;
- assert.equal(price(h).amountCents,1479);
+ assert.equal(price(h).amountCents,1279);assert.equal(price(h).legs[0].components[1].amountCents,0);assert.equal(price(h).legs[0].components[2].amountCents,-200);
  assert.throws(()=>network.priceRoutes([h.route],h.profile,{OFFICIAL_TOLL_COVERAGE_JSON:JSON.stringify(h.c)},h.eligibility,{now:Date.parse('2026-10-31T12:00:00Z')}),rates.TollReviewError);
  for(const patch of [{vehicleRef:'foreign-vehicle'},{observedAt:'2026-11-11T00:00:00Z'},{validUntil:'2026-11-10T17:11:00Z'},{status:'first_entry'},{evidence:''}]){
   h.profile.official.dailyFacts[day]={...fact,...patch};assert.throws(()=>price(h),rates.TollReviewError);
  }
 });
 
-test('same-quote known vehicle/day prevents a second charge; another vehicle/day has no inherited history',()=>{
- const h=fixture(),seen=new Set([h.profile.official.fleet.vehicleRef+'|2026-11-10']);delete h.profile.official.dailyPolicy;
+test('same-quote complete vehicle/day ledger is reused; another vehicle/day has no inherited history',()=>{
+ const h=fixture(),seen=new Map([[h.profile.official.fleet.vehicleRef+'|2026-11-10',{...h.profile.official.dailyFacts['2026-11-10'],day:'2026-11-10',status:'already_charged',chargedCents:900,creditedCents:300}]]);delete h.profile.official.dailyFacts;
  assert.equal(network.dailyContext(h.profile,'2026-11-10',seen,h.route.departure).status,'already_charged');
  assert.throws(()=>network.dailyContext(h.profile,'2026-11-11',seen,h.route.departure),rates.TollReviewError);
  h.profile.official.fleet.vehicleRef='another-synthetic-vehicle';assert.throws(()=>network.dailyContext(h.profile,'2026-11-10',seen,h.route.departure),rates.TollReviewError);
 });
 
 test('pure congestion arithmetic handles all four supported credits, caps the credit and rejects unverified inputs',()=>{
- const facts=f.facts(),base={zoneEntryTime:facts.zoneEntryTime,fleet:facts.fleet,dailyContext:facts.dailyContext,creditEligibility:'eligible',creditEvidence:'synthetic-credit-proof',crossingPaidCents:1679};
- for(const creditSource of ['lincoln','holland','queens_midtown','hugh_carey'])assert.equal(rates.calculateCongestion({...base,creditSource}).creditCents,300);
- assert.equal(rates.calculateCongestion({...base,creditSource:'queens_midtown',crossingPaidCents:175}).creditCents,175);
+ const facts=f.facts(),base={movement:'entry',crossingTime:facts.zoneEntryTime,zoneEntryTime:facts.zoneEntryTime,fleet:facts.fleet,dailyContext:{day:'2026-11-10',chargedCents:0,creditedCents:0,historyComplete:true,evidence:'synthetic-complete-day'},creditEligibility:'eligible',creditEvidence:'synthetic-credit-proof',crossingPaidCents:1679};
+ for(const [creditSource,cents]of Object.entries({lincoln:300,holland:300,queens_midtown:150,hugh_carey:150}))assert.equal(rates.calculateCongestion({...base,creditSource}).creditCents,cents);
+ assert.equal(rates.calculateCongestion({...base,creditSource:'queens_midtown',crossingPaidCents:125}).creditCents,125);
  assert.equal(rates.calculateCongestion({...base,creditSource:null}).creditCents,0);
- assert.equal(rates.calculateCongestion({...base,creditSource:'lincoln',dailyContext:{...base.dailyContext,status:'already_charged'}}).amountCents,0);
+ assert.equal(rates.calculateCongestion({...base,creditSource:'lincoln',dailyContext:{...base.dailyContext,status:'already_charged',chargedCents:900,creditedCents:300}}).amountCents,0);
  for(const value of [null,[],{...base,creditSource:'gwb'},{...base,creditSource:'lincoln',creditEligibility:'unknown'},{...base,creditSource:'lincoln',crossingPaidCents:NaN}])assert.throws(()=>rates.calculateCongestion(value),rates.TollReviewError);
 });
 
@@ -183,7 +230,7 @@ test('only one bounded server coverage source can load; legacy address manifests
  const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),dir=fs.mkdtempSync(path.join(os.tmpdir(),'er-road-network-'));
  t.after(()=>{if(path.dirname(dir)!==os.tmpdir()||!path.basename(dir).startsWith('er-road-network-'))throw Error('Unexpected test directory');fs.rmSync(dir,{recursive:true,force:true});});
  const h=fixture(),file=path.join(dir,'network.json');fs.writeFileSync(file,JSON.stringify(h.c));
- assert.equal(network.priceRoutes([h.route],h.profile,{OFFICIAL_TOLL_NETWORK_FILE:file},h.eligibility).amountCents,2079);
+ assert.equal(network.priceRoutes([h.route],h.profile,{OFFICIAL_TOLL_NETWORK_FILE:file},h.eligibility,{now:Date.parse(h.route.departure)}).amountCents,2079);
  assert.throws(()=>network.coverage({OFFICIAL_TOLL_NETWORK_FILE:file,OFFICIAL_TOLL_COVERAGE_JSON:JSON.stringify(h.c)}),rates.TollReviewError);
  h.c.version='reviewed-route-geometry-2026-v1';h.c.routes=[];assert.throws(()=>price(h),rates.TollReviewError);
  fs.writeFileSync(file,'synthetic-private-invalid-input');assert.throws(()=>network.coverage({OFFICIAL_TOLL_NETWORK_FILE:file}),e=>e instanceof rates.TollReviewError&&!e.message.includes('private-invalid'));

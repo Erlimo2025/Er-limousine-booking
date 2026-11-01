@@ -33,7 +33,10 @@ function profile(vehicle='suv'){return {emissionType:'GASOLINE',tollPasses:['US_
  vehicleRef:'synthetic-suburban-01',assignmentEvidence:'synthetic-dispatch-assignment',authorities:{njta:{vehicleClass:'1',evidence:'synthetic-njta-class-proof',validUntil:span.validUntil},mta:{vehicleClass:'1',evidence:'synthetic-mta-class-proof',validUntil:span.validUntil}},
  classEvidence:'synthetic-vehicle-class-record',tagEvidence:'synthetic-readable-tag-record',planEvidence:'synthetic-standard-daily-record',validUntil:'2027-01-01T05:00:00Z'},
  crossingCredit:{eligibility:'eligible',evidence:'synthetic-credit-entitlement',validUntil:span.validUntil},
- timing:{uncertaintySeconds:0,evidence:'synthetic-timing-calibration'},dailyPolicy:{kind:'assume_first_entry_estimate',operatorApproved:true,vehicleRef:'synthetic-suburban-01',evidence:'synthetic-operator-estimate-policy'}}};}
+ timing:{uncertaintySeconds:0,evidence:'synthetic-timing-calibration'},dailyFacts:Object.fromEntries(['2026-11-07','2026-11-08','2026-11-10','2026-11-11'].map(day=>{
+  const next=new Date(Date.parse(day+'T05:00:00Z')+86400000).toISOString();
+  return [day,{status:'first_entry',vehicleRef:'synthetic-suburban-01',chargedCents:0,creditedCents:0,historyComplete:true,
+   observedAt:day+'T05:00:00Z',validUntil:next,evidence:'synthetic-complete-vehicle-day-history'}];}))}};}
 function facts(extra={}){return {version:r.VERSION,routeVerified:true,coverageVerified:true,coverageEvidence:'synthetic-road-inventory',crossing:'lincoln',direction:'ny_bound',
  crossingTime:{earliest:'2026-11-10T13:00:00Z',latest:'2026-11-10T13:00:00Z'},fleet:profile().official2026.fleet,entersCrz:true,
  zoneEntryTime:{earliest:'2026-11-10T13:00:00Z',latest:'2026-11-10T13:00:00Z'},dailyContext:{day:'2026-11-10',status:'first_entry',evidence:'synthetic-day-context-record'},

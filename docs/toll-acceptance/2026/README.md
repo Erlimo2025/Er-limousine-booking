@@ -5,10 +5,12 @@ Prepared November 1, 2026 against engine commit
 `codex/official-toll-tariffs`, for draft PR #1.
 
 **Ready for source review and acceptance planning; not ready for activation.**
-This package adds public research data and offline checks. It does not replace
-or change the route matcher, tariffs, customer UI, reservations, Stripe, flags,
-database or Render configuration. No real Google route or private E-ZPass account
-was queried. No real route acceptance case has passed yet.
+This package adds public research data and offline checks. A follow-up correction
+implements facility-specific congestion credits and complete daily ledgers for
+new quotes. It does not certify candidate geometry/fleet information or change
+customer UI, existing reservations, Stripe, flags, databases or Render settings.
+No real Google route or private E-ZPass account was queried. No real-route
+acceptance case has passed yet.
 
 `ROUTE_TOLLS_ENABLED=false` and `ADMIN_TOLL_VALIDATION_ENABLED=false` remain the
 repository defaults. No production setting was read or changed in this task.
@@ -25,6 +27,7 @@ Same-state added tolls remain waived and hourly behavior is unchanged.
 | [network-inventory.json](network-inventory.json) | Feature references, facility/approach inventory, missing portals/corridors, CRZ/exclusions and credit connectors. **Zero approved links/facilities.** |
 | [published-tariff-reference.json](published-tariff-reference.json) | Conditional PA/MTA rates and selected NJTA entry/exit cells; unresolved amounts remain null. No runtime tariff table is configured. |
 | [route-testing-matrix.csv](route-testing-matrix.csv) / [JSON](route-testing-matrix.json) | 45 planned cases, 17 public locations and 15 time/replay profiles; all real-route results are empty. |
+| [credit-acceptance-scenarios.json](credit-acceptance-scenarios.json) | 12 additional conditional credit cases linked to candidate routes; all unexecuted and unapproved. |
 | [vehicle-evidence-checklist.md](vehicle-evidence-checklist.md) | Exact redacted account, vehicle, class, daily-context and transaction evidence needed privately. |
 | [comparison-template.csv](comparison-template.csv) | Empty result template. Keep completed private comparisons outside Git. |
 | [checksums.json](checksums.json) | Hashes for this public package; integrity checks are not certification. |
@@ -95,15 +98,22 @@ credit. Overnight gives no crossing credit.
 [connection maps](https://www.mta.info/map/36226),
 [detailed schedule](https://www.mta.info/document/138931)
 
-**Acceptance blocker: NYC tunnel credits need clarification.** The detailed
-schedule lists $1.50 for Phase 1 Queens-Midtown/Carey credits and describes
-per-trip/daily-credit terms, while the overview groups the four entries under
-an up-to-$3 description. The current `calculateCongestion()` allows up to $3
-for those NYC tunnels and skips further charge/credit once already charged.
-Do not certify those cases from the overview. Obtain MTA's current explanation
-of each tunnel's credit, exit-only/later credits and overnight-then-peak entries;
-compare settled statements and separately review any necessary correction.
-No engine change is made by this acceptance package.
+**Published credit amounts resolved; actual eligibility remains unverified.**
+The operator independently checked the detailed Phase 1 schedule. New calculator
+version `pa-class1-mta-daily-credits-2026-v2` applies $3 for eligible peak Lincoln/
+Holland entries and $1.50 for eligible peak Queens-Midtown/Carey entries or exits.
+The $5 maximum daily credit is separate from the once-daily congestion charge.
+Eligible later crossings can consume the remaining allowance, with no second
+daily charge, provided actual path/direction, tag/plan eligibility and complete
+same-vehicle/day charged and credited balances are established. One physical
+tunnel traversal cannot be credited twice from multiple zone transitions.
+
+Unknown history, a boolean already-paid flag and the old first-entry estimate
+policy require manual review for new quotes. Overnight-first then a later peak
+credit also remains manual pending settled/agency treatment. Future statements
+or extended validity cannot establish unknown intervening trips. Existing v1
+accepted prices keep their frozen arithmetic/reader; no accepted booking is
+repriced or refunded by the new calculation.
 
 MTA bridge/tunnel Class 31 rates for a non-NYCSC tag are also materially different
 from NYCSC rates: the listed major crossings are $12.03 versus $7.46. The issuer
@@ -125,8 +135,8 @@ never added to the components or used to fabricate a residual.
    facility. A successful route does not approve the whole dataset.
 2. Supply the private, redacted vehicle/account evidence in the checklist.
    Establish actual dispatched-vehicle assignment and per-agency eligibility.
-   Resolve daily context and credits, or separately approve a clearly disclosed
-   estimate policy. No such policy is approved by preparing this package.
+   Supply complete daily charged/credited balances and resolve eligibility and
+   overnight-first settlement. An estimate policy cannot replace unknown history.
 3. Authorize a small local/estimate-only Google acceptance run. Server-verify
    public endpoints and selected geometry. Start with Orange Hall, Orange
    Library, Newark Hall and Newark Penn to Midtown; then Holland/Lower Manhattan
@@ -152,7 +162,8 @@ never added to the components or used to fabricate a residual.
 Public source fetching and offline preparation made no paid Google request and
 created no service or database. Original MTA PDFs could be read through the web
 reader but not downloaded here; those references therefore have no byte hash.
-They still require operator/source review, including the credit discrepancy.
+They still require operator/source review. Published amounts were independently
+confirmed; this does not verify an operator account, path or settled comparison.
 
 Run the offline data checks with
 `node scripts/validate-toll-acceptance.cjs` and the focused tests with

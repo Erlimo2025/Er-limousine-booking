@@ -403,9 +403,9 @@
       },
       {
         "source": "queens_midtown",
-        "peakMaximumCents": null,
+        "peakMaximumCents": 150,
         "overnightCents": 0,
-        "status": "manual_review_official_source_detail_conflict",
+        "status": "published_reference_subject_to_vehicle_tag_direction_and_daily_eligibility",
         "observations": [
           {
             "sourceId": "mta_crz_schedule",
@@ -417,13 +417,14 @@
             "upToCents": 300,
             "locator": "Crossing credits general overview, not a tunnel-specific amount"
           }
-        ]
+        ],
+        "resolution": "Facility-specific Phase 1 row in MTA document/138931 controls; operator independently confirmed the source. The overview gives a group maximum, not the amount for every tunnel."
       },
       {
         "source": "hugh_carey",
-        "peakMaximumCents": null,
+        "peakMaximumCents": 150,
         "overnightCents": 0,
-        "status": "manual_review_official_source_detail_conflict",
+        "status": "published_reference_subject_to_vehicle_tag_direction_and_daily_eligibility",
         "observations": [
           {
             "sourceId": "mta_crz_schedule",
@@ -435,10 +436,13 @@
             "upToCents": 300,
             "locator": "Crossing credits general overview, not a tunnel-specific amount"
           }
-        ]
+        ],
+        "resolution": "Facility-specific Phase 1 row in MTA document/138931 controls; operator independently confirmed the source. The overview gives a group maximum, not the amount for every tunnel."
       }
     ],
-    "unresolved": "Detailed schedule also describes per-trip credits and a daily maximum. Confirm current settlement rules for later eligible tunnels, exit-only credits, overnight-then-peak entries and previously charged days; do not assume skipping every later credit matches settlement."
+    "unresolved": "Actual class/tag/credit eligibility and complete daily history remain unverified. Overnight-first then peak-credit settlement stays manual review; no first-entry estimate policy is accepted for new quotes.",
+    "dailyCreditLimitCents": 500,
+    "laterEligibleCrossings": "Per-trip eligible credits can continue after the once-daily charge, within the remaining daily credit and charged balance. PA: entering only. Queens-Midtown/Carey: entering or exiting. Actual matched geometry and complete same-vehicle/day history required."
   },
   "mtaAdditionalCrossings": {
     "sourceId": "mta_crossings_2026",
@@ -524,14 +528,20 @@
   ],
   "runtimeAcceptanceBlockers": [
     {
-      "id": "NYC_CREDIT_AMOUNT",
-      "area": "services/official-toll-rates.js calculateCongestion()",
-      "finding": "Current engine uses up to 300 cents for Queens-Midtown/Carey; the detailed published schedule contains 150 cents. No engine change in this data-preparation task. Keep those cases unsupported pending MTA confirmation and any separately reviewed correction."
+      "id": "DAILY_CREDIT_CONTEXT",
+      "area": "server-only vehicle/day evidence",
+      "finding": "New code requires complete gross charged and already-credited integer cents with vehicle/date/evidence/freshness binding. No real operator history source is configured or certified; unknown/assumed history requires review."
     },
     {
-      "id": "DAILY_CREDIT_CONTEXT",
-      "area": "services/toll-road-network.js daily context and calculateCongestion()",
-      "finding": "Current model skips charge and credit after an already-charged entry. Obtain current MTA explanation of later credits and midnight/overnight/peak cases; demonstrate accepted comparison policy before approval."
+      "id": "OVERNIGHT_LATER_CREDIT",
+      "area": "MTA settlement rules",
+      "finding": "Later eligible peak credit against an overnight-only daily charge remains manual until operator/agency settlement evidence establishes the treatment."
+    },
+    {
+      "id": "ROAD_AND_FLEET_EVIDENCE",
+      "area": "runtime infrastructure and vehicle profiles",
+      "finding": "All public road candidates and real vehicle classifications remain unapproved. Published credit arithmetic is not certification of geometry, account, plan or actual commercial charges."
     }
-  ]
+  ],
+  "creditImplementationVersion": "pa-class1-mta-daily-credits-2026-v2"
 }

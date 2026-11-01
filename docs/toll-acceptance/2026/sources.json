@@ -7,7 +7,8 @@
     "Tariff facts use PA/NJTA/MTA primary sources. Geometry uses separately attributed official NJ state data.",
     "Only small factual rate extracts are included; original PDFs are linked, not redistributed.",
     "Hash identifies a fetched response, not independent correctness or certification. Null hash means no downloadable byte snapshot was obtained.",
-    "No paid Google API call, private account access or real route acceptance run was made."
+    "No paid Google API call, private account access or real route acceptance run was made.",
+    "Facility-specific credit amounts and published 500-cent daily maximum independently reviewed by the operator; no road/fleet/history coverage is certified by this fact."
   ],
   "sources": [
     {
@@ -104,8 +105,8 @@
       "title": "CBDTP Toll Schedule",
       "url": "https://www.mta.info/document/138931",
       "sha256": null,
-      "scope": "Phase 1 2025-2027 Class 1, distinct tunnel credits, daily cap and reserved adjustments; page 1",
-      "notProofOf": "Resolution of differences between detailed schedule and general overview; do not activate disputed NYC credit cases"
+      "scope": "Phase 1 Class 1: Lincoln/Holland eligible peak entry credit 300 cents, Queens-Midtown/Carey eligible peak entry/exit credit 150 cents, maximum daily credit 500 cents; once-daily charge and reserved adjustments",
+      "notProofOf": "Operator class/tag/plan eligibility, complete daily history, actual route geometry, overnight-first later-credit settlement or actual E-ZPass bill parity"
     },
     {
       "reviewedOn": "2026-11-01",

@@ -64,19 +64,19 @@ test('crossing-time ranges use preceding route steps and traffic uncertainty, no
  h.route.departure='2026-11-10T14:48:00Z';assert.throws(()=>price(h),/unavailable/); // 09:58–10:03 crossing interval.
  h.route.departure='2026-11-10T14:35:00Z';h.data.duration='2400s';assert.throws(()=>price(h),r.TollReviewError);
 });
-test('unknown daily-entry policy, account/class/tag proof, TLC plan and expired attestations cannot be used',()=>{
- for(const change of [h=>delete h.profile.official.dailyPolicy,h=>h.profile.official.dailyPolicy.operatorApproved=false,
+test('unknown daily history, account/class/tag proof, TLC plan and expired attestations cannot be used',()=>{
+ for(const change of [h=>delete h.profile.official.dailyFacts,h=>h.profile.official.dailyFacts['2026-11-10'].historyComplete=false,
   h=>h.profile.official.fleet.paClass='2Ax',h=>h.profile.official.fleet.singleRearWheels=false,h=>h.profile.official.fleet.tagStatus='mid_tier',
   h=>h.profile.official.fleet.mtaPlan='tlc_per_trip',h=>h.profile.official.fleet.validUntil='2026-11-01T00:00:00Z',h=>delete h.profile.official.timing,
   h=>h.profile.official.crossingCredit.eligibility='unknown',h=>delete h.profile.official.crossingCredit,h=>h.profile.official.crossingCredit.evidence='',
-  h=>delete h.profile.official.fleet.vehicleRef,h=>h.profile.official.dailyPolicy.vehicleRef='another-vehicle']){const h=fixture();change(h);assert.throws(()=>price(h),r.TollReviewError);}
+  h=>delete h.profile.official.fleet.vehicleRef,h=>h.profile.official.dailyFacts['2026-11-10'].vehicleRef='another-vehicle']){const h=fixture();change(h);assert.throws(()=>price(h),r.TollReviewError);}
 });
 test('independent directions share only a same-quote congestion day and never add a second daily charge or credit',()=>{
- const h=fixture('lincoln','nj_bound'),second={data:f.googleRoute(),origin:h.route.destination,destination:h.route.origin,departure:'2026-11-10T23:00:00Z'},q=e.priceRoutes([h.route,second],h.profile,h.env(),eligibility(h));
+ const h=fixture('lincoln','nj_bound'),second={data:f.googleRoute(),origin:h.route.destination,destination:h.route.origin,departure:'2026-11-10T23:00:00Z'},q=e.priceRoutes([h.route,second],h.profile,h.env(),eligibility(h),{now:Date.parse(second.departure)});
  assert.equal(q.legs[0].components[1].amountCents,0);assert.equal(q.legs[1].components[0].amountCents,1679);
  assert.equal(q.legs[1].components[1].amountCents,900);assert.equal(q.legs[1].components[2].amountCents,-300);
  const one=fixture();delete one.profile.official.dailyPolicy;
- one.profile.official.dailyFacts={'2026-11-10':{status:'already_charged',vehicleRef:one.profile.official.fleet.vehicleRef,evidence:'synthetic-settled-day-proof',observedAt:'2026-11-10T12:00:00Z',validUntil:'2026-11-11T05:00:00Z'}};
+ one.profile.official.dailyFacts={'2026-11-10':{status:'already_charged',chargedCents:900,creditedCents:500,historyComplete:true,vehicleRef:one.profile.official.fleet.vehicleRef,evidence:'synthetic-settled-day-proof',observedAt:'2026-11-10T12:00:00Z',validUntil:'2026-11-11T05:00:00Z'}};
  assert.equal(price(one).legs[0].components[1].amountCents,0);assert.equal(price(one).legs[0].components[2].amountCents,0);
  one.route.departure='2026-11-11T17:00:00Z';assert.throws(()=>price(one),r.TollReviewError);
 });

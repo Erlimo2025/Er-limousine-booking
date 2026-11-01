@@ -127,12 +127,38 @@ function quoteRevision(quote) {
     ...(quote.tolls?.eligibility?{eligibility:quote.tolls.eligibility}:{}),
     ...(isOfficial(quote.tolls)?{official:{coverageHash:quote.tolls.coverageHash,fleetHash:quote.tolls.fleetHash,
       ...(quote.tolls.format==='official_network_2026'?{networkVersion:quote.tolls.networkVersion}:{}),
-      routes:quote.tolls.legs.map(leg=>({...(quote.tolls.format==='official_network_2026'?{}:{geometryHash:leg.geometryHash}),crossing:leg.crossing,direction:leg.direction,congestionDay:leg.congestionDay}))}}:{})})).digest('hex');
+      routes:quote.tolls.legs.map(leg=>({...(quote.tolls.format==='official_network_2026'?{}:{geometryHash:leg.geometryHash}),
+        ...(quote.tolls.tariffVersion===officialRates.CREDIT_VERSION?{congestionEvents:leg.congestionEvents}:{}),
+        crossing:leg.crossing,direction:leg.direction,congestionDay:leg.congestionDay}))}}:{})})).digest('hex');
+}
+function validCreditEvents(leg,seen,tokens){
+  if(!Array.isArray(leg.congestionEvents)||leg.congestionEvents.length>32||leg.dailyAssumption!==null)return false;
+  let charges=0,credits=0;const sources=new Set();
+  for(const event of leg.congestionEvents){
+    if(!plain(event)||event.day!==leg.congestionDay||!/^2026-\d{2}-\d{2}$/.test(event.day)||
+      new Date(event.day+'T12:00:00Z').toISOString().slice(0,10)!==event.day)return false;
+    const before={chargedCents:event.chargedBefore,creditedCents:event.creditedBefore};
+    if(seen.has(event.day)&&canonical(seen.get(event.day))!==canonical(before))return false;
+    if(event.creditSource!==null){
+      if(typeof event.creditToken!=='string'||!/^[a-f0-9]{64}$/.test(event.creditToken)||tokens.has(event.creditToken))return false;
+      tokens.add(event.creditToken);sources.add(event.creditSource);
+      const source=['lincoln','holland'].includes(event.creditSource)?
+        (leg.direction==='ny_bound'&&event.creditSource===leg.crossing?leg.components[0]:null):leg.components.slice(3).find(c=>c.facility===event.creditSource);
+      if(!source||event.crossingPaidCents!==source.amountCents)return false;
+    }else if(event.creditToken!==null||event.crossingPeriod!==null||event.creditEligibility!==null||event.crossingPaidCents!==0)return false;
+    const result=officialRates.creditAmounts(event);
+    if(result.amountCents!==event.chargeCents||result.creditCents!==event.creditCents)return false;
+    seen.set(event.day,result.stateAfter);charges+=event.chargeCents;credits+=event.creditCents;
+  }
+  return leg.components[1].amountCents===charges&&leg.components[2].amountCents===-credits&&
+    (leg.congestionEvents.length>0?leg.congestionDay!==null:leg.congestionDay===null)&&
+    leg.creditSource===(sources.size===1?[...sources][0]:null);
 }
 function validOfficial(t) {
   const network=t.format==='official_network_2026';
+  const daily=network&&t.tariffVersion===officialRates.CREDIT_VERSION,seen=new Map(),tokens=new Set();
   if(network&&t.networkVersion!=='reviewed-road-network-2026-v2')return false;
-  if(t.tariffVersion!==officialRates.VERSION||![t.coverageHash,t.fleetHash].every(value=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value)))return false;
+  if(!daily&&t.tariffVersion!==officialRates.VERSION||![t.coverageHash,t.fleetHash].every(value=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value)))return false;
   for(const leg of t.legs){
     if(!['lincoln','holland','gwb'].includes(leg.crossing)||!['ny_bound','nj_bound'].includes(leg.direction)||
       typeof leg.geometryHash!=='string'||!/^[a-f0-9]{64}$/.test(leg.geometryHash)||
@@ -144,9 +170,10 @@ function validOfficial(t) {
       !(leg.direction==='ny_bound'?[1479,1679]:[0]).includes(pa.amountCents)||
       mta.kind!=='mta_congestion'||mta.label!=='MTA congestion'||mta.facility!=='manhattan_crz'||![0,225,900].includes(mta.amountCents)||
       credit.kind!=='crossing_credit'||credit.label!=='Eligible credit'||credit.facility!=='manhattan_crz_credit'||
-      (network?(!Number.isSafeInteger(credit.amountCents)||credit.amountCents>0||credit.amountCents< -300):![0,-300].includes(credit.amountCents))||
+      (network?(!Number.isSafeInteger(credit.amountCents)||credit.amountCents>0||credit.amountCents< (daily?-500:-300)):![0,-300].includes(credit.amountCents))||
       !network&&credit.amountCents<0&&(leg.direction!=='ny_bound'||leg.crossing==='gwb'||mta.amountCents!==900))return false;
-    if(network){
+    if(daily){if(!validCreditEvents(leg,seen,tokens))return false;}
+    else if(network){
       if(leg.creditSource!==null&&!['lincoln','holland','queens_midtown','hugh_carey'].includes(leg.creditSource))return false;
       if(credit.amountCents<0){
         const source=['lincoln','holland'].includes(leg.creditSource)?(leg.direction==='ny_bound'&&leg.creditSource===leg.crossing?pa:null):other.find(c=>c.facility===leg.creditSource);

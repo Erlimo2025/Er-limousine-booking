@@ -3,6 +3,11 @@
 // Arithmetic only. The routing adapter must establish these facts on the server.
 // Published schedules checked 2026-10-31; no inference from OL plates or 2Ax.
 const VERSION = 'pa-class1-mta-standard-2026-v1';
+// New quotes use facility-specific per-trip credits and a complete daily ledger.
+// VERSION/calculateTariff remain frozen for already accepted v1 snapshots.
+const CREDIT_VERSION = 'pa-class1-mta-daily-credits-2026-v2';
+const CREDIT_CENTS = Object.freeze({lincoln:300,holland:300,queens_midtown:150,hugh_carey:150});
+const DAILY_CREDIT_LIMIT = 500;
 const START = Date.parse('2026-01-04T05:01:00Z'); // PA effective 00:01 New York.
 const END = Date.parse('2027-01-01T05:00:00Z'); // Refuse an unreviewed future year.
 const formatter = new Intl.DateTimeFormat('en-US', {timeZone:'America/New_York',
@@ -90,28 +95,48 @@ function calculateTariff(facts) {
   if(!Number.isSafeInteger(amountCents)||amountCents<0)review('invalid_total');
   return {version:VERSION,amountCents,components,congestionDay:day,dailyAssumption};
 }
-// Network adapter supplies the actual credit-bearing entry, independently of
-// the PA crossing. This also supports verified Queens Midtown/Carey entries.
-// The original calculator above remains unchanged for accepted v1 snapshots.
+function dailyLedger(value){
+  if(!value||![0,225,900].includes(value.chargedCents)||!Number.isSafeInteger(value.creditedCents)||
+    value.creditedCents<0||value.creditedCents>Math.min(DAILY_CREDIT_LIMIT,value.chargedCents))review('daily_context_unknown');
+  return {chargedCents:value.chargedCents,creditedCents:value.creditedCents};
+}
+// Pure arithmetic shared by new quote creation and immutable v2 snapshot checks.
+// This function validates amounts; only the routing adapter establishes evidence.
+function creditAmounts(event){
+  if(!event||!['entry','exit'].includes(event.kind)||!['peak','overnight'].includes(event.period))review('congestion_event_unverified');
+  const before=dailyLedger({chargedCents:event.chargedBefore,creditedCents:event.creditedBefore}),source=event.creditSource;
+  if(source!==null&&(!Object.hasOwn(CREDIT_CENTS,source)||event.kind==='exit'&&['lincoln','holland'].includes(source)))review('crossing_credit_unverified');
+  if(source!==null&&(!['peak','overnight'].includes(event.crossingPeriod)||!['eligible','ineligible'].includes(event.creditEligibility)||
+    !Number.isSafeInteger(event.crossingPaidCents)||event.crossingPaidCents<0||event.crossingPaidCents>100000))review('crossing_credit_unverified');
+  const amountCents=event.kind==='entry'&&before.chargedCents===0?(event.period==='peak'?900:225):0;
+  const chargedCents=before.chargedCents+amountCents;let creditCents=0;
+  if(source!==null&&event.creditEligibility==='eligible'){
+    if(event.period!==event.crossingPeriod)review('credit_period_uncertain');
+    // The published schedule does not resolve a later peak credit against an
+    // overnight-only daily charge. Keep this settlement edge case on review.
+    if(event.period==='peak'&&chargedCents===225)review('overnight_daily_credit_unverified');
+    if(event.period==='peak'&&chargedCents===900)creditCents=Math.min(CREDIT_CENTS[source],
+      DAILY_CREDIT_LIMIT-before.creditedCents,chargedCents-before.creditedCents,event.crossingPaidCents);
+  }
+  return {amountCents,creditCents,stateAfter:{chargedCents,creditedCents:before.creditedCents+creditCents}};
+}
 function calculateCongestion(facts){
-  if(!facts||typeof facts!=='object'||Array.isArray(facts)||facts.creditSource!==null&&
-    !['lincoln','holland','queens_midtown','hugh_carey'].includes(facts.creditSource))review('crossing_credit_unverified');
+  if(!facts||typeof facts!=='object'||Array.isArray(facts))review('congestion_event_unverified');
   const rate=rateWindow(facts.zoneEntryTime,'mta'),daily=facts.dailyContext;
   verifiedFleet(facts.fleet,instant(facts.zoneEntryTime.latest));
-  if(!daily||daily.day!==rate.day||!['first_entry','already_charged','first_entry_estimate'].includes(daily.status)||!reference(daily.evidence))review('daily_context_unknown');
-  let dailyAssumption=null;
-  if(daily.status==='first_entry_estimate'){
-    if(daily.operatorPolicyApproved!==true)review('daily_context_unknown');
-    dailyAssumption='First chargeable entry assumed under an operator-approved estimate policy; not an exact E-ZPass settlement.';
+  if(!daily||daily.day!==rate.day||daily.historyComplete!==true||!reference(daily.evidence)||
+    daily.status!==undefined&&!['first_entry','already_charged'].includes(daily.status))review('daily_context_unknown');
+  const before=dailyLedger(daily),source=facts.creditSource;
+  let crossingPeriod=null;
+  if(source!==null){
+    const crossing=rateWindow(facts.crossingTime,'mta');
+    if(crossing.day!==rate.day||!reference(facts.creditEvidence))review('crossing_credit_unverified');
+    verifiedFleet(facts.fleet,instant(facts.crossingTime.latest));crossingPeriod=crossing.peak?'peak':'overnight';
   }
-  const amountCents=daily.status==='already_charged'?0:rate.cents;
-  let creditCents=0;
-  if(amountCents&&rate.peak&&facts.creditSource!==null){
-    if(!['lincoln','holland','queens_midtown','hugh_carey'].includes(facts.creditSource)||
-      !['eligible','ineligible'].includes(facts.creditEligibility)||!reference(facts.creditEvidence)||
-      !Number.isSafeInteger(facts.crossingPaidCents)||facts.crossingPaidCents<0)review('crossing_credit_unverified');
-    if(facts.creditEligibility==='eligible')creditCents=Math.min(300,amountCents,facts.crossingPaidCents);
-  }
-  return {amountCents,creditCents,day:rate.day,dailyAssumption};
+  const event={day:rate.day,kind:facts.movement,period:rate.peak?'peak':'overnight',creditSource:source,
+    crossingPeriod,creditEligibility:source===null?null:facts.creditEligibility,crossingPaidCents:source===null?0:facts.crossingPaidCents,
+    chargedBefore:before.chargedCents,creditedBefore:before.creditedCents};
+  const result=creditAmounts(event);
+  return {...result,day:rate.day,dailyAssumption:null,event:{...event,chargeCents:result.amountCents,creditCents:result.creditCents}};
 }
-module.exports={VERSION,START,END,TollReviewError,review,reference,instant,parts,rateAt,rateWindow,verifiedFleet,calculateTariff,calculateCongestion};
+module.exports={VERSION,CREDIT_VERSION,CREDIT_CENTS,DAILY_CREDIT_LIMIT,START,END,TollReviewError,review,reference,instant,parts,rateAt,rateWindow,verifiedFleet,calculateTariff,dailyLedger,creditAmounts,calculateCongestion};

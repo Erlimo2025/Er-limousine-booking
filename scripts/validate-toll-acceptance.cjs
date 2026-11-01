@@ -63,8 +63,11 @@ function validate(root=defaultRoot){
  assert.equal(rates.currency,'USD');assert.equal(rates.moneyUnit,'integer_cents');
  for(const p of rates.portAuthority){assert.equal(p.nyBoundOffPeakCents,1479);assert.equal(p.nyBoundPeakCents,1679);assert.equal(p.njBoundPaCents,0);assert.equal(p.operatorClassAndTagEvidence,'missing');}
  for(const r of rates.njtaTurnpike.rows){assert.ok(Number.isSafeInteger(r.ezpassCents)&&r.ezpassCents>0);assert.ok(Number.isSafeInteger(r.njOffPeakCents)&&r.njOffPeakCents>0);assert.equal(r.operatorEligibility,'unverified');assert.equal(r.routeUse,'unverified');}
- for(const name of ['queens_midtown','hugh_carey']){const r=rates.mtaCrz.credits.find(c=>c.source===name);assert.equal(r.peakMaximumCents,null);assert.equal(r.status,'manual_review_official_source_detail_conflict');}
- assert.ok(rates.runtimeAcceptanceBlockers.some(b=>b.id==='NYC_CREDIT_AMOUNT'));assert.ok(rates.runtimeAcceptanceBlockers.some(b=>b.id==='DAILY_CREDIT_CONTEXT'));
+ for(const name of ['queens_midtown','hugh_carey']){const r=rates.mtaCrz.credits.find(c=>c.source===name);assert.equal(r.peakMaximumCents,150);assert.match(r.status,/published_reference/);}
+ assert.equal(rates.mtaCrz.dailyCreditLimitCents,500);
+ assert.ok(rates.runtimeAcceptanceBlockers.some(b=>b.id==='OVERNIGHT_LATER_CREDIT'));assert.ok(rates.runtimeAcceptanceBlockers.some(b=>b.id==='DAILY_CREDIT_CONTEXT'));
+ const credits=read(root,'credit-acceptance-scenarios.json');refs(credits);assert.equal(credits.approvedForActivation,false);assert.equal(credits.scenarios.length,12);
+ for(const c of credits.scenarios){assert.equal(c.status,'not_run');assert.equal(c.coverageApproved,false);for(const id of c.routeCaseIds)assert.ok(matrix.cases.some(row=>row.id===id));for(const k of ['observedCrossing','actualGoogleEstimateCents','actualSettledCreditCents','actualHistoryEvidence'])assert.equal(c[k],null);}
  for(const e of rates.conditionalComponentExamples){assert.equal(e.totalRouteTollsCents,null);assert.equal(e.otherRouteTollsCents,null);assert.equal(e.knownComponentsCents,e.paCents+e.crzCents+e.creditCents);}
  assert.equal(matrix.status,'planned_not_executed');assert.equal(matrix.cases.length,45);
  const places=new Map(matrix.locations.map(l=>[l.id,l])),profiles=new Set(matrix.timeProfiles.map(p=>p.id)),caseIds=new Set(),usedProfiles=new Set();
