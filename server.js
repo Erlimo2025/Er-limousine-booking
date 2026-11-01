@@ -1363,7 +1363,7 @@ async function calculateQuote(body,req) {
   if(tollPricingEnabled && !isHourly){
     try {
       const allowance=routeTollPricing.cents(pricing.tollAllowance)*(isRoundTrip?2:1);
-      const tolls=tollOptions.official ? routeTollPricing.priceOfficialRoutes([route.officialRoute,...(returnRoute?[returnRoute.officialRoute]:[])],tollProfile,process.env,tollEligibility) :
+      const tolls=tollOptions.official ? routeTollPricing.priceOfficialRoutes([route.officialRoute,...(returnRoute?[returnRoute.officialRoute]:[])],tollProfile,process.env,tollEligibility,{now:Date.now()}) :
         routeTollPricing.aggregateTolls([route.tolls,...(returnRoute?[returnRoute.tolls]:[])],tollProfile,false,allowance,tollEligibility);
       if(tollOptions.official){tolls.allowanceCents=allowance;tolls.amountCents=Math.max(0,tolls.estimatedRouteCents-allowance);}
       if(tolls.status==='unknown')throw Error('Unknown tolls.');

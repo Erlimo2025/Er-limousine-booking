@@ -1,231 +1,231 @@
 # Official 2026 toll tariffs — inactive preparation
 
-**Draft review finding:** exact-route/address-pair approval is too restrictive
-for general bookings. See [Reusable coverage review](toll-route-coverage-review.md)
-for a facility/road-network replacement design and its evidence requirements.
-That replacement is not yet implemented; the current safety guard remains.
+The reusable road-network replacement is implemented in `services/toll-road-network.js`
+and used by new toll-enabled interstate quotes. It replaces full-route/address-pair
+approvals. It is **not activated or production-certified**. Both feature flags
+remain disabled by default. No real fleet classification, settled E-ZPass history,
+public road-network dataset or additional commercial tariff table is certified
+or shipped by this PR. Synthetic test evidence must never be copied into production.
 
-This is a new implementation from the operator's supplied specification. The
-original package's JavaScript was unavailable; its 13-test transcript is not
-claimed as a run of this code. The new arithmetic suite has its own 13 tests.
+## Published arithmetic and preserved fares
 
-`ROUTE_TOLLS_ENABLED=false` and `ADMIN_TOLL_VALIDATION_ENABLED=false` remain the
-defaults. Nothing in this work changes Render, credentials, a database schema,
-an existing booking, a refund or a Stripe setting. No extra Render service is
-needed. There is **no production-certified geometry catalog or fleet evidence
-shipped in the repository**. Tests contain clearly synthetic attestations.
+`services/official-toll-rates.js` retains the pure integer-cent 2026 PA/MTA
+calculator, version `pa-class1-mta-standard-2026-v1`, using America/New_York.
+It accepts January 4, 2026 at 00:01 New York through the end of 2026. Unsupported
+years, dates and uncertain rate boundaries require manual review.
 
-## Published schedules and scope
-
-`services/official-toll-rates.js` is a pure integer-cent calculator. Its version
-is `pa-class1-mta-standard-2026-v1`, using America/New_York. It accepts crossings
-from January 4, 2026 at 00:01 New York until January 1, 2027. Earlier or later
-dates require review; a future schedule is never extrapolated automatically.
-
-* PA Class 1, NY/NJ E-ZPass, readable mounted tag: NY-bound $14.79 off-peak or
-  $16.79 peak. Weekday peak is 06:00–10:00 and 16:00–20:00; weekend peak is
-  11:00–21:00. NJ-bound PA crossing charge is zero. No holiday exception is
-  invented. This module handles Lincoln, Holland and GWB.
-* MTA standard daily passenger/small-commercial SUV plan: $9 peak, $2.25
-  overnight. Weekday peak is 05:00–21:00; weekend peak is 09:00–21:00.
-  Only a new zone entry can create a charge. Starting inside and leaving the
-  zone does not itself create a new entry.
-* Eligible peak Lincoln/Holland credit is up to $3, capped by applicable charges.
-  GWB has no such credit; overnight has none. Unknown eligible peak tunnel
-  credit requires review, not an assumed zero credit.
+* Lincoln, Holland and GWB Class 1 with eligible NY/NJ E-ZPass and readable tag:
+  NY-bound $14.79 off-peak or $16.79 peak. Weekday peak is 06:00–10:00 and
+  16:00–20:00; weekend peak 11:00–21:00. NJ-bound PA charge is zero.
+* Standard daily small-commercial/passenger SUV CRZ: $9 peak or $2.25 overnight,
+  weekday peak 05:00–21:00 and weekend peak 09:00–21:00.
+* Eligible peak entry through Lincoln, Holland, Queens Midtown or Hugh L. Carey
+  can receive up to $3 credit, capped by the applicable charge and crossing cost.
+  GWB itself supplies no credit. Overnight supplies none. Unknown eligibility
+  requires review.
 
 Sources checked October 31, 2026:
 
-* [Port Authority schedule and Class 1 definition](https://www.portauthoritybuilds.com/bridges-tunnels/en/tolls.html)
-* [PA 2026 effective date, direction and time periods](https://www.portauthoritybuilds.com/content/dam/bridges-tunnels/2026-toll-rates/Truckers%20Guide_Eng_Jan%202026.pdf)
-* [MTA zone, exclusions, daily plan, rates and credits](https://www.mta.info/fares-tolls/tolls/congestion-relief-zone/about)
-* [Google route geometry and step/static-duration fields](https://developers.google.com/maps/documentation/routes/reference/rest/v2/TopLevel/computeRoutes)
+* [PA schedules and Class 1 definition](https://www.portauthoritybuilds.com/bridges-tunnels/en/tolls.html)
+* [PA 2026 effective date and direction/time periods](https://www.portauthoritybuilds.com/content/dam/bridges-tunnels/2026-toll-rates/Truckers%20Guide_Eng_Jan%202026.pdf)
+* [MTA daily rates and credits](https://www.mta.info/fares-tolls/tolls/congestion-relief-zone/about)
+* [MTA excluded-road connection maps](https://www.mta.info/map/36226)
+* [Google geometry/static-duration fields](https://developers.google.com/maps/documentation/routes/reference/rest/v2/TopLevel/computeRoutes)
+* [Google toll-estimate scope and commercial limitations](https://developers.google.com/maps/documentation/routes/calculate_toll_fees)
 
-## Actual route evidence and complete coverage
+Same verified pickup/destination state: no added tolls, even on a tolled route.
+Regular interstate bookings consider the entire selected route, including its
+same-state road segments. Hourly behavior is unchanged. Eligible EWR → Manhattan
+SUV remains **exactly $150 total, tolls included**, without coupon, surcharge or
+gratuity additions; unknown internal toll costs do not block or increase it.
+EWR verification, A/B/C/General handling and Terminal C fallback remain in place.
 
-New toll-enabled interstate quotes request one selected Google DRIVE route per
-direction with HIGH_QUALITY step polylines, step/static duration, distance and
-route duration. The bounded field mask is exported as `officialFieldMask`.
-Names, directions, crossing claims, coordinates, geometry, amounts and verification
-flags submitted by the browser cannot establish tariff eligibility.
-Provider fallback responses and inconsistent geometry/distance/timing require review.
+Existing fare, discount, surcharge, gratuity and toll-allowance order is unchanged.
+New tolls are not discounted or tipped. Quote, immutable reservation snapshot,
+confirmation email, Checkout/payment completion and refund use the same saved
+integer cents. No Stripe, ownership, cancellation, customer-account or database
+migration behavior is redesigned.
 
-The geometry parser bounds steps, point count, coordinate ranges and gaps. A PA
-crossing requires both reviewed portals in the correct order within a continuous
-convex crossing corridor. Passing a portal nearby or selecting a via point does
-not prove a crossing. Missing or multiple crossings fail closed. Built-in NYC
-envelopes are only sanity limits, not certified crossing geofences.
+## Working reusable coverage
 
-The CRZ decision uses intersections of the actual path with a reviewed zone
-polygon and reviewed excluded-road polygons. It can detect entry between two
-outside endpoints. Parallel travel along an uncertain zone/exclusion boundary
-requires review. Reviewers must include the actual FDR/Route 9A/Hugh L. Carey
-connections and their tolled local-street transitions; a coarse Manhattan box
-or a destination label is not an acceptable production catalog.
+One server-requested Google DRIVE route per direction supplies HIGH_QUALITY
+step polylines, step/static duration, route distance/duration and toll information.
+No extra route call is made per tariff component. A selected path must match a
+unique, connected sequence of reviewed directed road links. There is no stored
+pickup/destination Place-ID whitelist or full-route hash approval.
 
-`OFFICIAL_TOLL_COVERAGE_JSON` is server-only, with version
-`reviewed-route-geometry-2026-v1`. It contains:
+The matcher clips **every route segment** against bounded convex road cells.
+Provider vertices on opposite sides of an uncovered gap cannot hide that gap.
+Topology, travel direction and monotonic progress must agree. Alternate known
+local streets and different point sampling can reuse the same infrastructure.
+Parallel/frontage roads, disconnected node identities and ambiguous paths require
+review; it never chooses a cheaper/free interpretation to resolve ambiguity.
+Google-verified endpoint states must match the covered route endpoints.
 
-* `evidence`, all three `crossings` (`id`, `nj`, `ny`, convex `corridor`,
-  `portalRadiusMeters`, `evidence`), and `crz` (`polygon`, `excluded`, `evidence`).
-  Coordinates are public road geometry in `[longitude, latitude]` order.
-* A bounded `routes` array. Each full-route manifest binds `geometrySha256`,
-  `catalogSha256`, `fleetSha256`, `originPlaceId`, `destinationPlaceId`, the actual
-  `crossing`/`direction`, `crzEntries`, `allTollsReviewed:true`, `evidence`,
-  `validFrom`, `validUntil`, `crzCreditSource`, `creditEligibility`/`creditEvidence`
-  and `otherTolls`. A zone entry requires reviewed credit coverage even on a GWB
-  route: `crzCreditSource` must be `none` (with `ineligible`), or the detected
-  NY-bound `lincoln`/`holland` crossing. Unknown or additional MTA tunnel credit
-  sources, including Queens Midtown and Hugh L. Carey, require manual review.
+Each link is explicitly `free`, `facility` or `unsupported`. Missing, expired,
+unsupported or ambiguous coverage returns the existing
+`TOLL_ESTIMATE_UNAVAILABLE`/422 response before a new reservation or payment
+session. Google reporting no price or zero does not fill missing coverage.
 
-The **exact full geometry**, verified endpoint IDs and vehicle-policy digest
-must match one manifest. Any reroute, changed catalog, duplicate match, missing
-road audit or expired validity interval requires manual review. This is
-intentionally restrictive: it is not a claim that three Hudson crossing prices
-cover every possible NJ/NY/CT/PA route. No blanket coverage approval is provided.
+Both reviewed portals in a continuous corridor establish the actual Lincoln,
+Holland or GWB crossing and its direction. The detected crossing must agree with
+the matched facility road links. Client text, via labels, coordinates, crossing
+names, money, vehicle proofs, daily facts and fake network JSON cannot authorize
+a tariff. A route digest still binds quoteRevision and the saved proof, but is
+an audit value rather than an eligibility whitelist. New quoteRevision values
+bind the ordered verified infrastructure/tariff proofs and authoritative price;
+harmless point resampling on those same links does not invalidate checkout.
+Older official snapshots keep their original geometry-bound revision formula.
 
-Other road costs require separately reviewed `id`, `label`, integer USD
-`amountCents`, `tariffVersion`, `evidence`, `validFrom`, `validUntil`, and an
-inclusive `segments:[first,last]` range in the decoded route. Cost spans cannot
-overlap each other, the PA crossing, or CRZ entry. Generic Google/aggregate
-totals are rejected as components. Turnpike, Parkway, other MTA crossings or
-other-state routes without this independent, nonoverlapping evidence require
-review. More complicated bundled/credit scenarios are unsupported, not free.
+The present supported scope requires one unique crossing among Lincoln/Holland/
+GWB per direction. Other PA crossings, no-crossing interstate routes, repeated
+facilities or multiple PA traversals remain manual review. The code does not
+claim every NJ/NY/CT/PA journey is covered by these three tariffs.
 
-Google's full-route and leg toll totals are **never added** to these components
-or subtracted to infer an unknown road cost. The existing strict Google Money
-decoder remains for the separate admin reference tool and legacy snapshots.
+## Server coverage schema and bounded loading
 
-For offline candidate inspection, after separately obtaining an authorized test
-Google response and reviewed public geometry catalog:
+The active schema is `reviewed-road-network-2026-v2`. Supply exactly one source:
 
-```text
-node scripts/inspect-toll-route.cjs --route route.json --coverage catalog.json
-```
+* `OFFICIAL_TOLL_COVERAGE_JSON`: inline server-only public infrastructure JSON.
+* `OFFICIAL_TOLL_NETWORK_FILE`: a server-controlled UTF-8 JSON artifact path,
+  outside the public web directory. This is useful for larger reusable datasets.
 
-This makes no network calls, reads no .env and prints only candidate hashes,
-crossing/direction and counts. It does not certify coverage or a customer price.
-Do not store customer route/GPS history to populate the catalog. Use reviewed
-public reference routes and keep any necessary private evidence separately.
+Both are blank by default. Neither setting is taken from an HTTP request. Input
+is limited to 8 MiB; infrastructure indexing is cached for the current content.
+Expiry is still checked per quote. Only infrastructure is cached, never customer
+routes, GPS history or E-ZPass transactions. File errors do not reveal paths or
+contents. No new service/database is needed.
 
-## Vehicle, time and daily-entry proof
+Required catalog fields:
 
-Each selected vehicle's server `TOLL_VEHICLE_PROFILES_JSON` entry retains its
-actual emissions and NJ toll pass, plus a separately reviewed `official2026`:
+| Field | Meaning |
+| --- | --- |
+| `version`, `evidence`, `validFrom`, `validUntil` | Versioned provenance and bounded 2026 validity. Evidence is an operator-controlled reference, not independently verified by the program. |
+| `nodes` | Unique public-road `id`, `point:[longitude,latitude]` and reviewed `state` (NJ, NY, CT or PA). |
+| `roads` | Unique `id`, `from`/`to` node IDs, convex `corridor`, explicit `bothDirections`, `kind`, optional `facility`, evidence and validity. Curves use connected straight links. |
+| `junctionMeters` | Reviewed junction tolerance, 1–8 metres. Each road cell is constrained near its 10–2500 metre link; broad geographic boxes are refused. |
+| `crossings` | All three PA portal pairs/corridors with radius and survey evidence. Built-in NYC envelopes are sanity limits, not surveyed geofences. |
+| `facilities` | PA `pa_2026`, additional `table` tariffs or explicit `unsupported` facilities. PA rates cannot be overridden in JSON. |
+| `crz` | Reviewed zone polygon, excluded-road polygons, evidence and `creditConnectors`. |
 
-* `vehicleKey` must match that exact selected vehicle; no inherited approval.
-* `fleet`: `paClass:'1'`, `axles:2`, `singleRearWheels:true`, `noTrailer:true`,
-  `accountIssuer:'NJ'`, `tagStatus:'mounted_readable'`, `mtaPlan:'standard_daily'`,
-  `tlcLicensed:false`, `classEvidence`, `tagEvidence`, `planEvidence`, `validUntil`.
-  NJ Business, OL plates, Suburban model and 2Ax alone do not establish this.
-  An actual Mid-Tier/unknown tag condition is not priced at the standard rate.
-* `timing`: a reviewed `uncertaintySeconds` and `evidence`. The time range uses
-  preceding Google step durations, the entire crossing step, all positive
-  route traffic delay and the reviewed extra uncertainty. If the range crosses
-  a PA/MTA rate or day boundary, the quote is refused. This is an estimate model,
-  not a guarantee of actual future crossing time. Calibration/acceptance is
-  still required; no production uncertainty policy is supplied.
-* `dailyPolicy`: absent/unknown means review for CRZ entries. This implementation
-  offers `kind:'assume_first_entry_estimate'` only with `operatorApproved:true`
-  and explicit `evidence`. It visibly states the first-entry assumption in
-  quote/email, and does not claim exact settlement. **The operator has not
-  accepted that policy as part of this implementation.** Do not set it merely
-  to make a quote pass. If that policy is not acceptable, a separately designed
-  authoritative day-history source is needed before CRZ charging can activate.
+Limits include 20,000 nodes, 12,000 road links, 20 facilities, 600 provider steps,
+6,000 provider points, six-hour routes, bounded spatial cells/comparison work and
+candidate paths. Over-complex input fails closed. These are conservative limits,
+not a promise that arbitrary global routing is supported.
 
-The pure calculator also supports independently established first/already-paid
-daily facts. The public booking adapter does not accept browser daily claims or
-pretend it has an E-ZPass history feed. Within one quoted round trip, it carries
-the first chargeable New York calendar day forward so another entry that day
-does not add another congestion charge or credit. Separate quote requests share
-no driver history. This limitation must be accepted or resolved before activation.
+There is no `routes` manifest array in v2. Legacy v1 address-manifest configuration
+cannot authorize a new quote. Existing accepted v1 snapshot readers remain.
 
-Evidence fields are operator-controlled reference strings, not automatically
-validated agency documents. Their existence in configuration is an attestation
-to review, not proof generated by tests. Never put plate/tag/account numbers,
-API secrets or payment credentials into these fields. Stored quote snapshots
-retain digests, classifications and amounts, not route polylines or evidence text.
+## Additional roads and NYC crossings
 
-## Preserved booking/payment behavior
+The working table engine supports NJ Turnpike/Garden State Parkway, and registered
+MTA facilities: Queens Midtown, Hugh L. Carey, Verrazzano, RFK, Bronx-Whitestone,
+Throgs Neck, Henry Hudson, Cross Bay and Marine Parkway. **No real extra-road
+rates or commercial classifications are assumed by registering their names.**
 
-Same verified endpoint state: waive all added tolls without asking for tariff
-evidence. Hourly: unchanged fare and payment flow, with no invented route toll.
-Eligible EWR → Manhattan Luxury SUV: **exactly $150, tolls included**, without
-coupon, surcharge or gratuity additions. Missing internal toll evidence cannot
-block or increase that offer; its existing Google/EWR identity checks remain.
+A facility road run must contain a complete matched entry and exit, with
+surrounding non-facility coverage. Starting/ending partway along it requires
+review. Multiple road links of one facility are grouped into one charge.
+An unsupported facility, missing tariff or unexplained repeat traversal is never
+free. Outbound and return select their own entry/exit/direction records.
 
-Regular interstate total keeps the existing fare, discount, gratuity and toll
-allowance order. Official net tolls are neither discounted nor tipped. The quote
-shows PA, MTA, eligible credit, separately verified roads and Total Including
-Tolls. No new booking step is added. The same components/net cents are saved and
-rendered in confirmation email; Stripe uses the existing immutable saved total.
+A `table` facility supplies `authority:'njta'|'mta'`, `timeBasis:'entry'|'exit'`,
+label, evidence and `rates`. Every rate needs:
 
-Existing version-1 snapshots, including accepted Google-estimate fares, remain
-valid and payable with no repricing. New official snapshots add a format/version,
-strictly validated components, and digests bound into quoteRevision. JSONB key
-order remains irrelevant. PostgreSQL schema, customer ownership, FIRST15,
-cancellation, refunds, webhook authority, payment retries and saved cards are
-not redesigned. No migration is necessary.
-Keep the immutable 2026 schedule/reader when adding a later tariff version; do
-not edit its version in place and invalidate accepted 2026 reservations.
+* `entry`/`exit` node IDs; the opposite direction needs its own applicable record.
+* `vehicleClass`, `tollPass:'US_NJ_EZPASSNJ'`, `currency:'USD'`, integer
+  `amountCents`, `version`, evidence and effective validity.
+* `days:[0..6]` (Sunday=0), `startMinute` and exclusive `endMinute` in New York
+  time. Split overnight periods into distinct records. Holiday exceptions need
+  explicit date-valid records rather than an invented holiday rate.
 
-## Controlled release and rollback
+Exactly one record must cover every possible time in the facility's uncertainty
+window. Gaps, overlapping records, expired data, changed rates or an unproved
+authority class fail closed. The program does not infer an MTA NY-issued-tag
+discount from an NJ account or inherit NJTA/MTA classification from PA Class 1.
 
-1. Review this PR with both flags off. No commit here changes Render. Cancel any
-   unsaved production flag edit yourself; this feature does not need activation.
-2. Obtain and independently review real fleet class, tag and plan records; a
-   statement amount or synthetic test is not proof of commercial rate parity.
-3. Review official geometry/excluded-road connections, complete road inventory,
-   each exact reference route, time bounds and every additional toll tariff.
-   Include NJ→Brooklyn/JFK and unsupported NY/NJ/CT/PA routes as manual-review
-   cases until complete nonoverlapping coverage exists.
-4. Resolve/accept daily-history and credit-estimate policy; then compare actual
-   applicable, settled E-ZPass transactions against matching route/day/time.
-5. Run route + reservation + **Stripe test-mode** acceptance checks in an
-   approved non-production setup. Do not create a paid Render staging service
-   automatically. This PR's tests use synthetic providers and isolated local PG.
-6. Merge/deploy only with separate approval. Keep customer charging off until
-   the operator approves the evidence and all supported cases. Enabling the
-   admin estimate-only feature is a separate approval and separate flag.
+Google route/leg aggregates are never added to components, nor used to invent
+a residual. Extra-road tariffs must be independently sourced and non-overlapping
+with the PA/CRZ components. Fixture amounts such as the test's Queens Midtown
+value are explicitly synthetic and are **not** a proposed production tariff.
 
-Before any accepted official-toll reservation exists, rollback is the previous
-code with both flags off. After acceptance, disable **new** toll charging but
-retain the official snapshot reader/validator until those records are no longer
-needed. Do not roll back to a reader that cannot validate their components, or
-rewrite/remove saved toll fields. Payment/refund amounts remain frozen.
+## Vehicle, timing, congestion and credits
 
-The expanded geometry fields add payload, not extra route calls. TOLLS retains
-the existing Compute Routes Enterprise SKU; no new Maps SDK, service or database
-is introduced. Existing Places verification requests remain. The admin-only
-Google total and its rate limits stay independent.
+The selected product's server `TOLL_VEHICLE_PROFILES_JSON.official2026` still
+requires `vehicleKey` binding and physical PA Class 1/tag/plan proof:
+two axles, single rear wheels, no trailer, NJ issuer, mounted/readable tag,
+standard daily MTA plan, non-TLC status, separate evidence refs and expiry.
+Business, NJ OL and 2Ax labels alone are not enough; unknown/Mid-Tier status fails.
 
-## Local validation on October 31, 2026
+The network path additionally requires `fleet.vehicleRef` and
+`fleet.assignmentEvidence`. This must bind an actual eligible dispatched vehicle;
+a category label is not a vehicle's daily history. Extra facilities require
+`fleet.authorities.njta|mta` with the applicable `vehicleClass`, evidence and
+`validUntil`. No evidence is supplied for the operator's real vehicle by tests.
 
-Executed sequentially on Node 24.19.0, with synthetic Google/Stripe providers
-and a verified localhost-only, nonsuperuser PostgreSQL test database:
+The reviewed `timing` uncertainty uses preceding step durations, the entire
+facility step, positive route traffic delay and explicit extra slack. Tariff or
+calendar-day boundaries within that window require review. It is an estimate
+model requiring real calibration, not a promise of exact future crossing time.
 
-| Run | Passed | Failed | Skipped |
-| --- | ---: | ---: | ---: |
-| New pure tariff and route-evidence tests | 26 | 0 | 0 |
-| Full package test selection (`--test-concurrency=1`) | 509 | 0 | 0 |
-| Separate PostgreSQL integration selection | 47 | 0 | 0 |
-| Separate CSP selection | 5 | 0 | 0 |
+CRZ entries come from the actual path, excluded-road polygons and local-street
+transitions. Reviewed credit connectors contain the reusable ordered road tokens
+(`road_id:f` or `road_id:r`), source facility, evidence and validity. Direct entry
+within a verified qualifying facility can supply that source; a later connection
+needs matching connector evidence. GWB itself never creates a tunnel credit.
 
-The npm CLI was unavailable; the package's complete Node test selection was
-executed directly, with the same sequential setting. The initial full run had
-one account-fixture clock failure (508/509), and the initial separate PG run had
-the corresponding PG clock failure (46/47). Those fixtures now use the harness
-clock consistently; production authentication and expiry rules were unchanged.
-The final runs above include those corrections. No test was skipped or bypassed.
+Peak credit also requires `official2026.crossingCredit` with explicit
+`eligibility:'eligible'|'ineligible'`, evidence and expiry. An unknown entitlement
+cannot be treated as no credit. Each eligible component is counted once; a
+Queens Midtown/Carey credit is associated with that actual entry, not the PA name.
 
-Local browser checks at 320, 390 and 1440 CSS pixels showed the component rows,
-credit, policy warning and total without horizontal overflow or console errors.
-Synthetic noon Lincoln quote: $80 fare + $14.79 PA + $9 MTA − $3 credit = $100.79.
-Reverse route: $80 with no new PA/CRZ charge. These are fixture demonstrations,
-not verified customer-route or commercial E-ZPass statement comparisons.
-The EWR special remained $150 with tolls included at all three widths. Browser
-checks created zero reservations, Checkout sessions or payment calls. The local
-preview and isolated PG server were stopped after validation.
+Daily context is keyed to the actual vehicle and New York calendar day:
 
-`git diff --check` passed. No production database, Google request, Stripe call,
-Render setting, production deployment or customer toll activation was used.
+* Known same-quote/day charge prevents another CRZ charge or credit.
+* Optional server `dailyFacts[YYYY-MM-DD]` can assert `already_charged` only with
+  the matching `vehicleRef`, evidence, `observedAt` and `validUntil`. Future-dated
+  observations, wrong days/vehicles and expiry within the entry window fail.
+  The server clock is used; browser time/history cannot establish this.
+* Otherwise absent context means review. The separate
+  `dailyPolicy.kind:'assume_first_entry_estimate'` requires explicit
+  `operatorApproved:true`, matching vehicleRef and evidence. Its assumption
+  appears in the quote/email. **The operator has not approved this estimate
+  policy by approving implementation.** Do not set it to make tests pass.
+
+No E-ZPass feed or persistent daily-history service is created. Evidence strings
+are attestations to separately reviewed records, not automatic agency-document
+verification. No tag/account numbers, plates, secrets or personal GPS history
+belong in infrastructure/evidence fields.
+
+## Snapshot compatibility and release gates
+
+New snapshots use `format:'official_network_2026'`, the network schema version,
+strict component validation and road/tariff/fleet proof digests. They retain no
+route polylines, network data, raw evidence refs or vehicle identifier. Existing
+`official_2026`, older Google-based and no-toll-field accepted snapshots remain
+readable/payable without consulting new infrastructure or repricing.
+
+Keep immutable 2026 readers when introducing later schedules. To roll back after
+accepted network snapshots exist, disable new customer charging while retaining
+their reader; do not roll back to code unable to validate them or rewrite their
+saved fields. Existing captured payment/refund amounts stay frozen.
+
+Before activation:
+
+1. Independently review real directed road coverage, PA portals, excluded roads,
+   connector transitions and all relevant extra-facility entry/exit tariffs.
+2. Establish actual vehicle/tag, per-authority class and assignment evidence.
+3. Resolve reliable daily/credit history or separately accept the disclosed
+   estimate policy; calibrate crossing-time uncertainty.
+4. Compare matching route/direction/date/time/vehicle settled E-ZPass charges,
+   including Mid-Tier anomalies and additional road segments.
+5. Complete authorized non-production route/reservation/Stripe test-mode acceptance.
+   Synthetic functional/PG tests do not prove commercial bill parity.
+6. Review this draft PR and obtain separate merge/deployment/activation approval.
+
+`ROUTE_TOLLS_ENABLED=false` and `ADMIN_TOLL_VALIDATION_ENABLED=false` remain
+defaults. The admin estimate-only Google tool stays separate. No Render settings,
+credentials, production database or live Stripe calls are changed/used.
+The expanded geometry uses the existing Compute Routes TOLLS billing feature,
+without an extra call per road or component. Any future external data/provider
+cost, licensing or Google-content permission needs separate review.

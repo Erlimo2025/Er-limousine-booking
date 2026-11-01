@@ -90,4 +90,28 @@ function calculateTariff(facts) {
   if(!Number.isSafeInteger(amountCents)||amountCents<0)review('invalid_total');
   return {version:VERSION,amountCents,components,congestionDay:day,dailyAssumption};
 }
-module.exports={VERSION,START,END,TollReviewError,review,reference,instant,parts,rateAt,rateWindow,verifiedFleet,calculateTariff};
+// Network adapter supplies the actual credit-bearing entry, independently of
+// the PA crossing. This also supports verified Queens Midtown/Carey entries.
+// The original calculator above remains unchanged for accepted v1 snapshots.
+function calculateCongestion(facts){
+  if(!facts||typeof facts!=='object'||Array.isArray(facts)||facts.creditSource!==null&&
+    !['lincoln','holland','queens_midtown','hugh_carey'].includes(facts.creditSource))review('crossing_credit_unverified');
+  const rate=rateWindow(facts.zoneEntryTime,'mta'),daily=facts.dailyContext;
+  verifiedFleet(facts.fleet,instant(facts.zoneEntryTime.latest));
+  if(!daily||daily.day!==rate.day||!['first_entry','already_charged','first_entry_estimate'].includes(daily.status)||!reference(daily.evidence))review('daily_context_unknown');
+  let dailyAssumption=null;
+  if(daily.status==='first_entry_estimate'){
+    if(daily.operatorPolicyApproved!==true)review('daily_context_unknown');
+    dailyAssumption='First chargeable entry assumed under an operator-approved estimate policy; not an exact E-ZPass settlement.';
+  }
+  const amountCents=daily.status==='already_charged'?0:rate.cents;
+  let creditCents=0;
+  if(amountCents&&rate.peak&&facts.creditSource!==null){
+    if(!['lincoln','holland','queens_midtown','hugh_carey'].includes(facts.creditSource)||
+      !['eligible','ineligible'].includes(facts.creditEligibility)||!reference(facts.creditEvidence)||
+      !Number.isSafeInteger(facts.crossingPaidCents)||facts.crossingPaidCents<0)review('crossing_credit_unverified');
+    if(facts.creditEligibility==='eligible')creditCents=Math.min(300,amountCents,facts.crossingPaidCents);
+  }
+  return {amountCents,creditCents,day:rate.day,dailyAssumption};
+}
+module.exports={VERSION,START,END,TollReviewError,review,reference,instant,parts,rateAt,rateWindow,verifiedFleet,calculateTariff,calculateCongestion};

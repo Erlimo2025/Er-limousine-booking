@@ -2,10 +2,10 @@ const test=require('node:test'),assert=require('node:assert/strict');
 const e=require('../services/toll-route-evidence'),r=require('../services/official-toll-rates'),f=require('./helpers/official-toll-fixtures.cjs');
 function fixture(crossing='lincoln',direction='ny_bound',departure='2026-11-10T17:00:00Z'){
  const c=f.catalog(),data=f.googleRoute(crossing,direction),origin='ChIJ_fixture_origin',destination='ChIJ_fixture_destination';
- const m=f.manifest(c,data,origin,destination,{crossing,direction,crzEntries:direction==='ny_bound'&&crossing!=='gwb'?1:0});c.routes.push(m);
- return {c,m,data,route:{data,origin,destination,departure},profile:{official:f.profile().official2026},env(){return {OFFICIAL_TOLL_COVERAGE_JSON:JSON.stringify(c)};}};
+ return {c,data,route:{data,origin,destination,departure},direction,profile:{...f.profile(),official:f.profile().official2026},env(){return {OFFICIAL_TOLL_COVERAGE_JSON:JSON.stringify(c)};}};
 }
-const price=h=>e.priceRoutes([h.route],h.profile,h.env(),{policy:'interstate_only',pickupState:'NJ',dropoffState:'NY',pickupPlaceId:h.route.origin,dropoffPlaceId:h.route.destination});
+const eligibility=h=>({policy:'interstate_only',pickupState:h.direction==='nj_bound'?'NY':'NJ',dropoffState:h.direction==='nj_bound'?'NJ':'NY',pickupPlaceId:'ChIJ_fixture_origin',dropoffPlaceId:'ChIJ_fixture_destination'});
+const price=h=>e.priceRoutes([h.route],h.profile,h.env(),eligibility(h),{now:Date.parse(h.route.departure)});
 test('server geometry identifies each complete crossing in both directions; labels and instructions are ignored',()=>{
  for(const crossing of ['lincoln','holland','gwb'])for(const direction of ['ny_bound','nj_bound']){
   const h=fixture(crossing,direction);h.data.description='via an entirely different tunnel';h.data.legs[0].steps[0].navigationInstruction={instructions:'Holland Tunnel'};
@@ -21,15 +21,19 @@ test('no Google full-route/leg aggregate is added to published component costs',
 });
 test('a GWB route entering the geometric zone later has the daily toll and no Lincoln/Holland credit',()=>{
  const h=fixture('gwb'),path=e.geometry(h.data).points;
- path.push([-73.941,40.83],[-73.945,40.80],[-73.96,40.775],[-73.98,40.755]);
+ path.push([-73.94,40.835],[-73.942,40.82],[-73.945,40.80],[-73.95,40.782],[-73.96,40.77],[-73.98,40.755]);
+ for(let i=5;i<path.length;i++){
+  h.c.nodes.push({id:'gwb_n'+i,point:path[i],state:'NY'});
+  h.c.roads.push({id:'gwb_road'+(i-1),from:'gwb_n'+(i-1),to:'gwb_n'+i,kind:'free',bothDirections:true,corridor:f.corridor(path[i-1],path[i]),evidence:'synthetic-ny-road-survey',...f.span});
+ }
  h.data.legs[0].steps=path.slice(1).map((p,i)=>({staticDuration:'300s',polyline:{encodedPolyline:f.encode([path[i],p])}}));
- h.data.duration=h.data.staticDuration=(h.data.legs[0].steps.length*300)+'s';h.m.geometrySha256=e.geometry(h.data).hash;h.m.crzEntries=1;
+ h.data.duration=h.data.staticDuration=(h.data.legs[0].steps.length*300)+'s';h.data.distanceMeters=25000;
  const q=price(h);assert.equal(q.amountCents,2379);assert.equal(q.legs[0].components[1].amountCents,900);assert.equal(q.legs[0].components[2].amountCents,0);
 });
-test('a missing or changed complete-route manifest, endpoint binding or geometry catalog fails closed',()=>{
- for(const change of [h=>h.c.routes=[],h=>h.c.routes.push(structuredClone(h.m)),h=>h.m.allTollsReviewed=false,
-  h=>h.m.originPlaceId='forged',h=>h.m.geometrySha256='0'.repeat(64),h=>h.m.catalogSha256='0'.repeat(64),h=>h.m.fleetSha256='0'.repeat(64),h=>h.m.validUntil='2026-01-05T00:00:00Z',
-  h=>h.c.crz.excluded.push(f.rectangle(-73.999,40.75,-73.998,40.751))]){
+test('missing road coverage, duplicate network identity, stale evidence and wrong server endpoint binding fail closed',()=>{
+ for(const change of [h=>h.c.roads=[],h=>h.c.roads.push(structuredClone(h.c.roads[0])),h=>delete h.c.roads[0].evidence,
+  h=>h.route.origin='forged',h=>h.c.nodes[0].state='NY',h=>h.c.version='reviewed-route-geometry-2026-v1',h=>h.c.routes=[],h=>h.c.validUntil='2026-01-05T00:00:00Z',
+  h=>h.c.roads[0].corridor=f.rectangle(-80,40,-79.99,40.01)]){
   const h=fixture();change(h);assert.throws(()=>price(h),r.TollReviewError);
  }
 });
@@ -64,20 +68,23 @@ test('unknown daily-entry policy, account/class/tag proof, TLC plan and expired 
  for(const change of [h=>delete h.profile.official.dailyPolicy,h=>h.profile.official.dailyPolicy.operatorApproved=false,
   h=>h.profile.official.fleet.paClass='2Ax',h=>h.profile.official.fleet.singleRearWheels=false,h=>h.profile.official.fleet.tagStatus='mid_tier',
   h=>h.profile.official.fleet.mtaPlan='tlc_per_trip',h=>h.profile.official.fleet.validUntil='2026-11-01T00:00:00Z',h=>delete h.profile.official.timing,
-  h=>h.m.creditEligibility='unknown',h=>delete h.m.crzCreditSource,h=>h.m.crzCreditSource='queens_midtown',h=>h.m.crzCreditSource='hugh_carey',
-  h=>h.m.crzCreditSource='holland',h=>h.m.crzCreditSource='none',h=>delete h.m.creditEvidence]){const h=fixture();change(h);h.m.fleetSha256=e.digest(h.profile.official);assert.throws(()=>price(h),r.TollReviewError);}
+  h=>h.profile.official.crossingCredit.eligibility='unknown',h=>delete h.profile.official.crossingCredit,h=>h.profile.official.crossingCredit.evidence='',
+  h=>delete h.profile.official.fleet.vehicleRef,h=>h.profile.official.dailyPolicy.vehicleRef='another-vehicle']){const h=fixture();change(h);assert.throws(()=>price(h),r.TollReviewError);}
 });
 test('independent directions share only a same-quote congestion day and never add a second daily charge or credit',()=>{
- const h=fixture(),second={...h.route,departure:'2026-11-10T23:00:00Z'},q=e.priceRoutes([h.route,second],h.profile,h.env(),{});
- assert.equal(q.legs[0].components[1].amountCents,900);assert.equal(q.legs[1].components[0].amountCents,1679);
- assert.equal(q.legs[1].components[1].amountCents,0);assert.equal(q.legs[1].components[2].amountCents,0);
- second.departure='2026-11-11T17:00:00Z';assert.equal(e.priceRoutes([h.route,second],h.profile,h.env(),{}).legs[1].components[1].amountCents,900);
+ const h=fixture('lincoln','nj_bound'),second={data:f.googleRoute(),origin:h.route.destination,destination:h.route.origin,departure:'2026-11-10T23:00:00Z'},q=e.priceRoutes([h.route,second],h.profile,h.env(),eligibility(h));
+ assert.equal(q.legs[0].components[1].amountCents,0);assert.equal(q.legs[1].components[0].amountCents,1679);
+ assert.equal(q.legs[1].components[1].amountCents,900);assert.equal(q.legs[1].components[2].amountCents,-300);
+ const one=fixture();delete one.profile.official.dailyPolicy;
+ one.profile.official.dailyFacts={'2026-11-10':{status:'already_charged',vehicleRef:one.profile.official.fleet.vehicleRef,evidence:'synthetic-settled-day-proof',observedAt:'2026-11-10T12:00:00Z',validUntil:'2026-11-11T05:00:00Z'}};
+ assert.equal(price(one).legs[0].components[1].amountCents,0);assert.equal(price(one).legs[0].components[2].amountCents,0);
+ one.route.departure='2026-11-11T17:00:00Z';assert.throws(()=>price(one),r.TollReviewError);
 });
-test('other toll road costs need independent nonoverlapping spans, dates and tariff evidence; unknown inventory is never zero',()=>{
- const item={id:'nj_road',label:'NJ road',amountCents:225,evidence:'synthetic-road-proof',tariffVersion:'synthetic-rate-2026',segments:[0,0],validFrom:'2026-01-04T05:01:00Z',validUntil:'2027-01-01T04:59:59Z'};
- const h=fixture();h.m.otherTolls=[item];assert.equal(price(h).amountCents,2304);
- for(const tolls of [[{...item,segments:[1,2]}],[item,{...item,id:'another_fee'}],[{...item,id:'google_total'}],[{...item,validUntil:'2026-11-01T00:00:00Z'}],[{...item,amountCents:null}]]){
-  const h=fixture();h.m.otherTolls=tolls;assert.throws(()=>price(h),r.TollReviewError);
+test('other roads need a unique class/pass/direction/entry-exit tariff; unknown or overlapping evidence is never zero',()=>{
+ const h=fixture();f.addRoadCost(h.c,225);assert.equal(price(h).amountCents,2304);
+ for(const change of [f=>f.rates.push(structuredClone(f.rates[0])),f=>f.rates[0].entry='lincoln_n0',f=>f.rates[0].currency='CAD',
+  f=>f.rates[0].validUntil='2026-11-01T00:00:00Z',f=>f.rates[0].amountCents=null,f=>f.rates[0].vehicleClass='unverified',f=>f.kind='unsupported']){
+  const h=fixture();change(f.addRoadCost(h.c,225));assert.throws(()=>price(h),r.TollReviewError);
  }
 });
 test('catalog geography, duplicate gates and invalid corridors cannot label another location a PA crossing',()=>{

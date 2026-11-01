@@ -4,6 +4,7 @@ const officialRoutes = require('./toll-route-evidence');
 
 const REVIEW_MESSAGE = 'Toll estimate unavailable — contact us for a final quote';
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+const isOfficial = tolls => ['official_2026','official_network_2026'].includes(tolls?.format);
 const canonical = value => JSON.stringify(value, function (key, item) {
   return plain(item) ? Object.fromEntries(Object.keys(item).sort().map(name => [name,item[name]])) : item;
 });
@@ -116,7 +117,7 @@ function priceBreakdown(quote, tolls, special = false) {
   return {version:1,tripFareCents,surcharges,discountCents:cents(quote.discount),gratuityCents:cents(quote.gratuity),
     tollsCents:special ? null : tollsCents,tollAllowanceCents:special ? 0 : tolls.allowanceCents,tollsIncluded:special,totalCents,currency:'usd',
     ...(!special && tolls.eligibility?{tollScope:'interstate_only',interstate:tolls.eligibility.pickupState!==tolls.eligibility.dropoffState}:{}),
-    ...(!special && tolls.format==='official_2026'?{tariffVersion:tolls.tariffVersion,
+    ...(!special && isOfficial(tolls)?{tariffVersion:tolls.tariffVersion,
       tollComponents:tolls.legs.flatMap((leg,index)=>leg.components.map(c=>({...c,label:(tolls.legs.length===2?(index?'Return — ':'Outbound — '):'')+c.label}))),
       tollAssumptions:[...new Set(tolls.legs.map(leg=>leg.dailyAssumption).filter(Boolean))]}:{})};
 }
@@ -124,10 +125,13 @@ function quoteRevision(quote) {
   return crypto.createHash('sha256').update(canonical({pricing:quote.pricingBreakdown,total:quote.total,
     offer:quote.fixedOffer?.code || null,promo:quote.promotion?.code || null,
     ...(quote.tolls?.eligibility?{eligibility:quote.tolls.eligibility}:{}),
-    ...(quote.tolls?.format==='official_2026'?{official:{coverageHash:quote.tolls.coverageHash,fleetHash:quote.tolls.fleetHash,
-      routes:quote.tolls.legs.map(leg=>({geometryHash:leg.geometryHash,crossing:leg.crossing,direction:leg.direction,congestionDay:leg.congestionDay}))}}:{})})).digest('hex');
+    ...(isOfficial(quote.tolls)?{official:{coverageHash:quote.tolls.coverageHash,fleetHash:quote.tolls.fleetHash,
+      ...(quote.tolls.format==='official_network_2026'?{networkVersion:quote.tolls.networkVersion}:{}),
+      routes:quote.tolls.legs.map(leg=>({...(quote.tolls.format==='official_network_2026'?{}:{geometryHash:leg.geometryHash}),crossing:leg.crossing,direction:leg.direction,congestionDay:leg.congestionDay}))}}:{})})).digest('hex');
 }
 function validOfficial(t) {
+  const network=t.format==='official_network_2026';
+  if(network&&t.networkVersion!=='reviewed-road-network-2026-v2')return false;
   if(t.tariffVersion!==officialRates.VERSION||![t.coverageHash,t.fleetHash].every(value=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value)))return false;
   for(const leg of t.legs){
     if(!['lincoln','holland','gwb'].includes(leg.crossing)||!['ny_bound','nj_bound'].includes(leg.direction)||
@@ -139,8 +143,16 @@ function validOfficial(t) {
     if(pa.kind!=='port_authority'||pa.label!=='Port Authority crossing'||pa.facility!==leg.crossing||
       !(leg.direction==='ny_bound'?[1479,1679]:[0]).includes(pa.amountCents)||
       mta.kind!=='mta_congestion'||mta.label!=='MTA congestion'||mta.facility!=='manhattan_crz'||![0,225,900].includes(mta.amountCents)||
-      credit.kind!=='crossing_credit'||credit.label!=='Eligible credit'||credit.facility!=='manhattan_crz_credit'||![0,-300].includes(credit.amountCents)||
-      credit.amountCents<0&&(leg.direction!=='ny_bound'||leg.crossing==='gwb'||mta.amountCents!==900))return false;
+      credit.kind!=='crossing_credit'||credit.label!=='Eligible credit'||credit.facility!=='manhattan_crz_credit'||
+      (network?(!Number.isSafeInteger(credit.amountCents)||credit.amountCents>0||credit.amountCents< -300):![0,-300].includes(credit.amountCents))||
+      !network&&credit.amountCents<0&&(leg.direction!=='ny_bound'||leg.crossing==='gwb'||mta.amountCents!==900))return false;
+    if(network){
+      if(leg.creditSource!==null&&!['lincoln','holland','queens_midtown','hugh_carey'].includes(leg.creditSource))return false;
+      if(credit.amountCents<0){
+        const source=['lincoln','holland'].includes(leg.creditSource)?(leg.direction==='ny_bound'&&leg.creditSource===leg.crossing?pa:null):other.find(c=>c.facility===leg.creditSource);
+        if(mta.amountCents!==900||!source||source.amountCents< -credit.amountCents)return false;
+      }
+    }
     const ids=new Set([pa.facility,mta.facility,credit.facility]);
     for(const c of other){if(c.kind!=='other'||typeof c.facility!=='string'||!/^[a-z0-9_-]{3,60}$/.test(c.facility)||ids.has(c.facility)||
       typeof c.label!=='string'||!c.label.trim()||c.label.length>80||/[\x00-\x1f<>]/.test(c.label)||
@@ -165,7 +177,7 @@ function validQuote(quote) {
     if (!plain(p) || p.version !== 1 || !plain(t) || t.version !== 1 || p.currency !== 'usd' || quote.currency !== 'usd' ||
         !Array.isArray(p.surcharges) || !Array.isArray(t.legs) || t.legs.length > 2 ||
         !['none','estimated','included','waived'].includes(t.status)) return false;
-    if(t.format!==undefined&&(t.format!=='official_2026'||t.status!=='estimated'||!validOfficial(t)))return false;
+    if(t.format!==undefined&&(!isOfficial(t)||t.status!=='estimated'||!validOfficial(t)))return false;
     if(t.eligibility !== undefined || p.tollScope !== undefined || p.interstate !== undefined){
       const e=t.eligibility;
       if(!plain(e) || e.policy!=='interstate_only' || p.tollScope!=='interstate_only' ||

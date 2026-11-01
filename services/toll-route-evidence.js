@@ -2,7 +2,7 @@
 const crypto=require('node:crypto');
 const tariff=require('./official-toll-rates');
 const fail=tariff.review,ref=tariff.reference;
-const VERSION='reviewed-route-geometry-2026-v1';
+const VERSION='reviewed-road-network-2026-v2';
 const FIELD_MASK='routes.distanceMeters,routes.duration,routes.staticDuration,routes.travelAdvisory.tollInfo,routes.legs.steps.polyline.encodedPolyline,routes.legs.steps.staticDuration,fallbackInfo';
 const digest=value=>crypto.createHash('sha256').update(JSON.stringify(value,(_,item)=>item&&typeof item==='object'&&!Array.isArray(item)?
   Object.fromEntries(Object.keys(item).sort().map(key=>[key,item[key]])):item)).digest('hex');
@@ -73,20 +73,16 @@ function geometry(route){
   if(!Number.isFinite(route.distanceMeters)||route.distanceMeters<=0||length>route.distanceMeters*1.1+100)fail('geometry_distance_inconsistent');
   return {points,segments,hash:digest(points),traffic:Math.max(0,travel-staticTime),travel};
 }
-function coverage(env){
-  const raw=env.OFFICIAL_TOLL_COVERAGE_JSON;
-  if(typeof raw!=='string'||raw.length>1000000)fail('coverage_missing');
-  let c;try{c=JSON.parse(raw);}catch(_){fail('coverage_invalid');}
-  if(!c||c.version!==VERSION||!ref(c.evidence)||!Array.isArray(c.routes)||!c.routes.length||c.routes.length>200||
+function validateGeography(c){
+  if(!c||c.version!==VERSION||!ref(c.evidence)||
     !polygon(c.crz?.polygon)||!ref(c.crz.evidence)||!Array.isArray(c.crz.excluded)||c.crz.excluded.length>16||!c.crz.excluded.every(polygon)||
-    !Array.isArray(c.crossings)||c.crossings.length!==3||new Set(c.crossings.map(x=>x.id)).size!==3)fail('coverage_invalid');
+    !Array.isArray(c.crossings)||c.crossings.length!==3||!c.crossings.every(x=>x&&typeof x==='object')||new Set(c.crossings.map(x=>x.id)).size!==3)fail('coverage_invalid');
   for(const gate of c.crossings)if(!['lincoln','holland','gwb'].includes(gate.id)||!point(gate.nj)||!point(gate.ny)||!polygon(gate.corridor)||
     gate.corridor.length>12||!convex(gate.corridor)||!ref(gate.evidence)||!Number.isFinite(gate.portalRadiusMeters)||gate.portalRadiusMeters<5||gate.portalRadiusMeters>150||
     distance(gate.nj,gate.ny)<200||distance(gate.nj,gate.ny)>4000||gate.nj[0]>=gate.ny[0]||
     ![gate.nj,gate.ny,...gate.corridor].every(p=>inEnvelope(p,envelopes[gate.id]))||!inside(gate.nj,gate.corridor)||!inside(gate.ny,gate.corridor))fail('coverage_invalid');
   if(![...c.crz.polygon,...c.crz.excluded.flat()].every(p=>inEnvelope(p,[-74.05,40.65,-73.9,40.79])))fail('coverage_invalid');
-  // Geometry catalog changes invalidate all prior full-route coverage attestations.
-  c.catalogHash=digest({crossings:c.crossings,crz:c.crz});return c;
+  return c;
 }
 function crossingEvents(path,catalog){
   const events=[];
@@ -110,7 +106,7 @@ function intersection(a,b,c,d){
   if(Math.abs(den)<1e-14)return null;const t=((c[0]-a[0])*v-(c[1]-a[1])*u)/den,s=((c[0]-a[0])*y-(c[1]-a[1])*x)/den;
   return t>0&&t<1&&s>=0&&s<=1?t:null;
 }
-function zoneEntries(path,zone){
+function zoneEvents(path,zone){
   const polygons=[zone.polygon,...zone.excluded],inZone=p=>inside(p,zone.polygon)&&!zone.excluded.some(poly=>inside(p,poly));
   let prior=inZone(path[0]);const entries=[];
   for(let i=0;i<path.length-1;i++){
@@ -124,11 +120,12 @@ function zoneEntries(path,zone){
     cuts.sort((x,y)=>x-y);
     for(let j=1;j<cuts.length;j++){
       if(cuts[j]-cuts[j-1]<1e-10)continue;const t=(cuts[j]+cuts[j-1])/2,now=inZone([a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t]);
-      if(now&&!prior)entries.push(i);prior=now;
+      if(now&&!prior)entries.push({segment:i,fraction:cuts[j-1]});prior=now;
     }
   }
   return entries;
 }
+function zoneEntries(path,zone){return zoneEvents(path,zone).map(event=>event.segment);}
 function windowAt(g,index,departure,profile){
   const timing=profile.official?.timing;
   if(!timing||!ref(timing.evidence)||!Number.isInteger(timing.uncertaintySeconds)||timing.uncertaintySeconds<0||timing.uncertaintySeconds>3600)fail('timing_policy_unverified');
@@ -136,56 +133,7 @@ function windowAt(g,index,departure,profile){
   if(!Number.isFinite(start)||!s)fail('timing_missing');
   return {earliest:new Date(start+Math.max(0,s.start-slack)*1000).toISOString(),latest:new Date(start+(s.end+g.traffic+slack)*1000).toISOString()};
 }
-function priceRoutes(routes,profile,env,eligibility){
-  if(!profile?.official||!Array.isArray(routes)||!routes.length||routes.length>2)fail('fleet_or_account_unverified');
-  const catalog=coverage(env),seen=new Set(),legs=[],reviewHashes=[],fleetHash=digest(profile.official);
-  for(const [index,route]of routes.entries()){
-    const g=geometry(route.data),gate=crossingEvents(g.points,catalog),entries=zoneEntries(g.points,catalog.crz);
-    const matches=catalog.routes.filter(r=>r.geometrySha256===g.hash&&r.originPlaceId===route.origin&&r.destinationPlaceId===route.destination&&r.fleetSha256===fleetHash);
-    if(matches.length!==1)fail('whole_route_coverage_unverified');const manifest=matches[0];
-    const last=tariff.instant(route.departure)+(g.travel+profile.official.timing?.uncertaintySeconds)*1000;
-    if(manifest.catalogSha256!==catalog.catalogHash||manifest.crossing!==gate.crossing||manifest.direction!==gate.direction||
-      manifest.crzEntries!==entries.length||manifest.allTollsReviewed!==true||!ref(manifest.evidence)||
-      tariff.instant(manifest.validFrom)>tariff.instant(route.departure)||tariff.instant(manifest.validUntil)<last||!Array.isArray(manifest.otherTolls))fail('whole_route_coverage_unverified');
-    const chargedRanges=[];
-    for(const item of manifest.otherTolls){
-      const range=item.segments;
-      if(!Array.isArray(range)||range.length!==2||!range.every(Number.isInteger)||range[0]<0||range[1]<range[0]||range[1]>=g.segments.length||
-        range[0]<=gate.end&&range[1]>=gate.start||entries.some(e=>e>=range[0]&&e<=range[1])||chargedRanges.some(r=>range[0]<=r[1]&&range[1]>=r[0])||
-        /google|aggregate|total|lincoln|holland|gwb|crz|congestion/i.test(item.id||''))fail('overlapping_or_unverified_tolls');
-      const first=windowAt(g,range[0],route.departure,profile),last=windowAt(g,range[1],route.departure,profile);
-      if(tariff.instant(item.validFrom)>tariff.instant(first.earliest)||tariff.instant(item.validUntil)<tariff.instant(last.latest))fail('other_toll_schedule_unverified');
-      chargedRanges.push(range);
-    }
-    const crossingTime=windowAt(g,gate.segment,route.departure,profile);
-    let zoneEntryTime=null,dailyContext=null;
-    if(entries.length){
-      // An additional MTA tunnel can change the credit. A PA crossing alone is
-      // insufficient evidence of the complete route's congestion-credit rules.
-      if(!ref(manifest.creditEvidence)||!['eligible','ineligible'].includes(manifest.creditEligibility)||
-        !['none','lincoln','holland'].includes(manifest.crzCreditSource)||
-        manifest.crzCreditSource==='none'&&manifest.creditEligibility!=='ineligible'||
-        manifest.crzCreditSource!=='none'&&(manifest.crzCreditSource!==gate.crossing||gate.direction!=='ny_bound'))fail('credit_coverage_unverified');
-      zoneEntryTime=windowAt(g,entries[0],route.departure,profile);const day=tariff.rateWindow(zoneEntryTime,'mta').day;
-      for(const entry of entries)if(tariff.rateWindow(windowAt(g,entry,route.departure,profile),'mta').day!==day)fail('multiple_zone_days_unverified');
-      const policy=profile.official.dailyPolicy;
-      if(seen.has(day))dailyContext={day,status:'already_charged',evidence:'same-quote-prior-direction'};
-      else if(policy?.kind==='assume_first_entry_estimate'&&policy.operatorApproved===true&&ref(policy.evidence))
-        dailyContext={day,status:'first_entry_estimate',operatorPolicyApproved:true,evidence:policy.evidence};
-      else fail('daily_context_unknown');
-    }
-    const result=tariff.calculateTariff({version:tariff.VERSION,routeVerified:true,coverageVerified:true,coverageEvidence:manifest.evidence,
-      crossing:gate.crossing,direction:gate.direction,crossingTime,fleet:profile.official.fleet,
-      entersCrz:entries.length>0,zoneEntryTime,dailyContext,creditEligibility:manifest.creditEligibility,creditEvidence:manifest.creditEvidence,
-      otherTolls:manifest.otherTolls});
-    if(result.congestionDay)seen.add(result.congestionDay);
-    reviewHashes.push(digest(manifest));
-    legs.push({status:'estimated',amountCents:result.amountCents,components:result.components,
-      crossing:gate.crossing,direction:gate.direction,geometryHash:g.hash,congestionDay:result.congestionDay,dailyAssumption:result.dailyAssumption});
-  }
-  const amountCents=legs.reduce((n,leg)=>n+leg.amountCents,0);
-  if(!Number.isSafeInteger(amountCents)||amountCents<0)fail('invalid_total');
-  return {version:1,format:'official_2026',tariffVersion:tariff.VERSION,status:'estimated',amountCents,estimatedRouteCents:amountCents,allowanceCents:0,
-    eligibility,legs,coverageHash:digest({catalog:catalog.catalogHash,manifests:reviewHashes}),fleetHash};
-}
-module.exports={VERSION,FIELD_MASK,digest,decode,geometry,coverage,crossingEvents,zoneEntries,windowAt,priceRoutes};
+function coverage(env){return require('./toll-road-network').coverage(env);}
+function priceRoutes(routes,profile,env,eligibility,context){return require('./toll-road-network').priceRoutes(routes,profile,env,eligibility,context);}
+module.exports={VERSION,FIELD_MASK,digest,decode,geometry,coverage,validateGeography,crossingEvents,zoneEntries,zoneEvents,windowAt,
+  priceRoutes,point,distance,nearSegment,inside,polygon,convex};

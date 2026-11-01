@@ -12,13 +12,8 @@ const place=(state,id,address)=>({id,formattedAddress:address,displayName:{text:
  addressComponents:[{types:['country'],shortText:'US',longText:'United States'},{types:['administrative_area_level_1'],shortText:state,longText:{NJ:'New Jersey',NY:'New York',CT:'Connecticut',PA:'Pennsylvania'}[state]},...(state==='NY'?[{types:['administrative_area_level_2'],shortText:'New York County',longText:'New York County'}]:[])]});
 const ids={newark:'ChIJ_toll_newark',midtown:'ChIJ_toll_midtown',trenton:'ChIJ_toll_trenton',stamford:'ChIJ_toll_stamford',ewr:'ChIJ7wzsxeFSwokRhvLXxTe087M'};
 const coverage=official.catalog();
-for(const source of [ids.newark,ids.ewr])for(const reverse of [false,true]){
- const route=official.googleRoute('lincoln',reverse?'nj_bound':'ny_bound');
- coverage.routes.push(official.manifest(coverage,route,reverse?ids.midtown:source,reverse?source:ids.midtown,{direction:reverse?'nj_bound':'ny_bound',crzEntries:reverse?0:1}));
-}
 const enabled={ROUTE_TOLLS_ENABLED:'true',TOLL_VEHICLE_PROFILES_JSON:JSON.stringify({suv:profile,escalade:{...profile,official2026:{...profile.official2026,vehicleKey:'escalade'}}}),OFFICIAL_TOLL_COVERAGE_JSON:JSON.stringify(coverage)};
 function editCoverage(h,change){const c=JSON.parse(h.context.process.env.OFFICIAL_TOLL_COVERAGE_JSON);change(c);h.context.process.env.OFFICIAL_TOLL_COVERAGE_JSON=JSON.stringify(c);}
-const roadCost=amount=>({id:'nj_road_fixture',label:'Verified NJ road',amountCents:amount,evidence:'synthetic-road-inventory',tariffVersion:'synthetic-road-tariff-2026',segments:[0,0],validFrom:'2026-01-04T05:01:00Z',validUntil:'2027-01-01T04:59:59Z'});
 function configureLocations(h){h.state.searchResults={
  [normal.pickup]:[place('NJ',ids.newark,normal.pickup)],[normal.dropoff]:[place('NY',ids.midtown,normal.dropoff)],
  'Trenton, NJ':[place('NJ',ids.trenton,'Trenton, NJ')],'Stamford, CT':[place('CT',ids.stamford,'Stamford, CT')],
@@ -57,7 +52,7 @@ test('Routes requests retain distance/duration, request TOLLS once, and send onl
 
 test('verified road costs and official components replace the Google aggregate without adding route or leg prices twice',async t=>{
  const h=await fixture(t);h.state.routeResult=()=>{const route=googleRoute(2900);route.legs[0].travelAdvisory={tollInfo:{estimatedPrice:[{currencyCode:'USD',units:'99'}]}};return route;};
- editCoverage(h,c=>{c.routes.find(r=>r.originPlaceId===ids.newark).otherTolls=[roadCost(225)];});
+ editCoverage(h,c=>official.addRoadCost(c,225));
  const q=await h.request('/api/quote',normal);assert.equal(q.status,200);assert.equal(q.body.tolls.estimatedRouteCents,2304);assert.equal(q.body.tolls.amountCents,2304);assert.equal(q.body.total,103.04);
  const r=await h.request('/api/checkout',{...normal,quoteRevision:q.body.quoteRevision});assert.equal(r.status,200);assert.equal(h.records()[0].quote.total,103.04);assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount,10304);
 });
@@ -220,6 +215,11 @@ test('unsupported future tariff years and unreviewed Brooklyn/JFK additional-cro
  for(const endpoint of ['/api/quote','/api/checkout'])assert.equal((await h.request(endpoint,future)).status,422);
  for(const [dropoff,id]of [['Brooklyn, NY','ChIJ_unreviewed_brooklyn'],['JFK Airport, NY','ChIJ_unreviewed_jfk']]){
   h.state.searchResults[dropoff]=[place('NY',id,dropoff)];
+  h.state.routeResult=request=>{const route=googleRoute(1375,request);if(request.destination.placeId===id){
+   const last=official.googleRoute().legs[0].steps.at(-1),points=require('../services/toll-route-evidence').decode(last.polyline.encodedPolyline);
+   route.legs[0].steps.push({staticDuration:'300s',polyline:{encodedPolyline:official.encode([points.at(-1),[-73.97,40.745]])}});
+   route.duration=route.staticDuration='1500s';route.distanceMeters+=2500;
+  }return route;};
   for(const endpoint of ['/api/quote','/api/checkout'])assert.equal((await h.request(endpoint,{...normal,dropoff})).status,422);
  }
  assert.equal(h.records().length,0);assert.equal(h.state.creates.length,0);
@@ -275,7 +275,7 @@ test('Pay Now and Pay Later save the displayed backend total; browser money is i
 test('changed displayed quote revision fails before reservation/Stripe; retrying the fresh server quote succeeds',async t=>{
  const h=await fixture(t,500),q=await h.request('/api/quote',normal);h.state.routeResult=()=>googleRoute(650);
  assert.equal((await h.request('/api/quote',normal)).body.quoteRevision,q.body.quoteRevision); // Google aggregate is not billing authority.
- editCoverage(h,c=>{c.routes.find(r=>r.originPlaceId===ids.newark).otherTolls=[roadCost(150)];});
+ editCoverage(h,c=>official.addRoadCost(c,150));
  assert.equal((await h.request('/api/checkout',normal)).status,409);assert.equal(h.records().length,0);
  const stale=await h.request('/api/checkout',{...normal,quoteRevision:q.body.quoteRevision});assert.equal(stale.status,409);assert.match(stale.body.error,/quote changed/);assert.equal(h.records().length,0);assert.equal(h.state.creates.length,0);
  const fresh=await h.request('/api/quote',normal);assert.notEqual(fresh.body.quoteRevision,q.body.quoteRevision);assert.equal((await h.request('/api/checkout',{...normal,quoteRevision:fresh.body.quoteRevision})).status,200);assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount,10229);
@@ -289,7 +289,7 @@ test('legacy accepted reservations remain payable across restart without toll fi
 test('a fresh form quote cannot replace an accepted fare: owned retries review the existing reservation before payment',async t=>{
  for(const legacyMode of [true,false])for(const choice of ['later','now']){
   const before=await fixture(t,500,legacyMode?{}:enabled),oldQuote=await before.request('/api/quote',normal),reserved=await before.request('/api/checkout',{...normal,paymentChoice:choice,...(oldQuote.body.quoteRevision?{quoteRevision:oldQuote.body.quoteRevision}:{})}),id=reserved.body.bookingId,accepted=before.records()[0].quote;
-  const h=configureLocations(await harness(t,enabled,before.data));h.state.sessions=before.state.sessions;h.state.routeResult=()=>googleRoute(1375);editCoverage(h,c=>{c.routes.find(r=>r.originPlaceId===ids.newark).otherTolls=[roadCost(150)];});const fresh=await h.request('/api/quote',normal),calls=h.state.googleCalls;
+  const h=configureLocations(await harness(t,enabled,before.data));h.state.sessions=before.state.sessions;h.state.routeResult=()=>googleRoute(1375);editCoverage(h,c=>official.addRoadCost(c,150));const fresh=await h.request('/api/quote',normal),calls=h.state.googleCalls;
   assert.equal((await h.request('/api/checkout',{...normal,quoteRevision:fresh.body.quoteRevision})).status,503);assert.equal(h.state.creates.length,0);
   for(const revision of [fresh.body.quoteRevision,undefined]){
    const retry=await h.request('/api/checkout',{...normal,...(revision?{quoteRevision:revision}:{})},{cookie:access(reserved)});assert.equal(retry.status,200);assert.equal(retry.body.url,'http://localhost:3000/success.html?booking='+id);assert.equal(h.state.creates.length,0);assert.equal(h.records().length,1);assert.equal(h.state.googleCalls,calls);assert.deepEqual(h.records()[0].quote,accepted);
@@ -338,6 +338,79 @@ test('full refunds use the captured total including accepted tolls and never rep
  const before=h.records()[0].quote,trip=(await h.request('/api/customer/trips/'+id,undefined,{cookie:c})).body.trip,calls=h.state.googleCalls;
  h.state.routeResult=()=>{throw Error('no repricing allowed');};
  const cancelled=await h.request('/api/customer/trips/'+id+'/cancel',{expectedPickupAt:trip.management.pickupAt,requestId:crypto.randomUUID(),confirmed:true},{...origin,cookie:c});assert.equal(cancelled.status,200);assert.equal(h.state.googleCalls,calls);assert.equal(h.state.refundRequests.length,1);assert.equal(h.state.refundRequests[0].params.amount,10079);assert.deepEqual(h.records()[0].quote,before);assert.equal(h.records()[0].status,'cancelled');
+});
+
+test('multiple NJ pickups and NYC destinations reuse the same infrastructure for both payment choices and FIRST15',async t=>{
+ for(const choice of ['now','later'])for(let i=0;i<3;i++){
+  const h=await fixture(t),pickup=['10 Synthetic Street, Newark, NJ','20 Synthetic Avenue, Jersey City, NJ','30 Synthetic Road, Hoboken, NJ'][i],dropoff=['10 Synthetic Street, Manhattan, NY','20 Synthetic Avenue, Manhattan, NY','30 Synthetic Road, Manhattan, NY'][i];
+  const from='ChIJ_reusable_pickup_'+i,to='ChIJ_reusable_destination_'+i;
+  h.state.searchResults[pickup]=[place('NJ',from,pickup)];h.state.searchResults[dropoff]=[place('NY',to,dropoff)];
+  h.state.routeResult=()=>{const data=official.googleRoute(),e=require('../services/toll-route-evidence'),points=e.geometry(data).points;
+   const interpolate=(a,b,n)=>a.map((x,j)=>x+(b[j]-x)*n);points[0]=interpolate(points[0],points[1],i*.15);points[4]=interpolate(points[3],points[4],.5+i*.2);
+   data.legs[0].steps=points.slice(1).map((p,j)=>({staticDuration:'300s',polyline:{encodedPolyline:official.encode([points[j],p])}}));return data;};
+  const trip={...normal,pickup,dropoff,promoCode:i===1?'FIRST15':'',paymentChoice:choice},q=await h.request('/api/quote',trip),expected=i===1?8879:10079;
+  assert.equal(q.status,200);assert.equal(q.body.totalCents,expected);assert.equal(q.body.tolls.format,'official_network_2026');assert.equal(q.body.pricingBreakdown.tollsCents,2079);
+  assert.doesNotMatch(JSON.stringify(q.body),/synthetic-suburban|synthetic-road|encodedPolyline|assignmentEvidence|classEvidence|nodesById|roadsById|mock-google-key/);
+  const r=await h.request('/api/checkout',{...trip,quoteRevision:q.body.quoteRevision,tolls:{amountCents:0},network:{allTollsReviewed:true}});assert.equal(r.status,200);assert.equal(h.records().length,1);assert.equal(h.records()[0].quote.totalCents,expected);
+  const complete=await h.request('/api/booking/'+r.body.bookingId+'/checkout',{}, {...origin,cookie:access(r)});assert.equal(complete.status,200);assert.equal(h.state.creates.length,1);assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount,expected);
+  assert.deepEqual(h.records()[0].quote.pricingBreakdown,q.body.pricingBreakdown);
+ }
+});
+
+test('booking quote detects each physical crossing at weekday/weekend rates and never invents a reverse PA toll',async t=>{
+ for(const crossing of ['lincoln','holland','gwb'])for(const [date,time,pa,zone]of [['2026-11-10','08:00',1679,600],['2026-11-07','10:00',1479,600],['2026-11-07','12:00',1679,600],['2026-11-08','08:00',1479,225]]){
+  const h=await fixture(t);h.state.routeResult=()=>official.googleRoute(crossing);const q=await h.request('/api/quote',{...normal,date,time,crossing:'forged',via:'another tunnel'});
+  assert.equal(q.status,200);assert.equal(q.body.tolls.legs[0].crossing,crossing);assert.equal(q.body.tolls.amountCents,pa+(crossing==='gwb'?0:zone));
+  h.state.routeResult=()=>official.googleRoute(crossing,'nj_bound');const reverse=await h.request('/api/quote',{...normal,date,time,pickup:normal.dropoff,dropoff:normal.pickup});assert.equal(reverse.status,200);assert.equal(reverse.body.tolls.amountCents,0);
+ }
+});
+
+test('round-trip road tariffs are looked up independently, added once and never discounted in either payment flow',async t=>{
+ for(const choice of ['now','later']){
+  const h=await fixture(t);editCoverage(h,c=>{const road=official.addRoadCost(c,225);road.rates.push({...road.rates[0],entry:'lincoln_n2',exit:'lincoln_n1',amountCents:350});});
+  const trip={...normal,tripType:'roundtrip',returnDate:'2026-11-12',returnTime:'18:00',promoCode:'FIRST15',paymentChoice:choice},q=await h.request('/api/quote',trip);
+  assert.equal(q.status,200);assert.equal(q.body.tolls.legs[0].amountCents,2304);assert.equal(q.body.tolls.legs[1].amountCents,350);assert.equal(q.body.tolls.amountCents,2654);assert.equal(q.body.totalCents,16254);
+  const r=await h.request('/api/checkout',{...trip,quoteRevision:q.body.quoteRevision});assert.equal(r.status,200);
+  const completed=await h.request('/api/booking/'+r.body.bookingId+'/checkout',{}, {...origin,cookie:access(r)});assert.equal(completed.status,200);assert.equal(h.state.creates.length,1);assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount,16254);
+ }
+});
+
+test('browser road/free/class/history claims cannot fill an unsupported server network or create a reservation',async t=>{
+ const h=await fixture(t,0);editCoverage(h,c=>{c.roads[0].kind='unsupported';});
+ const trip={...normal,roads:[{kind:'free',verified:true}],dailyFacts:{status:'already_charged'},now:Date.now()+1e12,vehicleRef:'synthetic-suburban-01',authorityClasses:{njta:'1'}};
+ assert.equal((await h.request('/api/quote',trip)).status,422);
+ for(const paymentChoice of ['now','later'])assert.equal((await h.request('/api/checkout',{...trip,paymentChoice})).status,422);
+ assert.equal(h.records().length,0);assert.equal(h.state.creates.length,0);
+});
+
+test('accepted v1 official snapshots remain payable after replacement without road/profile configuration or repricing',async t=>{
+ const before=await fixture(t,undefined,{}),q=await before.request('/api/quote',normal),reserved=await before.request('/api/checkout',{...normal,paymentChoice:'later'}),records=before.records();
+ const calculation=require('../services/official-toll-rates').calculateTariff(official.facts({crossingTime:{earliest:'2026-11-10T17:00:00Z',latest:'2026-11-10T17:00:00Z'},zoneEntryTime:{earliest:'2026-11-10T17:00:00Z',latest:'2026-11-10T17:00:00Z'}}));
+ const old={version:1,format:'official_2026',tariffVersion:calculation.version,status:'estimated',amountCents:2079,estimatedRouteCents:2079,allowanceCents:0,
+  eligibility:{policy:'interstate_only',pickupState:'NJ',dropoffState:'NY',pickupPlaceId:ids.newark,dropoffPlaceId:ids.midtown},coverageHash:'a'.repeat(64),fleetHash:'b'.repeat(64),
+  legs:[{status:'estimated',amountCents:2079,components:calculation.components,crossing:'lincoln',direction:'ny_bound',geometryHash:'c'.repeat(64),congestionDay:'2026-11-10',dailyAssumption:null}]};
+ tolls.attachTolls(q.body,old);assert.ok(tolls.validQuote(q.body));records[0].quote=q.body;
+ const h=await harness(t,{ROUTE_TOLLS_ENABLED:'true'},JSON.stringify(records));h.state.routeResult=()=>{throw Error('Accepted snapshot cannot be repriced');};
+ const result=await h.request('/api/booking/'+reserved.body.bookingId+'/checkout',{}, {...origin,cookie:access(reserved)});assert.equal(result.status,200);assert.equal(h.state.googleCalls,0);assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount,10079);assert.deepEqual(h.records()[0].quote,q.body);
+});
+
+test('accepted network snapshots keep their total and session when evidence disappears; invalid network metadata fails validation',async t=>{
+ const h=await fixture(t),q=await h.request('/api/quote',normal),r=await h.request('/api/checkout',{...normal,paymentChoice:'later',quoteRevision:q.body.quoteRevision});
+ assert.equal(r.status,200);for(const key of ['OFFICIAL_TOLL_COVERAGE_JSON','TOLL_VEHICLE_PROFILES_JSON'])delete h.context.process.env[key];h.state.routeResult=()=>{throw Error('No repricing');};const count=h.state.googleCalls;
+ for(let i=0;i<2;i++)assert.equal((await h.request('/api/booking/'+r.body.bookingId+'/checkout',{}, {...origin,cookie:access(r)})).status,200);
+ assert.equal(h.state.googleCalls,count);assert.equal(h.state.creates.length,1);assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount,10079);
+ for(const change of [q=>q.tolls.networkVersion='invented',q=>q.tolls.legs[0].creditSource=null,q=>q.tolls.legs[0].creditSource='gwb']){
+  const changed=structuredClone(q.body);change(changed);assert.equal(tolls.validQuote(changed),false);
+ }
+});
+
+test('harmless provider resampling between quote and checkout keeps the verified infrastructure revision valid',async t=>{
+ const h=await fixture(t),q=await h.request('/api/quote',normal),originalHash=q.body.tolls.legs[0].geometryHash;
+ h.state.routeResult=()=>{const data=official.googleRoute(),geo=require('../services/toll-route-evidence'),points=geo.geometry(data).points,steps=[];
+  for(let i=1;i<points.length;i++){const middle=points[i-1].map((n,j)=>(n+points[i][j])/2);for(const pair of [[points[i-1],middle],[middle,points[i]]])steps.push({staticDuration:'150s',polyline:{encodedPolyline:official.encode(pair)}});}
+  data.legs[0].steps=steps;return data;};
+ const r=await h.request('/api/checkout',{...normal,paymentChoice:'now',quoteRevision:q.body.quoteRevision});assert.equal(r.status,200);assert.equal(h.records().length,1);
+ assert.notEqual(h.records()[0].quote.tolls.legs[0].geometryHash,originalHash);assert.equal(h.records()[0].quote.quoteRevision,q.body.quoteRevision);assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount,10079);
 });
 
 test('PostgreSQL toll snapshots survive JSONB/restart, preserve owner payment amount and roll back corrupt totals',{skip:!process.env.ER_TEST_DATABASE_URL},async t=>{
