@@ -5,7 +5,14 @@ and used by new toll-enabled interstate quotes. It replaces full-route/address-p
 approvals. It is **not activated or production-certified**. Both feature flags
 remain disabled by default. No real fleet classification, settled E-ZPass history,
 public road-network dataset or additional commercial tariff table is certified
-or shipped by this PR. Synthetic test evidence must never be copied into production.
+for activation by this PR. Synthetic test evidence must never be copied into production.
+
+The [real-route acceptance package](toll-acceptance/2026/README.md) adds a sourced,
+unapproved public-road candidate dataset, selected tariff references, a planned
+route matrix and private vehicle-evidence requirements. It leaves the engine
+unchanged. In particular, the detailed MTA schedule's Queens-Midtown/Carey credit
+terms need clarification before those cases can be certified. The general
+up-to-$3 description below must not be treated as that missing proof.
 
 ## Published arithmetic and preserved fares
 

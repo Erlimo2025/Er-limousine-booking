@@ -1,0 +1,17 @@
+{
+  "schema": "er-public-toll-acceptance-integrity-v1",
+  "algorithm": "sha256_utf8_lf",
+  "note": "Response/artifact integrity only; no road, vehicle, rate eligibility or activation is approved.",
+  "files": {
+    "README.md": "351f7e6e0e0c2e20557419eda52a129e3c0851353ff466055a7a0fa24ae119aa",
+    "candidate-nj-roads.geojson": "ad3620669acf14f6df33472e325d2b2dd6abb03ffee74fb3b1bdb2d087d00c3b",
+    "comparison-template.csv": "dca36af73783b49ad9333b54f7ff62cd7ba399e65eb4424beabdbac4f2c66ab8",
+    "geometry-provenance.json": "7382007abd13a63209fd2410b9d7626fc7286314ba1cd40db9569f51ff6a850d",
+    "network-inventory.json": "735fedcea8cda29d59dd90770911d0c6edae940e0b627f57d92f50f89737b5a3",
+    "published-tariff-reference.json": "47b769dda53b171e9f5c770a6be09a1c74832a2b9f5e3149e73caa0ad21c616e",
+    "route-testing-matrix.csv": "0284e47bfb7ffd515683eff9812c0a4a18ea72d16e29e1299c987117e0773dff",
+    "route-testing-matrix.json": "747186aed64ba3286a413898a0f9d4e2566a60a40c96b11975ac1ee9d24dd9e1",
+    "sources.json": "f2f80d95d1c2f9f7cb8f28cb460252629d63cf0d29950ddae466d225d5cc7adb",
+    "vehicle-evidence-checklist.md": "55090dee4c255acaf0a078e201686100ae969dd8b722ef6d2e946c8d5e9a3d90"
+  }
+}

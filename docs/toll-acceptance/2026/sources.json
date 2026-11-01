@@ -1,0 +1,283 @@
+{
+  "schema": "er-toll-acceptance-sources-v1",
+  "status": "research_candidates_not_runtime_approval",
+  "engineCommit": "320a2e9800243f9c1d161fa48908c017692648d6",
+  "approvedForActivation": false,
+  "notes": [
+    "Tariff facts use PA/NJTA/MTA primary sources. Geometry uses separately attributed official NJ state data.",
+    "Only small factual rate extracts are included; original PDFs are linked, not redistributed.",
+    "Hash identifies a fetched response, not independent correctness or certification. Null hash means no downloadable byte snapshot was obtained.",
+    "No paid Google API call, private account access or real route acceptance run was made."
+  ],
+  "sources": [
+    {
+      "reviewedOn": "2026-11-01",
+      "retrieval": "official_page_search_text; direct page is JavaScript shell",
+      "id": "pa_tolls_2026",
+      "agency": "Port Authority of NY & NJ",
+      "title": "Current bridge and tunnel toll table; July 2026 table, Class 1",
+      "url": "https://www.portauthoritybuilds.com/bridges-tunnels/en/tolls.html",
+      "scope": "Class 1, NY/NJ E-ZPass, NY-bound only; physical class, peak/off-peak and Mid-Tier conditions",
+      "notProofOf": "Operator vehicle class, successful tag read, crossing geometry or observed transaction cause"
+    },
+    {
+      "reviewedOn": "2026-11-01",
+      "retrieval": "downloaded_pdf; pages 2-4 text/maps",
+      "id": "pa_guide_2026",
+      "agency": "Port Authority of NY & NJ",
+      "title": "Truckers' Guide, April 2026",
+      "url": "https://www.portauthoritybuilds.com/content/dam/bridges-tunnels/truckers-guides/Truckers%20Guide_Eng_Apr%202026.pdf",
+      "sha256": "c39397a26dca90642f14108c70e95e5d41d5efd54edb2ee722e79a334a22f298",
+      "bytes": 3066545,
+      "scope": "January 4 effective date, direction, periods, Mid-Tier explanation and network overview",
+      "notProofOf": "Guide's truck table is not the passenger Class 1 rate source; overview maps are not surveyed portal/corridor coordinates"
+    },
+    {
+      "reviewedOn": "2026-11-01",
+      "retrieval": "downloaded_pdf; page 2 rendered and visually checked",
+      "id": "njta_turnpike_2026",
+      "agency": "New Jersey Turnpike Authority",
+      "title": "2026 Turnpike Class 1 passenger cars, two axles",
+      "url": "https://www.njta.gov/document/2026-turnpike-class-1-passenger-cars-2-axles/",
+      "downloadUrl": "https://www.njta.gov/wp-content/uploads/2025/12/2026-TPK-Class-1-Passenger-Cars-2-Axles.pdf",
+      "sha256": "0cd5e20d29161265a95a3755322d836cc0a077aaf59bd7c699b64d588cd73777",
+      "bytes": 86336,
+      "scope": "Published entry/exit cells and NJ E-ZPass off-peak schedule; entry time selects period",
+      "notProofOf": "A particular Google route's ticket-road entry/exit, operator class/discount entitlement or blank-cell interpretation"
+    },
+    {
+      "reviewedOn": "2026-11-01",
+      "retrieval": "downloaded_pdf; public text table; Union rows require independent row/plaza review",
+      "id": "njta_parkway_2026",
+      "agency": "New Jersey Turnpike Authority",
+      "title": "2026 Garden State Parkway NJ E-ZPass rates",
+      "url": "https://www.njta.gov/document/2026-parkway-nj-e-zpass-rates/",
+      "sha256": "ca1bf8896b816c5fe07c350c84c1bfb4ae6d401759f474c02f5da4fbb77594c4",
+      "bytes": 212778,
+      "scope": "Barrier/ramp direction, milepost, Class 1 and Union Ramp/Union mainline distinction",
+      "notProofOf": "Which similarly named plaza appears on an operator transaction or whether both plazas were actually used"
+    },
+    {
+      "reviewedOn": "2026-11-01",
+      "retrieval": "web_public_text",
+      "id": "njta_classes",
+      "agency": "New Jersey Turnpike Authority",
+      "title": "Vehicle Class Definitions",
+      "url": "https://www.njta.gov/nj-e-zpass-class-definitions/",
+      "scope": "NJTA Class 1/2 axle and tire definitions; separate from PA and MTA classes"
+    },
+    {
+      "reviewedOn": "2026-11-01",
+      "retrieval": "web_public_text",
+      "id": "njta_discounts",
+      "agency": "New Jersey Turnpike Authority",
+      "title": "Toll Discounts",
+      "url": "https://www.njta.gov/toll-discounts/",
+      "scope": "NJ issuer eligibility, Turnpike time periods and separately enrolled discounts",
+      "notProofOf": "Business account qualifies for every discount; senior and trailer programs expressly exclude business/commercial accounts"
+    },
+    {
+      "reviewedOn": "2026-11-01",
+      "retrieval": "web_public_text",
+      "id": "njta_network_map",
+      "agency": "New Jersey Turnpike Authority",
+      "title": "2025A revenue bonds; NJTA traffic/revenue study Figure 2-2 network overview",
+      "url": "https://www.njta.gov/wp-content/uploads/2025/07/njta-2025a.pdf",
+      "scope": "Agency-published interchange/spur overview only; underlying study is 2023",
+      "notProofOf": "Current surveyed ramp geometry, a 2026 rate or an exact Google path"
+    },
+    {
+      "reviewedOn": "2026-11-01",
+      "retrieval": "web_public_text",
+      "id": "mta_crz_about",
+      "agency": "Metropolitan Transportation Authority",
+      "title": "About the Congestion Relief Zone toll",
+      "url": "https://www.mta.info/fares-tolls/tolls/congestion-relief-zone/about",
+      "scope": "2026 daily charge, periods, geography/exclusions and general up-to credit description",
+      "notProofOf": "Credit amount at every tunnel, operator enrollment, same-day entries or future crossing time"
+    },
+    {
+      "reviewedOn": "2026-11-01",
+      "retrieval": "web_pdf_text; direct file download unavailable here",
+      "id": "mta_crz_schedule",
+      "agency": "Metropolitan Transportation Authority",
+      "title": "CBDTP Toll Schedule",
+      "url": "https://www.mta.info/document/138931",
+      "sha256": null,
+      "scope": "Phase 1 2025-2027 Class 1, distinct tunnel credits, daily cap and reserved adjustments; page 1",
+      "notProofOf": "Resolution of differences between detailed schedule and general overview; do not activate disputed NYC credit cases"
+    },
+    {
+      "reviewedOn": "2026-11-01",
+      "retrieval": "web_pdf_text; map labelled January 2, 2025; direct file download unavailable here",
+      "id": "mta_crz_connections",
+      "agency": "Metropolitan Transportation Authority",
+      "title": "CRZ inbound and outbound river-crossing/excluded-road connection maps",
+      "url": "https://www.mta.info/map/36226",
+      "sha256": null,
+      "scope": "Authoritative policy map and red/black connection legend; both pages",
+      "notProofOf": "Georeferenced boundary, road centerlines, lane-level polygons or current surveyed coordinates"
+    },
+    {
+      "reviewedOn": "2026-11-01",
+      "retrieval": "web_page and web_pdf_text; full PDF download unavailable here",
+      "id": "mta_crossings_2026",
+      "agency": "Metropolitan Transportation Authority",
+      "title": "2026 Bridges and Tunnels tolls by vehicle and full schedule",
+      "url": "https://www.mta.info/fares-tolls/tolls/vehicle-types",
+      "scheduleUrl": "https://www.mta.info/document/180046",
+      "scope": "Effective January 4, 2026, Class 31/32 distinction, NYCSC versus NJ-issued tag prices",
+      "notProofOf": "This Suburban's assigned MTA class, parkway legality or a NYCSC discount"
+    },
+    {
+      "reviewedOn": "2026-11-01",
+      "retrieval": "web_public_text",
+      "id": "mta_ptcp",
+      "agency": "Metropolitan Transportation Authority",
+      "title": "Taxis and For-Hire Vehicles / Per-Trip Charge Plan",
+      "url": "https://www.mta.info/fares-tolls/tolls/congestion-relief-zone/taxi-fhv-tolls",
+      "scope": "TLC licensed base/provider eligibility and enrollment; not all commercial limousine vehicles"
+    },
+    {
+      "reviewedOn": "2026-11-01",
+      "retrieval": "web_public_text",
+      "id": "nj_ezpass_help",
+      "agency": "New Jersey E-ZPass",
+      "title": "Public FAQs and portal navigation",
+      "url": "https://www.ezpassnj.com/en/about/faqs.shtml",
+      "scope": "Tag/vehicle association, account Plans, Transactions, Statements and Service Request labels",
+      "notProofOf": "Any private vehicle, class, transaction or plan has been inspected"
+    },
+    {
+      "reviewedOn": "2026-11-01",
+      "retrieval": "public ArcGIS query, four response pages with hashes in geometry-provenance.json",
+      "id": "njogis_centerlines",
+      "agency": "NJ Office of Information Technology, Office of GIS (NJOGIS)",
+      "title": "Road Centerlines of NJ, Hosted, 3424; NJOGIS public item",
+      "url": "https://www.arcgis.com/sharing/rest/content/items/fc3d0a95921b4026b386643eef5ff088?f=json",
+      "layerUrl": "https://services2.arcgis.com/XVOqAjTOJ5P6ngMu/arcgis/rest/services/Tran_road/FeatureServer/0",
+      "scope": "Supplementary official state geometry; not a PA/NJTA/MTA tariff or toll-free inventory",
+      "attribution": "NJ Office of Information Technology, Office of GIS (NJOGIS)",
+      "conditionsUrl": "https://www.nj.gov/nj/legal.html",
+      "conditions": "Item metadata permits use with attribution and cautions that this is not survey data; no accuracy/timeliness guarantee. Source conditions and suitability must be reviewed before runtime publication.",
+      "notProofOf": "Legal road access, complete topology, toll status, corridor width, exact PA portals or NYC CRZ geometry"
+    },
+    {
+      "reviewedOn": "2026-11-01",
+      "retrieval": "web_public_text",
+      "id": "orange_city_hall",
+      "agency": "City of Orange Township",
+      "title": "Official contact address",
+      "url": "https://www.orangenj.gov/",
+      "scope": "29 North Day Street, Orange, NJ"
+    },
+    {
+      "reviewedOn": "2026-11-01",
+      "retrieval": "web_public_text",
+      "id": "newark_city_hall",
+      "agency": "City of Newark",
+      "title": "Official City Hall contact address",
+      "url": "https://www.newarknj.gov/161/Office-of-the-Mayor",
+      "scope": "920 Mayor Kenneth A. Gibson Blvd, Newark, NJ; resolve the Broad Street alias through verified geocoding"
+    },
+    {
+      "reviewedOn": "2026-11-01",
+      "retrieval": "web_public_text",
+      "id": "west_orange_hall",
+      "agency": "Township of West Orange",
+      "title": "Official Town Hall contact address",
+      "url": "https://westorange.org/Directory.aspx?did=57",
+      "scope": "66 Main Street, West Orange, NJ"
+    },
+    {
+      "reviewedOn": "2026-11-01",
+      "retrieval": "web_public_text",
+      "id": "east_orange_hall",
+      "agency": "City of East Orange",
+      "title": "Official public office address",
+      "url": "https://www.eastorange-nj.gov/m/directory/department?did=35",
+      "scope": "44 City Hall Plaza, East Orange, NJ; departmental ZIP variants on page do not establish endpoint geometry"
+    },
+    {
+      "reviewedOn": "2026-11-01",
+      "retrieval": "web_public_text",
+      "id": "montclair_hall",
+      "agency": "Township of Montclair",
+      "title": "Official municipal facilities",
+      "url": "https://www.montclairnjusa.org/Government/Facilities",
+      "scope": "205 Claremont Avenue, Montclair, NJ"
+    },
+    {
+      "reviewedOn": "2026-11-01",
+      "retrieval": "web_public_text",
+      "id": "midtown_terminal",
+      "agency": "NJ TRANSIT",
+      "title": "Port Authority Bus Terminal station",
+      "url": "https://www.njtransit.com/station/port-authority-bus-terminal",
+      "scope": "West 41st Street and 8th Avenue, Manhattan; exact legal curb and access must be rechecked"
+    },
+    {
+      "reviewedOn": "2026-11-01",
+      "retrieval": "web_public_text",
+      "id": "grand_central",
+      "agency": "Grand Central Terminal",
+      "title": "Official terminal location",
+      "url": "https://grandcentralterminal.com/",
+      "scope": "89 East 42nd Street, Manhattan; validate selected vehicular approach"
+    },
+    {
+      "reviewedOn": "2026-11-01",
+      "retrieval": "web_public_text",
+      "id": "brooklyn_hall",
+      "agency": "Office of the Brooklyn Borough President",
+      "title": "Official Borough Hall location",
+      "url": "https://www.brooklynbp.nyc.gov/contact/",
+      "scope": "209 Joralemon Street, Brooklyn"
+    },
+    {
+      "reviewedOn": "2026-11-01",
+      "retrieval": "web_public_text",
+      "id": "gwb_station",
+      "agency": "Port Authority of NY & NJ",
+      "title": "Official GWB Bus Station location description",
+      "url": "https://www.portauthoritybuilds.com/port-authority/en/business-opportunities/advertising.html",
+      "scope": "178th-179th Streets between Fort Washington and Wadsworth Avenues; test at W178/Fort Washington only after legal curb verification"
+    },
+    {
+      "id": "orange_library",
+      "agency": "Orange Public Library",
+      "title": "Official library contact address",
+      "url": "https://www.orangepl.org/",
+      "scope": "348 Main Street, Orange, NJ",
+      "reviewedOn": "2026-11-01",
+      "retrieval": "web_public_text"
+    },
+    {
+      "id": "newark_penn",
+      "agency": "NJ TRANSIT",
+      "title": "Newark Penn Station",
+      "url": "https://www.njtransit.com/station/newark-penn-station",
+      "scope": "Raymond Plaza between Raymond Boulevard and Market Street, Newark; legal pickup curb must be verified",
+      "reviewedOn": "2026-11-01",
+      "retrieval": "web_public_text"
+    },
+    {
+      "id": "wtc",
+      "agency": "Port Authority of NY & NJ",
+      "title": "Official public board meeting address",
+      "url": "https://www.portauthoritybuilds.com/content/dam/corporate/board-meeting-pdfs/Public%20Agenda%20%2810-23-25%29.pdf",
+      "scope": "4 World Trade Center, 150 Greenwich Street, Manhattan; address proof only",
+      "reviewedOn": "2026-11-01",
+      "retrieval": "web_pdf_text"
+    },
+    {
+      "id": "pa_airports",
+      "agency": "Port Authority of NY & NJ",
+      "title": "2026-2035 Capital Plan public facility map",
+      "url": "https://www.portauthoritybuilds.com/content/dam/redevelopment/home/capital-plan/PANYNJ_CapitalPlan2026-2035.pdf",
+      "scope": "JFK and EWR facility identity only; terminal, access road and pickup curb not verified by this map",
+      "reviewedOn": "2026-11-01",
+      "retrieval": "web_pdf_text"
+    }
+  ]
+}

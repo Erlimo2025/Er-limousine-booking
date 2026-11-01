@@ -43,6 +43,17 @@ stored totals, repeated payment sessions, legacy v1 and new network snapshots,
 unknown-road denial and receipt/refund/ownership regressions. These tests do not
 claim a real vehicle class, agency account, road survey or settled bill was verified.
 
+## Real-route acceptance preparation
+
+The [2026 acceptance package](toll-acceptance/2026/README.md) contains actual
+public NJOGIS candidate geometry, official PA/NJTA/MTA rate/map references,
+explicit coverage gaps, a 45-case planned matrix and the exact private account
+evidence checklist. None of its geometry, vehicle facts or real-route outcomes
+is approved. It is deliberately not a runtime-loadable catalog. The detailed
+MTA NYC tunnel credit terms and later daily-credit settlement are unresolved
+acceptance blockers. No algorithm, fare or production configuration is changed
+by preparing those artifacts.
+
 ## Production evidence still required
 
 * A sourced/licensed and independently reviewed public road/facility network,

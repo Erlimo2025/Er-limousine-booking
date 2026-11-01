@@ -1,0 +1,537 @@
+{
+  "schema": "er-toll-acceptance-tariff-reference-v1",
+  "reviewedOn": "2026-11-01",
+  "currency": "USD",
+  "moneyUnit": "integer_cents",
+  "approvedForActivation": false,
+  "runtimeLoadable": false,
+  "warning": "Published conditional reference amounts, not customer quotes or proof of this vehicle's classification. No source aggregate is added to these components.",
+  "periods": {
+    "timezone": "America/New_York",
+    "portAuthority": {
+      "sourceIds": [
+        "pa_tolls_2026",
+        "pa_guide_2026"
+      ],
+      "effectiveFrom": "2026-01-04T00:01:00-05:00",
+      "reviewThrough": "2026-12-31",
+      "timeBasis": "crossing",
+      "weekdayPeakMinutes": [
+        [
+          360,
+          600
+        ],
+        [
+          960,
+          1200
+        ]
+      ],
+      "weekendPeakMinutes": [
+        [
+          660,
+          1260
+        ]
+      ],
+      "otherMinutes": "off_peak",
+      "boundaryPolicy": "manual_review_if_crossing_time_window_spans_a_change"
+    },
+    "njta": {
+      "sourceIds": [
+        "njta_turnpike_2026",
+        "njta_discounts"
+      ],
+      "publishedYear": 2026,
+      "timeBasis": "ticket_road_entry",
+      "weekdayPeakMinutes": [
+        [
+          420,
+          540
+        ],
+        [
+          990,
+          1110
+        ]
+      ],
+      "weekendPeakMinutes": [
+        [
+          0,
+          1440
+        ]
+      ],
+      "otherMinutes": "NJ_off_peak_only_if_issuer_class_and_plan_eligible",
+      "boundaryPolicy": "manual_review_if_entry_time_window_spans_a_change"
+    },
+    "mtaCrz": {
+      "sourceIds": [
+        "mta_crz_about",
+        "mta_crz_schedule"
+      ],
+      "publishedPhase": "2025-2027 Phase 1; restrict this acceptance package to 2026",
+      "timeBasis": "chargeable_zone_entry",
+      "weekdayPeakMinutes": [
+        [
+          300,
+          1260
+        ]
+      ],
+      "weekendPeakMinutes": [
+        [
+          540,
+          1260
+        ]
+      ],
+      "otherMinutes": "overnight",
+      "boundaryPolicy": "manual_review_if_zone_entry_window_spans_rate_or_New_York_calendar_day",
+      "dateSpecificAdjustments": "Full schedule reserves possible adjustments; verify any applicable current notice instead of inventing holiday or gridlock surcharges"
+    }
+  },
+  "portAuthority": [
+    {
+      "facility": "lincoln",
+      "sourceId": "pa_tolls_2026",
+      "class": "PA_1_two_axles_single_rear_wheels_no_trailer",
+      "eligibleIssuer": [
+        "NY",
+        "NJ"
+      ],
+      "readableTagRequired": true,
+      "nyBoundOffPeakCents": 1479,
+      "nyBoundPeakCents": 1679,
+      "njBoundPaCents": 0,
+      "midTierReferenceCents": 1955,
+      "tollsByMailReferenceCents": 2330,
+      "operatorClassAndTagEvidence": "missing",
+      "note": "Zero reverse PA component does not waive other NJTA/MTA/zone charges on that route. Mid-Tier is an investigation reference, not enabled rate support."
+    },
+    {
+      "facility": "holland",
+      "sourceId": "pa_tolls_2026",
+      "class": "PA_1_two_axles_single_rear_wheels_no_trailer",
+      "eligibleIssuer": [
+        "NY",
+        "NJ"
+      ],
+      "readableTagRequired": true,
+      "nyBoundOffPeakCents": 1479,
+      "nyBoundPeakCents": 1679,
+      "njBoundPaCents": 0,
+      "midTierReferenceCents": 1955,
+      "tollsByMailReferenceCents": 2330,
+      "operatorClassAndTagEvidence": "missing",
+      "note": "Zero reverse PA component does not waive other NJTA/MTA/zone charges on that route. Mid-Tier is an investigation reference, not enabled rate support."
+    },
+    {
+      "facility": "gwb",
+      "sourceId": "pa_tolls_2026",
+      "class": "PA_1_two_axles_single_rear_wheels_no_trailer",
+      "eligibleIssuer": [
+        "NY",
+        "NJ"
+      ],
+      "readableTagRequired": true,
+      "nyBoundOffPeakCents": 1479,
+      "nyBoundPeakCents": 1679,
+      "njBoundPaCents": 0,
+      "midTierReferenceCents": 1955,
+      "tollsByMailReferenceCents": 2330,
+      "operatorClassAndTagEvidence": "missing",
+      "note": "Zero reverse PA component does not waive other NJTA/MTA/zone charges on that route. Mid-Tier is an investigation reference, not enabled rate support."
+    }
+  ],
+  "njtaTurnpike": {
+    "sourceIds": [
+      "njta_turnpike_2026",
+      "njta_classes",
+      "njta_discounts"
+    ],
+    "class": "NJTA_1; independently confirm business vehicle eligibility",
+    "rows": [
+      {
+        "entry": "15W",
+        "exit": "16W",
+        "ezpassCents": 217,
+        "njOffPeakCents": 163,
+        "sourceId": "njta_turnpike_2026",
+        "sourceLocator": "PDF page 2; entry row / exit column; E-ZPass and NJ E-ZPass Off-Peak subrows",
+        "reviewStatus": "published_reference_requires_second_review",
+        "operatorEligibility": "unverified",
+        "routeUse": "unverified"
+      },
+      {
+        "entry": "16W",
+        "exit": "15W",
+        "ezpassCents": 217,
+        "njOffPeakCents": 163,
+        "sourceId": "njta_turnpike_2026",
+        "sourceLocator": "PDF page 2; entry row / exit column; E-ZPass and NJ E-ZPass Off-Peak subrows",
+        "reviewStatus": "published_reference_requires_second_review",
+        "operatorEligibility": "unverified",
+        "routeUse": "unverified"
+      },
+      {
+        "entry": "15W",
+        "exit": "18W",
+        "ezpassCents": 392,
+        "njOffPeakCents": 294,
+        "sourceId": "njta_turnpike_2026",
+        "sourceLocator": "PDF page 2; entry row / exit column; E-ZPass and NJ E-ZPass Off-Peak subrows",
+        "reviewStatus": "published_reference_requires_second_review",
+        "operatorEligibility": "unverified",
+        "routeUse": "unverified"
+      },
+      {
+        "entry": "18W",
+        "exit": "15W",
+        "ezpassCents": 392,
+        "njOffPeakCents": 294,
+        "sourceId": "njta_turnpike_2026",
+        "sourceLocator": "PDF page 2; entry row / exit column; E-ZPass and NJ E-ZPass Off-Peak subrows",
+        "reviewStatus": "published_reference_requires_second_review",
+        "operatorEligibility": "unverified",
+        "routeUse": "unverified"
+      },
+      {
+        "entry": "15W",
+        "exit": "14C",
+        "ezpassCents": 571,
+        "njOffPeakCents": 428,
+        "sourceId": "njta_turnpike_2026",
+        "sourceLocator": "PDF page 2; entry row / exit column; E-ZPass and NJ E-ZPass Off-Peak subrows",
+        "reviewStatus": "published_reference_requires_second_review",
+        "operatorEligibility": "unverified",
+        "routeUse": "unverified"
+      },
+      {
+        "entry": "14C",
+        "exit": "15W",
+        "ezpassCents": 571,
+        "njOffPeakCents": 428,
+        "sourceId": "njta_turnpike_2026",
+        "sourceLocator": "PDF page 2; entry row / exit column; E-ZPass and NJ E-ZPass Off-Peak subrows",
+        "reviewStatus": "published_reference_requires_second_review",
+        "operatorEligibility": "unverified",
+        "routeUse": "unverified"
+      },
+      {
+        "entry": "15E",
+        "exit": "14C",
+        "ezpassCents": 478,
+        "njOffPeakCents": 359,
+        "sourceId": "njta_turnpike_2026",
+        "sourceLocator": "PDF page 2; entry row / exit column; E-ZPass and NJ E-ZPass Off-Peak subrows",
+        "reviewStatus": "published_reference_requires_second_review",
+        "operatorEligibility": "unverified",
+        "routeUse": "unverified"
+      },
+      {
+        "entry": "14C",
+        "exit": "15E",
+        "ezpassCents": 478,
+        "njOffPeakCents": 359,
+        "sourceId": "njta_turnpike_2026",
+        "sourceLocator": "PDF page 2; entry row / exit column; E-ZPass and NJ E-ZPass Off-Peak subrows",
+        "reviewStatus": "published_reference_requires_second_review",
+        "operatorEligibility": "unverified",
+        "routeUse": "unverified"
+      },
+      {
+        "entry": "14",
+        "exit": "14C",
+        "ezpassCents": 392,
+        "njOffPeakCents": 294,
+        "sourceId": "njta_turnpike_2026",
+        "sourceLocator": "PDF page 2; entry row / exit column; E-ZPass and NJ E-ZPass Off-Peak subrows",
+        "reviewStatus": "published_reference_requires_second_review",
+        "operatorEligibility": "unverified",
+        "routeUse": "unverified"
+      },
+      {
+        "entry": "14C",
+        "exit": "14",
+        "ezpassCents": 392,
+        "njOffPeakCents": 294,
+        "sourceId": "njta_turnpike_2026",
+        "sourceLocator": "PDF page 2; entry row / exit column; E-ZPass and NJ E-ZPass Off-Peak subrows",
+        "reviewStatus": "published_reference_requires_second_review",
+        "operatorEligibility": "unverified",
+        "routeUse": "unverified"
+      },
+      {
+        "entry": "13A",
+        "exit": "14C",
+        "ezpassCents": 634,
+        "njOffPeakCents": 476,
+        "sourceId": "njta_turnpike_2026",
+        "sourceLocator": "PDF page 2; entry row / exit column; E-ZPass and NJ E-ZPass Off-Peak subrows",
+        "reviewStatus": "published_reference_requires_second_review",
+        "operatorEligibility": "unverified",
+        "routeUse": "unverified"
+      },
+      {
+        "entry": "14C",
+        "exit": "13A",
+        "ezpassCents": 634,
+        "njOffPeakCents": 476,
+        "sourceId": "njta_turnpike_2026",
+        "sourceLocator": "PDF page 2; entry row / exit column; E-ZPass and NJ E-ZPass Off-Peak subrows",
+        "reviewStatus": "published_reference_requires_second_review",
+        "operatorEligibility": "unverified",
+        "routeUse": "unverified"
+      },
+      {
+        "entry": "14",
+        "exit": "16E",
+        "ezpassCents": 338,
+        "njOffPeakCents": 254,
+        "sourceId": "njta_turnpike_2026",
+        "sourceLocator": "PDF page 2; entry row / exit column; E-ZPass and NJ E-ZPass Off-Peak subrows",
+        "reviewStatus": "published_reference_requires_second_review",
+        "operatorEligibility": "unverified",
+        "routeUse": "unverified"
+      },
+      {
+        "entry": "16E",
+        "exit": "14",
+        "ezpassCents": 338,
+        "njOffPeakCents": 254,
+        "sourceId": "njta_turnpike_2026",
+        "sourceLocator": "PDF page 2; entry row / exit column; E-ZPass and NJ E-ZPass Off-Peak subrows",
+        "reviewStatus": "published_reference_requires_second_review",
+        "operatorEligibility": "unverified",
+        "routeUse": "unverified"
+      },
+      {
+        "entry": "13A",
+        "exit": "18E",
+        "ezpassCents": 750,
+        "njOffPeakCents": 563,
+        "sourceId": "njta_turnpike_2026",
+        "sourceLocator": "PDF page 2; entry row / exit column; E-ZPass and NJ E-ZPass Off-Peak subrows",
+        "reviewStatus": "published_reference_requires_second_review",
+        "operatorEligibility": "unverified",
+        "routeUse": "unverified"
+      },
+      {
+        "entry": "18E",
+        "exit": "13A",
+        "ezpassCents": 750,
+        "njOffPeakCents": 563,
+        "sourceId": "njta_turnpike_2026",
+        "sourceLocator": "PDF page 2; entry row / exit column; E-ZPass and NJ E-ZPass Off-Peak subrows",
+        "reviewStatus": "published_reference_requires_second_review",
+        "operatorEligibility": "unverified",
+        "routeUse": "unverified"
+      },
+      {
+        "entry": "16W",
+        "exit": "18W",
+        "ezpassCents": 229,
+        "njOffPeakCents": 172,
+        "sourceId": "njta_turnpike_2026",
+        "sourceLocator": "PDF page 2; entry row / exit column; E-ZPass and NJ E-ZPass Off-Peak subrows",
+        "reviewStatus": "published_reference_requires_second_review",
+        "operatorEligibility": "unverified",
+        "routeUse": "unverified"
+      },
+      {
+        "entry": "18W",
+        "exit": "16W",
+        "ezpassCents": 229,
+        "njOffPeakCents": 172,
+        "sourceId": "njta_turnpike_2026",
+        "sourceLocator": "PDF page 2; entry row / exit column; E-ZPass and NJ E-ZPass Off-Peak subrows",
+        "reviewStatus": "published_reference_requires_second_review",
+        "operatorEligibility": "unverified",
+        "routeUse": "unverified"
+      }
+    ],
+    "blankCells": "unknown_or_not_applicable; never zero",
+    "excludedDiscounts": "No senior, Green Pass, post-paid-volume, trailer or other special discount assumed"
+  },
+  "parkway": {
+    "sourceId": "njta_parkway_2026",
+    "class": "NJTA_1; not yet confirmed for operator",
+    "plazas": [
+      {
+        "id": "union_mainline",
+        "publishedLabel": "Union",
+        "milepost": "142.7",
+        "direction": "NB",
+        "kind": "barrier",
+        "publishedEzpassCents": 225
+      },
+      {
+        "id": "union_ramp",
+        "publishedLabel": "Union Ramp",
+        "milepost": "142.8",
+        "direction": "NB entrance (NE)",
+        "kind": "ramp",
+        "publishedEzpassCents": 225
+      }
+    ],
+    "reviewStatus": "public_text_reference_pending_independent_plaza_geometry_review",
+    "doubleCountPolicy": "Require the actual traversed plazas and NJTA confirmation of any collection overlap; do not sum these merely because both are nearby"
+  },
+  "mtaCrz": {
+    "sourceIds": [
+      "mta_crz_about",
+      "mta_crz_schedule"
+    ],
+    "conditionalClass": "MTA CRZ standard daily passenger/small-commercial Class 1; account evidence missing",
+    "peakCents": 900,
+    "overnightCents": 225,
+    "standardDailyCap": "once per New York calendar day; settled vehicle-specific context required",
+    "tlcPerTripPlanAssumed": false,
+    "credits": [
+      {
+        "source": "lincoln",
+        "peakMaximumCents": 300,
+        "overnightCents": 0,
+        "status": "published_reference_subject_to_vehicle_tag_entry_and_daily_eligibility"
+      },
+      {
+        "source": "holland",
+        "peakMaximumCents": 300,
+        "overnightCents": 0,
+        "status": "published_reference_subject_to_vehicle_tag_entry_and_daily_eligibility"
+      },
+      {
+        "source": "gwb",
+        "peakMaximumCents": 0,
+        "overnightCents": 0,
+        "status": "not_a_qualifying_tunnel_credit_source"
+      },
+      {
+        "source": "queens_midtown",
+        "peakMaximumCents": null,
+        "overnightCents": 0,
+        "status": "manual_review_official_source_detail_conflict",
+        "observations": [
+          {
+            "sourceId": "mta_crz_schedule",
+            "phase1Cents": 150,
+            "locator": "page 1 Class 1 Queens-Midtown/Hugh L. Carey row"
+          },
+          {
+            "sourceId": "mta_crz_about",
+            "upToCents": 300,
+            "locator": "Crossing credits general overview, not a tunnel-specific amount"
+          }
+        ]
+      },
+      {
+        "source": "hugh_carey",
+        "peakMaximumCents": null,
+        "overnightCents": 0,
+        "status": "manual_review_official_source_detail_conflict",
+        "observations": [
+          {
+            "sourceId": "mta_crz_schedule",
+            "phase1Cents": 150,
+            "locator": "page 1 Class 1 Queens-Midtown/Hugh L. Carey row"
+          },
+          {
+            "sourceId": "mta_crz_about",
+            "upToCents": 300,
+            "locator": "Crossing credits general overview, not a tunnel-specific amount"
+          }
+        ]
+      }
+    ],
+    "unresolved": "Detailed schedule also describes per-trip credits and a daily maximum. Confirm current settlement rules for later eligible tunnels, exit-only credits, overnight-then-peak entries and previously charged days; do not assume skipping every later credit matches settlement."
+  },
+  "mtaAdditionalCrossings": {
+    "sourceId": "mta_crossings_2026",
+    "effectiveFrom": "2026-01-04",
+    "conditionalClass": "MTA Bridges and Tunnels 31, independent evidence missing",
+    "issuer": "NJ-issued, non-NYCSC; do not apply the lower NYCSC E-ZPass column",
+    "groups": [
+      {
+        "facilities": [
+          "queens_midtown",
+          "hugh_carey",
+          "rfk",
+          "bronx_whitestone",
+          "throgs_neck",
+          "verrazzano"
+        ],
+        "publishedNonNycscCents": 1203,
+        "publishedNycscComparisonCents": 746
+      },
+      {
+        "facilities": [
+          "henry_hudson"
+        ],
+        "publishedNonNycscCents": 887,
+        "publishedNycscComparisonCents": 342
+      },
+      {
+        "facilities": [
+          "cross_bay",
+          "marine_parkway"
+        ],
+        "publishedNonNycscCents": 602,
+        "publishedNycscComparisonCents": 280
+      }
+    ],
+    "eligibilityStatus": "unverified; confirm actual authority class, registered MGW/body classification, tag issuer and legal road access; no customer tariff configured"
+  },
+  "conditionalComponentExamples": [
+    {
+      "id": "lincoln_weekday_peak",
+      "paCents": 1679,
+      "crzCents": 900,
+      "creditCents": -300,
+      "knownComponentsCents": 2279,
+      "status": "illustration_only_not_a_route_quote",
+      "assumptions": "Verified PA Class 1/tag and standard daily CRZ class; first chargeable entry and eligible credit where shown; stable facility times",
+      "otherRouteTollsCents": null,
+      "totalRouteTollsCents": null
+    },
+    {
+      "id": "holland_weekday_noon",
+      "paCents": 1479,
+      "crzCents": 900,
+      "creditCents": -300,
+      "knownComponentsCents": 2079,
+      "status": "illustration_only_not_a_route_quote",
+      "assumptions": "Verified PA Class 1/tag and standard daily CRZ class; first chargeable entry and eligible credit where shown; stable facility times",
+      "otherRouteTollsCents": null,
+      "totalRouteTollsCents": null
+    },
+    {
+      "id": "lincoln_weekday_overnight",
+      "paCents": 1479,
+      "crzCents": 225,
+      "creditCents": 0,
+      "knownComponentsCents": 1704,
+      "status": "illustration_only_not_a_route_quote",
+      "assumptions": "Verified PA Class 1/tag and standard daily CRZ class; first chargeable entry and eligible credit where shown; stable facility times",
+      "otherRouteTollsCents": null,
+      "totalRouteTollsCents": null
+    },
+    {
+      "id": "gwb_no_zone_entry_peak",
+      "paCents": 1679,
+      "crzCents": 0,
+      "creditCents": 0,
+      "knownComponentsCents": 1679,
+      "status": "illustration_only_not_a_route_quote",
+      "assumptions": "Verified PA Class 1/tag and standard daily CRZ class; first chargeable entry and eligible credit where shown; stable facility times",
+      "otherRouteTollsCents": null,
+      "totalRouteTollsCents": null
+    }
+  ],
+  "runtimeAcceptanceBlockers": [
+    {
+      "id": "NYC_CREDIT_AMOUNT",
+      "area": "services/official-toll-rates.js calculateCongestion()",
+      "finding": "Current engine uses up to 300 cents for Queens-Midtown/Carey; the detailed published schedule contains 150 cents. No engine change in this data-preparation task. Keep those cases unsupported pending MTA confirmation and any separately reviewed correction."
+    },
+    {
+      "id": "DAILY_CREDIT_CONTEXT",
+      "area": "services/toll-road-network.js daily context and calculateCongestion()",
+      "finding": "Current model skips charge and credit after an already-charged entry. Obtain current MTA explanation of later credits and midnight/overnight/peak cases; demonstrate accepted comparison policy before approval."
+    }
+  ]
+}
