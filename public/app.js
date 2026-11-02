@@ -66,6 +66,11 @@ const mobileBooking = window.matchMedia("(max-width: 650px)");
 const bookingPanel = document.getElementById("book");
 const tripStep = document.getElementById("bookingTripStep");
 const customerStep = document.getElementById("bookingCustomerStep");
+const summaryStep = document.getElementById("bookingSummaryStep");
+let activeBookingStep = 1;
+let quoteRequestGeneration = 0;
+let quoteController = null;
+let quotedFormKey = null;
 const mobileSpecial = document.querySelector(".airport-special");
 const headerActions = document.querySelector(".top-bar-actions");
 const specialPosition = document.createComment("Original desktop special position");
@@ -118,38 +123,67 @@ document.getElementById("mainNavigation").addEventListener("click", event => {
 });
 
 function showBookingStep(step, focus = false) {
-  bookingPanel.dataset.mobileStep = String(step);
-  document.getElementById("bookingStepLabel").textContent = step === 2
-    ? "Step 2 of 2 — Your Information"
-    : "Step 1 of 2 — Trip Details";
-  if (mobileBooking.matches && focus) {
+  if (reservationBusy) return;
+  if (step === 3 && !hasCurrentQuote()) step = 2;
+  activeBookingStep = step;
+  bookingPanel.dataset.bookingStep = String(step);
+  tripStep.hidden = step !== 1;
+  customerStep.hidden = step !== 2;
+  summaryStep.hidden = step !== 3;
+  document.getElementById("bookingBack").hidden = step === 1;
+  document.getElementById("bookingStepLabel").textContent =
+    `Step ${step} of 3 — ${["Trip Details", "Customer Information", "Trip Summary & Payment"][step - 1]}`;
+  updatePaymentControls();
+  if (focus) {
     bookingPanel.scrollIntoView({block: "start", behavior: "smooth"});
-    document.getElementById(step === 2 ? "firstName" : "pickup").focus({preventScroll: true});
+    document.getElementById(step === 3 ? "bookingSummaryHeading" : step === 2 ? "firstName" : "pickup").focus({preventScroll: true});
   }
 }
 
-function continueBooking() {
-  for (const input of tripStep.querySelectorAll("input, select")) {
-    if (!input.disabled && !input.checkValidity()) {
+function validateBookingStep(panel, step) {
+  for (const input of panel.querySelectorAll("input, select, textarea")) {
+    if (input.disabled) continue;
+    input.setCustomValidity(input.required && !input.value.trim() ? "Please complete this field." : "");
+    if (!input.checkValidity()) {
+      showBookingStep(step);
       input.reportValidity();
-      return;
+      return false;
     }
   }
+  return true;
+}
+
+function continueBooking() {
+  if (reservationBusy || !validateBookingStep(tripStep, 1)) return;
+  // Leaving Trip Details accepts the address currently shown, not a later GPS result.
+  if (typeof pickupLocation !== 'undefined' && pickupLocation) pickupLocation.cancel();
   showBookingStep(2, true);
 }
 
 document.getElementById("bookingContinue").addEventListener("click", continueBooking);
-document.getElementById("bookingBack").addEventListener("click", () => showBookingStep(1, true));
+document.getElementById("bookingBack").addEventListener("click", () => {
+  if (reservationBusy) return;
+  const previous = activeBookingStep === 3 ? 2 : 1;
+  resetQuote();
+  clearNotice();
+  showBookingStep(previous, true);
+});
+document.getElementById("bookingEditTrip").addEventListener("click", () => {
+  if (reservationBusy) return;
+  resetQuote();
+  clearNotice();
+  showBookingStep(1, true);
+});
 form.addEventListener("invalid", event => {
-  if (mobileBooking.matches) showBookingStep(tripStep.contains(event.target) ? 1 : 2);
+  showBookingStep(tripStep.contains(event.target) ? 1 : 2);
 }, true);
 form.addEventListener("keydown", event => {
-  if (mobileBooking.matches && bookingPanel.dataset.mobileStep !== "2" && event.key === "Enter" && event.target.matches("input")) {
+  if (event.key === "Enter" && event.target.matches("input")) {
     event.preventDefault();
-    continueBooking();
+    if (activeBookingStep === 1) continueBooking();
+    else if (activeBookingStep === 2) void requestQuote({currentTarget: quoteBtn});
   }
 });
-mobileBooking.addEventListener("change", () => showBookingStep(1));
 
 const flightField = document.getElementById("flightField");
 const flightNumber = document.getElementById("flightNumber");
@@ -218,6 +252,9 @@ function getFormData() {
     Object.fromEntries(
       new FormData(form).entries()
     );
+
+  // The fixed-offer selector is disabled visually but still belongs to this form.
+  data.vehicle = vehicle.value;
 
   if (data.promoCode) {
     data.promoCode =
@@ -409,11 +446,16 @@ function showPromoResult(data) {
 ========================================= */
 
 function resetQuote() {
-
+  quoteRequestGeneration++;
+  if (quoteController) quoteController.abort();
+  quoteController = null;
+  quotedFormKey = null;
   currentQuote = null;
   quoteArea.classList.remove("has-completed-quote");
 
-  payBtn.disabled = true;
+  updatePaymentControls();
+  quoteBtn.disabled = reservationBusy;
+  quoteBtn.textContent = "CONTINUE TO TRIP SUMMARY →";
 
   sumMiles.textContent = "—";
   sumMinutes.textContent = "—";
@@ -432,6 +474,23 @@ function resetQuote() {
   if (promoSummary) {
     promoSummary.hidden = true;
   }
+  if (activeBookingStep === 3 && !reservationBusy) {
+    showBookingStep(2);
+    showNotice("Your booking details changed. Continue to Trip Summary for an updated quote.");
+  }
+}
+
+function hasCurrentQuote() {
+  return !!currentQuote && quotedFormKey === JSON.stringify(getFormData());
+}
+
+function updatePaymentControls() {
+  const disabled = reservationBusy || activeBookingStep !== 3 || !hasCurrentQuote();
+  quoteBtn.disabled = reservationBusy || !!quoteController;
+  payBtn.disabled = disabled;
+  if (payLaterBtn) payLaterBtn.disabled = disabled;
+  document.getElementById("bookingBack").disabled = reservationBusy;
+  document.getElementById("bookingEditTrip").disabled = reservationBusy;
 }
 
 
@@ -468,6 +527,7 @@ function clearSpecialOffer() {
 
 
 function activateEwrManhattanSpecial() {
+  if (reservationBusy) return;
   if(typeof pickupLocation!=='undefined' && pickupLocation)pickupLocation.cancel();
 
   showBookingStep(1);
@@ -539,6 +599,7 @@ if (ewrManhattanSpecialBtn) {
 ========================================= */
 
 function selectTripType(type) {
+  if (reservationBusy) return;
   if(typeof pickupLocation!=='undefined' && pickupLocation)pickupLocation.cancel();
 
   showBookingStep(1);
@@ -933,9 +994,15 @@ function renderFareBreakdown(data, review = false) {
   container.replaceChildren();container.hidden=true;
   if(review){container.textContent='Toll estimate unavailable — contact us for a final quote';container.hidden=false;return;}
   const p=data?.pricingBreakdown;
-  if(!p || p.version!==1)return;
   const amount=value=>formatMoney(value/100,data.currency);
   const row=(label,value)=>{const item=document.createElement('div'),name=document.createElement('span'),price=document.createElement('strong');item.className='fare-breakdown-row';name.textContent=label;price.textContent=value;item.append(name,price);container.append(item);};
+  if(!p || p.version!==1){
+    if(!data)return;
+    // Legacy/flag-off and hourly quotes have no separate toll snapshot. Display
+    // their server total unchanged, without inventing a zero-dollar toll estimate.
+    row('Trip Fare',formatMoney(data.total,data.currency));row('Tolls','Included');
+    container.hidden=false;return;
+  }
   const fare=Number.isSafeInteger(p.totalCents)?p.totalCents-(p.tollsCents||0):p.tripFareCents+p.surcharges.reduce((n,s)=>n+s.amountCents,0)-p.discountCents+p.gratuityCents;
   row('Trip Fare',amount(fare));
   row('Tolls',p.tollsIncluded||data.tolls?.status==='absorbed'?'Included':amount(p.tollsCents||0));
@@ -943,13 +1010,11 @@ function renderFareBreakdown(data, review = false) {
 }
 
 async function requestQuote(event) {
-
-  const showMobileSummary = event?.currentTarget === quoteBtn || quoteArea.classList.contains("has-completed-quote");
-  quoteArea.classList.remove("has-completed-quote");
-
+  if (reservationBusy || quoteController) return null;
+  const goToSummary = event?.currentTarget === quoteBtn;
+  resetQuote();
+  const generation = quoteRequestGeneration;
   clearNotice();
-  if(typeof renderFareBreakdown==='function')renderFareBreakdown(null);
-  sumTotal.textContent='—';
 
   quoteBtn.disabled = true;
 
@@ -962,33 +1027,24 @@ async function requestQuote(event) {
 
   try {
 
-    const wasDisabled =
-      vehicle.disabled;
-
-    vehicle.disabled = false;
-
-    const valid =
-      form.reportValidity();
-
-    if (!valid) {
-
-      vehicle.disabled =
-        wasDisabled;
-
+    if (!validateBookingStep(tripStep, 1) || !validateBookingStep(customerStep, 2)) {
       return null;
     }
 
     const bookingData =
       getFormData();
 
-    vehicle.disabled =
-      wasDisabled;
+    const requestKey = JSON.stringify(bookingData);
+    const controller = new AbortController();
+    quoteController = controller;
 
     const response =
       await fetch(
         "/api/quote",
         {
           method: "POST",
+          cache: "no-store",
+          signal: controller.signal,
 
           headers: {
             "Content-Type":
@@ -1005,12 +1061,18 @@ async function requestQuote(event) {
     const data =
       await response.json();
 
+    if (generation !== quoteRequestGeneration) return null;
+    if (requestKey !== JSON.stringify(getFormData())) {
+      resetQuote();
+      showNotice("Your booking details changed. Continue to Trip Summary for an updated quote.");
+      return null;
+    }
+
     if (!response.ok) {
       if(data.code==='TOLL_ESTIMATE_UNAVAILABLE'){
         sumMiles.textContent='—';sumMinutes.textContent='—';sumMilesLabel.textContent='Distance';sumMinutesLabel.textContent='Estimated Drive Time';
         sumTotal.textContent='Contact us';sumTotalLabel.textContent='Final quote required';
         if(typeof renderFareBreakdown==='function')renderFareBreakdown(null,true);
-        if(showMobileSummary)quoteArea.classList.add('has-completed-quote');
       }
 
       throw new Error(
@@ -1019,8 +1081,11 @@ async function requestQuote(event) {
       );
     }
 
+    if (!Number.isFinite(data.total) || data.total <= 0) throw new Error("Unable to calculate quote. Please try again.");
+
     currentQuote =
       data;
+    quotedFormKey = requestKey;
 
     sumVehicle.textContent =
       data.vehicleKey === "suv" ? "Luxury SUV" : data.vehicle;
@@ -1030,8 +1095,7 @@ async function requestQuote(event) {
       data.miles === undefined
     ) {
 
-      sumMiles.textContent =
-        "Hourly";
+      sumMiles.textContent = "As directed";
 
     } else {
 
@@ -1044,10 +1108,7 @@ async function requestQuote(event) {
       data.minutes === undefined
     ) {
 
-      sumMinutes.textContent =
-        data.hourlyRate
-          ? `${data.hours} hours • $${data.hourlyRate}/hour`
-          : `${hours.value} hours`;
+      sumMinutes.textContent = `${data.hours || hours.value} hours reserved`;
 
     } else {
 
@@ -1061,23 +1122,22 @@ async function requestQuote(event) {
         data.currency
       );
 
-    // Reuse the same four summary cells; only Round Trip quote content changes.
-    sumMilesLabel.textContent = data.roundTrip ? "Outbound fare" : "Distance";
-    sumMinutesLabel.textContent = data.roundTrip ? "Return fare" : "Estimated Drive Time";
-    sumTotalLabel.textContent = data.roundTrip ? "Round Trip total" : "Total";
-    if (data.roundTrip) {
-      sumMiles.textContent = formatMoney(data.roundTrip.outbound.fare, data.currency);
-      sumMinutes.textContent = formatMoney(data.roundTrip.return.fare, data.currency);
-    }
+    sumMilesLabel.textContent = data.roundTrip ? "Distance (round trip)" : "Distance";
+    sumMinutesLabel.textContent = data.roundTrip ? "Estimated Drive Time (round trip)" : "Estimated Drive Time";
+    sumTotalLabel.textContent = "Total";
+    document.getElementById("sumPickup").textContent = bookingData.pickup;
+    document.getElementById("sumDestination").textContent = bookingData.dropoff;
+    document.getElementById("sumPickupTime").textContent = `${bookingData.date} · ${bookingData.time} (New York time)`;
+    document.getElementById("summaryReturnRow").hidden = bookingData.tripType !== "roundtrip";
+    document.getElementById("sumReturnTime").textContent = bookingData.tripType === "roundtrip"
+      ? `${bookingData.returnDate} · ${bookingData.returnTime} (New York time)` : "—";
 
     showPromoResult(data);
     if(typeof renderFareBreakdown==='function')renderFareBreakdown(data);
-    if(data.pricingBreakdown){sumTotalLabel.textContent='Total';if(promoSummary)promoSummary.hidden=true;}
-
-    if (showMobileSummary) quoteArea.classList.add("has-completed-quote");
-
-    payBtn.disabled =
-      false;
+    if(promoSummary)promoSummary.hidden=true;
+    quoteArea.classList.add("has-completed-quote");
+    if (goToSummary) showBookingStep(3, true);
+    updatePaymentControls();
 
     if (data.fixedOffer) {
 
@@ -1092,17 +1152,14 @@ async function requestQuote(event) {
     ) {
 
       showNotice(
-        `${data.promotion.code} applied — you saved ${formatMoney(
-          data.discount,
-          data.currency
-        )}.`,
+        `${data.promotion.code} applied. Your discount is included in Trip Fare.`,
         "success"
       );
 
-    } else {
+    } else if (!goToSummary) {
 
       showNotice(
-        "Quote ready. Continue to secure payment.",
+        "Quote ready. Review your trip before reserving.",
         "success"
       );
     }
@@ -1110,6 +1167,10 @@ async function requestQuote(event) {
     return data;
 
   } catch (error) {
+    if (generation !== quoteRequestGeneration) return null;
+    currentQuote = null;
+    quotedFormKey = null;
+    updatePaymentControls();
 
     if (promoSummary) {
       promoSummary.hidden = true;
@@ -1123,12 +1184,11 @@ async function requestQuote(event) {
     return null;
 
   } finally {
-
-    quoteBtn.disabled =
-      false;
-
-    quoteBtn.textContent =
-      "Get Quote";
+    if (generation === quoteRequestGeneration) {
+      quoteController = null;
+      quoteBtn.disabled = false;
+      quoteBtn.textContent = "CONTINUE TO TRIP SUMMARY →";
+    }
   }
 }
 
@@ -1233,11 +1293,11 @@ form.addEventListener(
       }
     }
 
-    if (currentQuote) {
-      resetQuote();
-    }
+    event.target.setCustomValidity?.("");
+    resetQuote();
   }
 );
+form.addEventListener("change", () => resetQuote());
 
 
 /* =========================================
@@ -1250,21 +1310,20 @@ form.addEventListener(
 
     event.preventDefault();
     if(reservationBusy)return;
-    reservationBusy=true;
     const paymentChoice=event.submitter?.id==='payLaterBtn'?'later':'now';
 
     clearNotice();
 
-    if (!currentQuote) {
-
-      const quote =
-        await requestQuote();
-
-      if (!quote) {
-        reservationBusy=false;
-        return;
-      }
+    if (activeBookingStep !== 3 || !hasCurrentQuote()) {
+      resetQuote();
+      showBookingStep(activeBookingStep === 1 ? 1 : 2, true);
+      showNotice("Continue to Trip Summary and review an updated quote before reserving.");
+      return;
     }
+    if (!validateBookingStep(tripStep, 1) || !validateBookingStep(customerStep, 2)) return;
+    reservationBusy=true;
+    updatePaymentControls();
+    const paymentQuote = currentQuote;
 
     payBtn.disabled =
       true;
@@ -1299,7 +1358,7 @@ form.addEventListener(
 
             body:
               JSON.stringify(
-                {...bookingData,paymentChoice,...(currentQuote.quoteRevision?{quoteRevision:currentQuote.quoteRevision}:{})}
+                {...bookingData,paymentChoice,...(paymentQuote.quoteRevision?{quoteRevision:paymentQuote.quoteRevision}:{})}
               )
           }
         );
@@ -1337,12 +1396,11 @@ form.addEventListener(
         "Unable to start checkout."
       );
 
-      payBtn.disabled = !currentQuote;
-
       payBtn.textContent =
         "RESERVE & PAY NOW";
       reservationBusy=false;
-      if(payLaterBtn)payLaterBtn.disabled=!currentQuote;
+      if (!hasCurrentQuote()) showBookingStep(2, true);
+      updatePaymentControls();
     }
   }
 );
@@ -1362,6 +1420,7 @@ document
       button.addEventListener(
         "click",
         () => {
+          if (reservationBusy) return;
 
           clearSpecialOffer();
 
@@ -1550,12 +1609,10 @@ async function initialize() {
 
 initialize();
 
-// Keep both reservation choices synchronized with authoritative quote readiness.
-if(payLaterBtn){const paymentObserver=new MutationObserver(()=>{payLaterBtn.disabled=payBtn.disabled||reservationBusy;});paymentObserver.observe(payBtn,{attributes:true,attributeFilter:['disabled']});}
-
 // Restore booking controls after browser Back; payment status is never inferred here.
 window.addEventListener('pageshow',event=>{
  if(!event.persisted)return;
- reservationBusy=false;payBtn.textContent='RESERVE & PAY NOW';payBtn.disabled=!currentQuote;
- if(payLaterBtn)payLaterBtn.disabled=!currentQuote;
+ reservationBusy=false;payBtn.textContent='RESERVE & PAY NOW';
+ resetQuote();
+ if(activeBookingStep===3)showBookingStep(2);
 });

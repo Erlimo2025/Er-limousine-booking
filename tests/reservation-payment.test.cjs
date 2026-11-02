@@ -116,11 +116,11 @@ test('booking choice double submit is blocked and browser sends only intent, nev
  const src=fs.readFileSync(path.join(__dirname,'../public/app.js'),'utf8').replace(/\r\n/g,'\n'),start=src.indexOf('form.addEventListener(\n  "submit"'),end=src.indexOf('/* =========================================',start+20);
  assert.ok(start>=0&&end>start,'Booking-submit test source boundaries must exist.');
  let handler,release,calls=0,sent;
- const ctx={form:{addEventListener:(e,f)=>handler=f},payBtn:{disabled:false},payLaterBtn:{disabled:false},reservationBusy:false,currentQuote:{total:80},vehicle:{disabled:false},clearNotice(){},getFormData:()=>({...booking,vehicle:'suv'}),showNotice(){},window:{location:{}},
+ const ctx={form:{addEventListener:(e,f)=>handler=f},payBtn:{disabled:false},payLaterBtn:{disabled:false},reservationBusy:false,currentQuote:{total:80,quoteRevision:'d'.repeat(64)},activeBookingStep:3,hasCurrentQuote:()=>true,validateBookingStep:()=>true,tripStep:{},customerStep:{},updatePaymentControls(){},vehicle:{disabled:false},clearNotice(){},getFormData:()=>({...booking,vehicle:'suv'}),showNotice(){},window:{location:{}},
  fetch:async(url,options)=>{calls++;sent=JSON.parse(options.body);await new Promise(r=>release=r);return {ok:true,json:async()=>({url:'http://localhost:3000/success.html?booking=fixture'})};}};
  vm.createContext(ctx);vm.runInContext(src.slice(start,end),ctx);
  const first=handler({preventDefault(){},submitter:{id:'payLaterBtn'}});await Promise.resolve();await handler({preventDefault(){},submitter:{id:'payLaterBtn'}});
- assert.equal(calls,1);assert.equal(sent.paymentChoice,'later');assert.equal(sent.vehicle,'suv');assert.ok(!Object.hasOwn(sent,'total'));assert.ok(!Object.hasOwn(sent,'amount'));release();await first;
+ assert.equal(calls,1);assert.equal(sent.paymentChoice,'later');assert.equal(sent.vehicle,'suv');assert.equal(sent.quoteRevision,'d'.repeat(64));assert.ok(!Object.hasOwn(sent,'total'));assert.ok(!Object.hasOwn(sent,'amount'));release();await first;
 });
 test('confirmation page re-fetches status and never treats Stripe return parameters as Paid',async()=>{
  const html=fs.readFileSync(path.join(__dirname,'../public/success.html'),'utf8'),script=html.match(/<script>([\s\S]*?)<\/script>/)[1],events={},elements={};
@@ -155,10 +155,11 @@ test('FIRST15 cancellation never releases an open payment claim; unsubmitted or 
  assert.equal((await payment(h,second.body.bookingId,cookie(a))).status,409);
  assert.equal((await reserve(h,{promoCode:'FIRST15',time:'15:00'},auth)).status,200);
 });
-test('browser Back restores both booking controls without claiming payment success',()=>{
+test('browser Back invalidates the reviewed quote and requires review without claiming payment success',()=>{
  const s=fs.readFileSync(path.join(__dirname,'../public/app.js'),'utf8'),start=s.indexOf('// Restore booking controls after browser Back');
- let restore;const ctx={window:{addEventListener:(e,f)=>restore=f},reservationBusy:true,payBtn:{disabled:true,textContent:'Opening secure checkout'},payLaterBtn:{disabled:true},currentQuote:{total:100}};
- vm.createContext(ctx);vm.runInContext(s.slice(start),ctx);restore({persisted:true});assert.equal(ctx.reservationBusy,false);assert.equal(ctx.payBtn.disabled,false);assert.equal(ctx.payLaterBtn.disabled,false);assert.equal(ctx.payBtn.textContent,'RESERVE & PAY NOW');
+ let restore;const ctx={window:{addEventListener:(e,f)=>restore=f},reservationBusy:true,payBtn:{disabled:true,textContent:'Opening secure checkout'},payLaterBtn:{disabled:true},currentQuote:{total:100},activeBookingStep:3,
+  resetQuote(){ctx.currentQuote=null;ctx.payBtn.disabled=true;ctx.payLaterBtn.disabled=true;},showBookingStep(step){ctx.activeBookingStep=step;}};
+ vm.createContext(ctx);vm.runInContext(s.slice(start),ctx);restore({persisted:true});assert.equal(ctx.reservationBusy,false);assert.equal(ctx.currentQuote,null);assert.equal(ctx.activeBookingStep,2);assert.equal(ctx.payBtn.disabled,true);assert.equal(ctx.payLaterBtn.disabled,true);assert.equal(ctx.payBtn.textContent,'RESERVE & PAY NOW');
  ctx.currentQuote=null;restore({persisted:true});assert.equal(ctx.payBtn.disabled,true);assert.equal(ctx.payLaterBtn.disabled,true);
 });
 const adminSession=async h=>(await h.request('/api/admin/login',{token:'local-test-token'})).headers.getSetCookie()[0].split(';')[0];

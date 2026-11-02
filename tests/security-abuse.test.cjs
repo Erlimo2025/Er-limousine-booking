@@ -1493,10 +1493,10 @@ test('EWR drop-off selector: general and A/B/C autocomplete, exact IDs, independ
   const pickupField=makeField(),dropoffField=makeField();pickupField.classList.owner=pickupField;dropoffField.classList.owner=dropoffField;
   const makeSelect=key=>({value:'',disabled:true,addEventListener(event,fn){handlers[key]=fn;}});
   const pickupSelect=makeSelect('pickup'),dropoffSelect=makeSelect('dropoff');
-  const elements={pickupTerminal:pickupSelect,pickupTerminalField:pickupField,dropoff:dropoffInput,dropoffTerminal:dropoffSelect,dropoffTerminalField:dropoffField,bookingStepLabel:{textContent:''}};
+  const elements={pickupTerminal:pickupSelect,pickupTerminalField:pickupField,dropoff:dropoffInput,dropoffTerminal:dropoffSelect,dropoffTerminalField:dropoffField,bookingStepLabel:{textContent:''},bookingBack:{}};
   const context={pickup:pickupInput,document:{getElementById:id=>elements[id],createElement:()=>({addEventListener(event,fn){this.click=fn;}})},
     resetQuote(){},clearTimeout(){},setTimeout(){},suggestionTimers:{},specialOfferActive:()=>false,
-    mobileBooking:{matches:true},bookingPanel:{dataset:{}}};
+    mobileBooking:{matches:true},bookingPanel:{dataset:{}},reservationBusy:false,tripStep:{},customerStep:{},summaryStep:{},hasCurrentQuote:()=>false,updatePaymentControls(){}};
   vm.createContext(context);vm.runInContext(app.slice(app.indexOf('const pickupTerminalField'),app.indexOf('const dropoffField')),context);
   vm.runInContext(app.slice(app.indexOf('function renderSuggestions('),app.indexOf('async function requestQuote(',app.indexOf('function renderSuggestions('))),context);
   const rendered=[],container={innerHTML:'',appendChild:x=>rendered.push(x)};
@@ -1714,6 +1714,8 @@ test('Trip Summary displays Luxury SUV while quote/request keep the internal suv
  const app=fs.readFileSync(path.join(root,'public/app.js'),'utf8'),cell=()=>({textContent:''});
  const context={sumVehicle:cell(),sumMiles:cell(),sumMinutes:cell(),sumTotal:cell(),sumMilesLabel:cell(),sumMinutesLabel:cell(),sumTotalLabel:cell(),
   currentQuote:null,promoSummary:{hidden:false},payBtn:{},quoteBtn:{},quoteArea:{classList:{contains:()=>false,remove(){},add(){}}},
+  reservationBusy:false,quoteController:null,quoteRequestGeneration:0,activeBookingStep:2,payLaterBtn:null,AbortController,tripStep:{},customerStep:{},
+  document:{getElementById:()=>cell()},validateBookingStep:()=>true,updatePaymentControls(){},
   vehicle:{value:'suv',disabled:false,options:[{textContent:'Cadillac Escalade ESV'}],selectedIndex:0},form:{reportValidity:()=>true},
   clearNotice(){},showNotice(){},showPromoResult(){},formatMoney:value=>String(value),getFormData(){return {vehicle:this.vehicle.value};}};
  context.getFormData=()=>({vehicle:context.vehicle.value});
