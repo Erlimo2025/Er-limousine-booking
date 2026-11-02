@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en-US">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -32,6 +32,7 @@
     </div>
   </main>
 
+  <script src="/trip-date-format.js"></script>
   <script>
     (() => {
       const id=new URLSearchParams(location.search).get('booking');
@@ -53,7 +54,7 @@
           const paid=b.paymentStatus==='paid',cancelled=b.status==='cancelled',processing=b.paymentVerificationPending===true;
           const refund=cancelled&&paid&&['processing','confirmed','review_required','failed'].includes(b.refundStatus)?b.refundStatus:null;
           message.textContent=refund?refund==='confirmed'?'This reservation is cancelled. Your full refund has been confirmed.':refund==='processing'?'This reservation is cancelled. Your full refund is processing; it has not been confirmed yet. You do not need to pay again.':'This reservation is cancelled. Your refund requires review. Please contact ER Limousine Service; no refund has been confirmed.':paid&&cancelled?'Payment received for this cancelled reservation. Please contact ER Limousine Service for payment review.':paid?'Payment received. Your reservation is confirmed.':cancelled?'This reservation is cancelled.':processing?'We’re confirming your payment. You do not need to pay again.':'Your trip has been reserved. Payment is still required.';
-          row('Reservation',account?b.reference:b.id);row('Pickup',t.pickup);row('Destination',t.dropoff);row('Date / time',t.date+' '+t.time);
+          row('Reservation',account?b.reference:b.id);row('Pickup',t.pickup);row('Destination',t.dropoff);row('Date / time',TripDateFormat.trip(t.date,t.time));
           const money=value=>new Intl.NumberFormat('en-US',{style:'currency',currency:q.currency||'usd'}).format(value);
           row('Vehicle',q.vehicle);
           const p=q.pricingBreakdown;
@@ -63,8 +64,8 @@
           }
           row('Total',money(q.total));
           row('Payment',refund?{processing:'Refund processing',confirmed:'Refund confirmed',review_required:'Refund review required',failed:'Refund review required'}[refund]:paid?'Paid':processing?'Payment verification in progress':'Payment Pending / Unpaid');
-          if(b.paymentHoldExpiresAt&&!paid&&!cancelled)row('Start payment before',new Intl.DateTimeFormat('en-US',{dateStyle:'medium',timeStyle:'short',timeZone:'America/New_York'}).format(new Date(b.paymentHoldExpiresAt))+' (New York time)');
-          if(t.returnDate)row('Return pickup',t.returnDate+' '+t.returnTime);
+          if(b.paymentHoldExpiresAt&&!paid&&!cancelled)row('Start payment before',TripDateFormat.instant(b.paymentHoldExpiresAt));
+          if(t.returnDate)row('Return pickup',TripDateFormat.trip(t.returnDate,t.returnTime));
           endpoint=account?'/api/customer/trips/'+encodeURIComponent(id)+'/payment':'/api/booking/'+encodeURIComponent(id)+'/checkout';pay.hidden=paid||cancelled||processing;
         }catch(_){if(g===generation)message.textContent='Unable to load this reservation. Please retry.';}
       }

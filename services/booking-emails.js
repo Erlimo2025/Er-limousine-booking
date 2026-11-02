@@ -1,3 +1,4 @@
+const TripDateFormat=require('../public/trip-date-format');
 const escape=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 // Remove only adjacent repeated terminal labels in the rendered customer address.
 // The stored address and distinct terminal information remain untouched.
@@ -25,8 +26,9 @@ function tripActionMessage(record,kind,contact,event){
  const t=record.trip,c=record.customer,timezone=admin?'America/New_York':'New York time';
  const rows=[['Reservation ID',record.id],['Pickup',admin?t.pickup:customerPickup(t.pickup)],['Destination',t.dropoff]];
  if(admin)rows.splice(1,0,['Customer name',c.firstName+' '+c.lastName],['Customer email',c.email],['Customer phone',c.phone]);
- const oldTime=d.oldDate+' '+d.oldTime+' ('+timezone+')';
- if(changed)rows.push(['Old pickup date/time',oldTime],['New pickup date/time',d.newDate+' '+d.newTime+' ('+timezone+')']);
+ const schedule=(date,time)=>admin?date+' '+time+' ('+timezone+')':TripDateFormat.trip(date,time);
+ const oldTime=schedule(d.oldDate,d.oldTime);
+ if(changed)rows.push(['Old pickup date/time',oldTime],['New pickup date/time',schedule(d.newDate,d.newTime)]);
  else {
   rows.push(['Pickup date/time',oldTime],['Reservation status','Cancelled'],['Payment status',record.paymentStatus==='paid'?'Paid':'Unpaid']);
   if(record.paymentStatus==='paid' && ['processing','review_required','confirmed','failed'].includes(record.refundStatus))rows.push(['Refund status',{processing:'Processing — not yet confirmed',confirmed:'Full refund confirmed',review_required:'Operator review required — not confirmed',failed:'Operator review required — not confirmed'}[record.refundStatus]]);
@@ -53,8 +55,9 @@ function bookingMessage(record,kind,contact,myTripsUrl=null,event=null){
  const vehicle=t.vehicle==='suv'?'Luxury SUV':q.vehicle;
  const amount=new Intl.NumberFormat('en-US',{style:'currency',currency:q.currency}).format(q.total);
  const timezone=admin?'America/New_York':'New York time';
- const rows=[['Reservation ID',record.id],['Pickup',admin?t.pickup:customerPickup(t.pickup)],['Destination',t.dropoff],['Pickup date/time',t.date+' '+t.time+' ('+timezone+')'],['Vehicle',vehicle]];
- if(t.returnDate)rows.push(['Return pickup',t.returnDate+' '+t.returnTime+' ('+timezone+')']);
+ const schedule=(date,time)=>admin?date+' '+time+' ('+timezone+')':TripDateFormat.trip(date,time);
+ const rows=[['Reservation ID',record.id],['Pickup',admin?t.pickup:customerPickup(t.pickup)],['Destination',t.dropoff],['Pickup date/time',schedule(t.date,t.time)],['Vehicle',vehicle]];
+ if(t.returnDate)rows.push(['Return pickup',schedule(t.returnDate,t.returnTime)]);
  const p=q.pricingBreakdown;
  if(p?.version===1){
   const price=value=>new Intl.NumberFormat('en-US',{style:'currency',currency:q.currency}).format(value/100);

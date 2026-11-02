@@ -130,6 +130,7 @@ function showBookingStep(step, focus = false) {
   tripStep.hidden = step !== 1;
   customerStep.hidden = step !== 2;
   summaryStep.hidden = step !== 3;
+  if(typeof BookingDateControls!=='undefined')BookingDateControls.refresh(form);
   document.getElementById("bookingBack").hidden = step === 1;
   document.getElementById("bookingStepLabel").textContent =
     `Step ${step} of 3 — ${["Trip Details", "Customer Information", "Trip Summary & Payment"][step - 1]}`;
@@ -1127,10 +1128,10 @@ async function requestQuote(event) {
     sumTotalLabel.textContent = "Total";
     document.getElementById("sumPickup").textContent = bookingData.pickup;
     document.getElementById("sumDestination").textContent = bookingData.dropoff;
-    document.getElementById("sumPickupTime").textContent = `${bookingData.date} · ${bookingData.time} (New York time)`;
+    document.getElementById("sumPickupTime").textContent = TripDateFormat.trip(bookingData.date,bookingData.time);
     document.getElementById("summaryReturnRow").hidden = bookingData.tripType !== "roundtrip";
     document.getElementById("sumReturnTime").textContent = bookingData.tripType === "roundtrip"
-      ? `${bookingData.returnDate} · ${bookingData.returnTime} (New York time)` : "—";
+      ? TripDateFormat.trip(bookingData.returnDate,bookingData.returnTime) : "—";
 
     showPromoResult(data);
     if(typeof renderFareBreakdown==='function')renderFareBreakdown(data);
@@ -1531,7 +1532,7 @@ function applyBookAgainTemplate(template,flowReference){
  }
  syncPickupTerminal();syncDropoffTerminal();updateHourlyRates();resetQuote();showBookingStep(1);
  showNotice('Trip details copied. Choose a new pickup date and time, review your trip, then get a new quote.','success');
- dateInput.focus();
+ if(typeof BookingDateControls!=='undefined')BookingDateControls.focus(dateInput);else dateInput.focus();
 }
 async function loadBookAgainTemplate(sourceOverride=null){
  const params=new URLSearchParams(window.location.search),source=sourceOverride || params.get('bookAgain');if(source===null)return;
@@ -1559,6 +1560,7 @@ async function initialize() {
     !new URLSearchParams(window.location.search).has('bookAgain');
 
   configureDates();
+  if(typeof BookingDateControls!=='undefined')BookingDateControls.mount(form);
 
   selectTripType(
     "oneway"

@@ -5,7 +5,7 @@ const tick=()=>new Promise(resolve=>setImmediate(resolve));
 function ui(overrides={}){
  const state={calls:[],refreshes:0,clears:0,view:null,next:null},elements={dashboardView:{hidden:false},tripsStatus:{textContent:''}};
  const node=tag=>({tag,children:[],textContent:'',hidden:false,disabled:false,events:{},attributes:{},append(...children){this.children.push(...children)},addEventListener(name,handler){this.events[name]=handler},setAttribute(name,value){this.attributes[name]=value},focus(){this.focused=true}});
- const context={document:{createElement:node},Intl,crypto:{randomUUID:()=>crypto.randomUUID()},accountGeneration:1,tripsGeneration:1,el:id=>elements[id],
+ const context={document:{createElement:node},Intl,TripDateFormat:require('../public/trip-date-format'),crypto:{randomUUID:()=>crypto.randomUUID()},accountGeneration:1,tripsGeneration:1,el:id=>elements[id],
   api:async(url,body)=>{state.calls.push({url,body:JSON.parse(JSON.stringify(body))});if(state.next){const next=state.next;state.next=null;return next;}return {ok:true};},
   loadTrips:async()=>{state.refreshes++;context.tripsGeneration+=2;return context.tripsGeneration;},clearPrivateAccount:()=>{state.clears++;elements.dashboardView.hidden=true;context.tripsGeneration++;},show:view=>state.view=view};
  vm.createContext(context);vm.runInContext(source.slice(source.indexOf('function tripCard('),source.indexOf('async function loadTrips')),context);
@@ -120,7 +120,7 @@ test('reservation status page follows guest/account paid, unpaid, cancelled and 
   for(const id of ['message','details','completePayment','refreshReservation'])elements[id]=node();
   const trip={pickup:'Airport',dropoff:'Manhattan',date:'2026-11-10',time:'12:00'},quote={vehicle:'Luxury SUV',total:150,currency:'usd'};
   const value=account?{trip:{...c,reference:'11111111-1111-4111-8111-111111111111',...trip,...quote,refundAttempt:{id:'refund_private'},stripeRefundId:'re_private'}}:{...c,id:'11111111-1111-4111-8111-111111111111',trip,quote,refundAttempt:{id:'refund_private'},stripeRefundId:'re_private'};
-  const ctx={document:{getElementById:id=>elements[id],createElement:node},URLSearchParams,Intl,window:{addEventListener:(name,fn)=>events[name]=fn},location:{search:'?booking=11111111-1111-4111-8111-111111111111&refundStatus=confirmed&refund=confirmed&paid=true'},fetch:async(url,options)=>{calls.push({url,options});if(account&&url.startsWith('/api/booking/'))return {ok:false,status:401};return {ok:true,status:200,json:async()=>value};}};
+  const ctx={document:{getElementById:id=>elements[id],createElement:node},URLSearchParams,Intl,TripDateFormat:require('../public/trip-date-format'),window:{addEventListener:(name,fn)=>events[name]=fn},location:{search:'?booking=11111111-1111-4111-8111-111111111111&refundStatus=confirmed&refund=confirmed&paid=true'},fetch:async(url,options)=>{calls.push({url,options});if(account&&url.startsWith('/api/booking/'))return {ok:false,status:401};return {ok:true,status:200,json:async()=>value};}};
   vm.createContext(ctx);vm.runInContext(script,ctx);await events.pageshow();assert.match(elements.message.textContent,c.message);assert.equal(elements.completePayment.hidden,!c.payable);
   const payment=elements.details.children.find(r=>r.children[0].textContent==='Payment');assert.equal(payment.children[1].textContent,c.label);
   const text=elements.message.textContent+'\n'+elements.details.children.map(r=>r.children.map(n=>n.textContent).join(':')).join('\n');assert.doesNotMatch(text,/refund_private|re_private|provider-body/);
