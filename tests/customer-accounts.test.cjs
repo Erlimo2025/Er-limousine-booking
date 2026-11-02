@@ -16,7 +16,7 @@ test('profile edits use the session owner, preserve historical bookings/payment 
  const b=await h.request('/api/customer/register',{...account,email:'other-profile@example.test',phone:'2025550188',fullName:'Other Owner'});
  const foreign=[...h.testStore.shared.customers.values()].find(x=>x.id!==id),beforeForeign=structuredClone(foreign);
  const mapping=await h.testStore.paymentMapping(id);assert.equal(mapping,null);
- await h.testStore.preparePaymentMapping(id,auth.hashToken(c.split('=')[1]),Date.now());
+ await h.testStore.preparePaymentMapping(id,auth.hashToken(c.split('=')[1]),require('node:vm').runInContext('Date.now()',h.context));
  const beforeMapping=await h.testStore.paymentMapping(id);
  const booking=await h.request('/api/checkout',{pickup:'EWR',pickupPlaceId:'ChIJ7wzsxeFSwokRhvLXxTe087M',dropoff:'Manhattan',date:'2026-11-10',time:'12:00',vehicle:'suv',passengers:2,tripType:'oneway',firstName:'Original',lastName:'Snapshot',email:account.email,phone:account.phone,paymentChoice:'later'},{cookie:c});
  assert.equal(booking.status,200);const snapshots=h.records(),owner=await h.testStore.reservationOwner(booking.body.bookingId);
@@ -46,8 +46,9 @@ test('profile update denies guests, revoked/expired/disabled sessions and storag
  const h=await harness(t),a=await register(h),c=cookie(a),owner=[...h.testStore.shared.customers.values()][0];
  assert.equal((await profileUpdate(h,'',{fullName:'Guest'})).status,401);
  const sessionHash=auth.hashToken(c.split('=')[1]);
- assert.equal(await h.testStore.updateCustomerProfile(require('node:crypto').randomUUID(),sessionHash,{fullName:'Foreign'},Date.now()),null);
- assert.equal(await h.testStore.updateCustomerProfile(owner.id,'0'.repeat(64),{fullName:'Foreign'},Date.now()),null);
+ const fixtureNow=require('node:vm').runInContext('Date.now()',h.context);
+ assert.equal(await h.testStore.updateCustomerProfile(require('node:crypto').randomUUID(),sessionHash,{fullName:'Foreign'},fixtureNow),null);
+ assert.equal(await h.testStore.updateCustomerProfile(owner.id,'0'.repeat(64),{fullName:'Foreign'},fixtureNow),null);
  owner.account_status='disabled';assert.equal((await profileUpdate(h,c,{fullName:'Disabled'})).status,401);owner.account_status='active';
  await h.request('/api/customer/logout',{},{cookie:c});assert.equal((await profileUpdate(h,c,{fullName:'Revoked'})).status,401);
  const login=await h.request('/api/customer/login',{email:account.email,password:account.password});h.advance(auth.SESSION_MS+1);
@@ -145,28 +146,29 @@ test('PostgreSQL customer integration: atomic registration, unique identities, p
  const store=createStore({},pool),second=createStore({},pool2);t.after(async()=>{await store.close();await second.close();await admin.query('DROP SCHEMA '+schema+' CASCADE');await admin.end();});
  await Promise.all([store.migrate(),second.migrate()]);
  const h=await harness(t,{},'[]',store),h2=await harness(t,{},'[]',second);
+ const fixtureNow=require('node:vm').runInContext('Date.now()',h.context);
  const results=await Promise.all([register(h),register(h2)]);assert.deepEqual(results.map(r=>r.status).sort(),[201,400]);
  const winner=results.find(r=>r.status===201),raw=cookie(winner).split('=')[1];
  const stored=(await pool.query('SELECT * FROM er_customers')).rows[0];assert.ok(!stored.password_hash.includes(account.password));
  assert.equal((await pool.query('SELECT token_hash FROM er_customer_sessions')).rows[0].token_hash,auth.hashToken(raw));
  assert.equal((await h2.request('/api/customer/profile',undefined,{cookie:cookie(winner)})).status,200);
- const statuses=await Promise.all(Array.from({length:21},()=>second.customerLoginLimit(auth.hashToken('shared-counter'),Date.now())));assert.equal(statuses.filter(Boolean).length,20);
+ const statuses=await Promise.all(Array.from({length:21},()=>second.customerLoginLimit(auth.hashToken('shared-counter'),fixtureNow)));assert.equal(statuses.filter(Boolean).length,20);
  const c={...stored,id:require('node:crypto').randomUUID(),normalized_email:'rollback@example.test',normalized_phone:'+12025550199'};
- await assert.rejects(store.registerCustomer(c,{hash:'invalid',created:new Date(),expires:new Date(Date.now()+1000)}));
+ await assert.rejects(store.registerCustomer(c,{hash:'invalid',created:new Date(fixtureNow),expires:new Date(fixtureNow+1000)}));
  assert.equal((await pool.query('SELECT 1 FROM er_customers WHERE id=$1',[c.id])).rowCount,0);
- const mapping=await store.preparePaymentMapping(stored.id,auth.hashToken(raw),Date.now());
+ const mapping=await store.preparePaymentMapping(stored.id,auth.hashToken(raw),fixtureNow);
  const before=(await pool.query('SELECT * FROM er_customers WHERE id=$1',[stored.id])).rows[0];
  const updated=await profileUpdate(h2,cookie(winner),{fullName:'Updated PostgreSQL Owner',phone:'973-555-0123'});assert.equal(updated.status,200);
  const after=(await pool.query('SELECT * FROM er_customers WHERE id=$1',[stored.id])).rows[0];
  for(const field of ['id','normalized_email','display_email','password_hash','account_status'])assert.equal(after[field],before[field]);
  assert.equal(after.normalized_phone,'+19735550123');assert.equal(after.full_name,'Updated PostgreSQL Owner');assert.deepEqual(await second.paymentMapping(stored.id),mapping);
- assert.equal(await second.updateCustomerProfile(stored.id,'0'.repeat(64),{fullName:'Forged'},Date.now()),null);
+ assert.equal(await second.updateCustomerProfile(stored.id,'0'.repeat(64),{fullName:'Forged'},fixtureNow),null);
  const conflict=await h.request('/api/customer/register',{...account,email:'pg-profile-conflict@example.test',phone:'2025550188'});assert.equal(conflict.status,201);
  assert.equal((await profileUpdate(h2,cookie(winner),{phone:'202-555-0188',fullName:'Must Roll Back'})).status,400);
  assert.equal((await pool.query('SELECT full_name FROM er_customers WHERE id=$1',[stored.id])).rows[0].full_name,'Updated PostgreSQL Owner');
  await h.request('/api/customer/logout',{},{cookie:cookie(winner)});assert.equal((await h2.request('/api/customer/profile',undefined,{cookie:cookie(winner)})).status,401);
  const login=await h.request('/api/customer/login',{email:account.email,password:account.password});const key=auth.hashToken(cookie(login).split('=')[1]);
- await pool.query("UPDATE er_customer_sessions SET created_at=now()-interval '32 days',expires_at=now()-interval '1 day' WHERE token_hash=$1",[key]);h2.advance(auth.SESSION_MS+1);assert.equal((await h2.request('/api/customer/profile',undefined,{cookie:cookie(login)})).status,401);
+ await pool.query("UPDATE er_customer_sessions SET created_at=$2::timestamptz-interval '32 days',expires_at=$2::timestamptz-interval '1 day' WHERE token_hash=$1",[key,new Date(fixtureNow)]);h2.advance(auth.SESSION_MS+1);assert.equal((await h2.request('/api/customer/profile',undefined,{cookie:cookie(login)})).status,401);
 });
 
 

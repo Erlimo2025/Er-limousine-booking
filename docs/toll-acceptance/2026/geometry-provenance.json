@@ -1,0 +1,63 @@
+{
+  "count": 3722,
+  "pages": [
+    {
+      "count": 1000,
+      "retrievedAt": "2026-11-01T17:32:17.4159704Z",
+      "filename": "nj-roads-page-0.geojson",
+      "offset": 0,
+      "url": "https://services2.arcgis.com/XVOqAjTOJ5P6ngMu/arcgis/rest/services/Tran_road/FeatureServer/0/query?f=geojson&geometry=-74.30%2C40.67%2C-73.93%2C40.88&geometryType=esriGeometryEnvelope&inSR=4326&orderByFields=OBJECTID&outFields=OBJECTID%2CRCL_NGUID%2CPRIMENAME%2CSHLD_NUM%2CSHLD_TYPE%2CONEWAY%2CROADCLASS%2CSRI%2CSOURCE%2CDATEUPDATE%2CSTATE_L%2CSTATE_R%2CELEVTYP_F%2CELEVTYP_T%2CACCESSSTYP%2CSTATUSTYP&outSR=4326&resultOffset=0&resultRecordCount=1000&returnGeometry=true&returnM=false&returnZ=false&spatialRel=esriSpatialRelIntersects&where=STATUSTYP%3D%27A%27%20AND%20%28SHLD_NUM%20IN%20%28%27280%27%2C%2795%27%2C%2778%27%2C%2780%27%2C%27495%27%2C%27139%27%2C%273%27%2C%271%27%2C%279%27%2C%2721%27%2C%2746%27%2C%274%27%2C%2724%27%29%20OR%20UPPER%28PRIMENAME%29%20LIKE%20%27%25TURNPIKE%25%27%20OR%20SHLD_TYPE%3D%27GSP%27%20OR%20UPPER%28PRIMENAME%29%20IN%20%28%27MAIN%20STREET%27%2C%27NORTH%20DAY%20STREET%27%2C%27BROAD%20STREET%27%2C%27CITY%20HALL%20PLAZA%27%2C%27CLAREMONT%20AVENUE%27%2C%27SLOAN%20STREET%27%29%29",
+      "sha256": "3197b565c7a1b082388a4c56b094dc66a8fa4c0655571ae4ecf55d9ba8bf0a1e"
+    },
+    {
+      "count": 1000,
+      "retrievedAt": "2026-11-01T17:32:20.0670713Z",
+      "filename": "nj-roads-page-1000.geojson",
+      "offset": 1000,
+      "url": "https://services2.arcgis.com/XVOqAjTOJ5P6ngMu/arcgis/rest/services/Tran_road/FeatureServer/0/query?f=geojson&geometry=-74.30%2C40.67%2C-73.93%2C40.88&geometryType=esriGeometryEnvelope&inSR=4326&orderByFields=OBJECTID&outFields=OBJECTID%2CRCL_NGUID%2CPRIMENAME%2CSHLD_NUM%2CSHLD_TYPE%2CONEWAY%2CROADCLASS%2CSRI%2CSOURCE%2CDATEUPDATE%2CSTATE_L%2CSTATE_R%2CELEVTYP_F%2CELEVTYP_T%2CACCESSSTYP%2CSTATUSTYP&outSR=4326&resultOffset=1000&resultRecordCount=1000&returnGeometry=true&returnM=false&returnZ=false&spatialRel=esriSpatialRelIntersects&where=STATUSTYP%3D%27A%27%20AND%20%28SHLD_NUM%20IN%20%28%27280%27%2C%2795%27%2C%2778%27%2C%2780%27%2C%27495%27%2C%27139%27%2C%273%27%2C%271%27%2C%279%27%2C%2721%27%2C%2746%27%2C%274%27%2C%2724%27%29%20OR%20UPPER%28PRIMENAME%29%20LIKE%20%27%25TURNPIKE%25%27%20OR%20SHLD_TYPE%3D%27GSP%27%20OR%20UPPER%28PRIMENAME%29%20IN%20%28%27MAIN%20STREET%27%2C%27NORTH%20DAY%20STREET%27%2C%27BROAD%20STREET%27%2C%27CITY%20HALL%20PLAZA%27%2C%27CLAREMONT%20AVENUE%27%2C%27SLOAN%20STREET%27%29%29",
+      "sha256": "1965a0e7bd567ed1d4486e25a4fbbcd850551a1c11586d8720b9c528ffc8a937"
+    },
+    {
+      "count": 1000,
+      "retrievedAt": "2026-11-01T17:32:22.3167639Z",
+      "filename": "nj-roads-page-2000.geojson",
+      "offset": 2000,
+      "url": "https://services2.arcgis.com/XVOqAjTOJ5P6ngMu/arcgis/rest/services/Tran_road/FeatureServer/0/query?f=geojson&geometry=-74.30%2C40.67%2C-73.93%2C40.88&geometryType=esriGeometryEnvelope&inSR=4326&orderByFields=OBJECTID&outFields=OBJECTID%2CRCL_NGUID%2CPRIMENAME%2CSHLD_NUM%2CSHLD_TYPE%2CONEWAY%2CROADCLASS%2CSRI%2CSOURCE%2CDATEUPDATE%2CSTATE_L%2CSTATE_R%2CELEVTYP_F%2CELEVTYP_T%2CACCESSSTYP%2CSTATUSTYP&outSR=4326&resultOffset=2000&resultRecordCount=1000&returnGeometry=true&returnM=false&returnZ=false&spatialRel=esriSpatialRelIntersects&where=STATUSTYP%3D%27A%27%20AND%20%28SHLD_NUM%20IN%20%28%27280%27%2C%2795%27%2C%2778%27%2C%2780%27%2C%27495%27%2C%27139%27%2C%273%27%2C%271%27%2C%279%27%2C%2721%27%2C%2746%27%2C%274%27%2C%2724%27%29%20OR%20UPPER%28PRIMENAME%29%20LIKE%20%27%25TURNPIKE%25%27%20OR%20SHLD_TYPE%3D%27GSP%27%20OR%20UPPER%28PRIMENAME%29%20IN%20%28%27MAIN%20STREET%27%2C%27NORTH%20DAY%20STREET%27%2C%27BROAD%20STREET%27%2C%27CITY%20HALL%20PLAZA%27%2C%27CLAREMONT%20AVENUE%27%2C%27SLOAN%20STREET%27%29%29",
+      "sha256": "c47d34702f5a078529fd42905ddeca2e415b5396237714e9247e48a8d9856d15"
+    },
+    {
+      "count": 722,
+      "retrievedAt": "2026-11-01T17:32:24.7551045Z",
+      "filename": "nj-roads-page-3000.geojson",
+      "offset": 3000,
+      "url": "https://services2.arcgis.com/XVOqAjTOJ5P6ngMu/arcgis/rest/services/Tran_road/FeatureServer/0/query?f=geojson&geometry=-74.30%2C40.67%2C-73.93%2C40.88&geometryType=esriGeometryEnvelope&inSR=4326&orderByFields=OBJECTID&outFields=OBJECTID%2CRCL_NGUID%2CPRIMENAME%2CSHLD_NUM%2CSHLD_TYPE%2CONEWAY%2CROADCLASS%2CSRI%2CSOURCE%2CDATEUPDATE%2CSTATE_L%2CSTATE_R%2CELEVTYP_F%2CELEVTYP_T%2CACCESSSTYP%2CSTATUSTYP&outSR=4326&resultOffset=3000&resultRecordCount=1000&returnGeometry=true&returnM=false&returnZ=false&spatialRel=esriSpatialRelIntersects&where=STATUSTYP%3D%27A%27%20AND%20%28SHLD_NUM%20IN%20%28%27280%27%2C%2795%27%2C%2778%27%2C%2780%27%2C%27495%27%2C%27139%27%2C%273%27%2C%271%27%2C%279%27%2C%2721%27%2C%2746%27%2C%274%27%2C%2724%27%29%20OR%20UPPER%28PRIMENAME%29%20LIKE%20%27%25TURNPIKE%25%27%20OR%20SHLD_TYPE%3D%27GSP%27%20OR%20UPPER%28PRIMENAME%29%20IN%20%28%27MAIN%20STREET%27%2C%27NORTH%20DAY%20STREET%27%2C%27BROAD%20STREET%27%2C%27CITY%20HALL%20PLAZA%27%2C%27CLAREMONT%20AVENUE%27%2C%27SLOAN%20STREET%27%29%29",
+      "sha256": "7c01c744b528a5f941bc1252c85af4a5048bec2eb061c8b3d5026387202886f0"
+    }
+  ],
+  "selection": "STATUSTYP='A' AND (SHLD_NUM IN ('280','95','78','80','495','139','3','1','9','21','46','4','24') OR UPPER(PRIMENAME) LIKE '%TURNPIKE%' OR SHLD_TYPE='GSP' OR UPPER(PRIMENAME) IN ('MAIN STREET','NORTH DAY STREET','BROAD STREET','CITY HALL PLAZA','CLAREMONT AVENUE','SLOAN STREET'))",
+  "agency": "NJOGIS",
+  "selectionEnvelope": [
+    -74.3,
+    40.67,
+    -73.93,
+    40.88
+  ],
+  "schema": "njogis-public-fetch-receipt-v1",
+  "attribution": "New Jersey Office of Information Technology, Office of GIS (NJOGIS)",
+  "sourceId": "njogis_centerlines",
+  "sourceMetadataUpdatedAt": "2026-09-23T17:43:11.674Z",
+  "sourceCoordinateSystem": "NAD83 New Jersey State Plane feet (EPSG:3424)",
+  "outputCoordinateSystem": "longitude,latitude (query outSR=4326)",
+  "transformations": [
+    "ArcGIS server coordinate transformation to outSR=4326",
+    "Retained requested public properties and geometry; added candidate status/source/hash; no geometry simplification, buffering, clipping, snapping or invented coordinates"
+  ],
+  "gaps": [
+    "Other local streets and unlabelled ramps are intentionally outside the selection",
+    "No certified PA portals, graph junctions or lane/corridor widths",
+    "No certified NYC street, CRZ boundary, excluded-road or credit-connector polygons",
+    "Labels such as Bergen Turnpike do not identify NJTA facilities or establish toll status"
+  ],
+  "reviewStatus": "candidate_unreviewed",
+  "activationApproved": false
+}

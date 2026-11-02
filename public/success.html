@@ -58,14 +58,10 @@
           row('Vehicle',q.vehicle);
           const p=q.pricingBreakdown;
           if(p?.version===1){
-            row(p.tollsIncluded?'EWR → Manhattan Special':'Trip Fare',money(p.tripFareCents/100));
-            for(const item of p.surcharges)row(item.label,money(item.amountCents/100));
-            row(p.interstate?'Estimated Interstate Tolls':p.tollsCents>0?'Estimated Tolls':'Tolls',p.tollsIncluded?'Included':p.tollStatus==='waived'?'No added tolls — same-state trip':p.tollStatus==='none'?'None expected':p.tollsCents>0?money(p.tollsCents/100):p.tollAllowanceCents?'Included in fare allowance':'No additional charge');
-            if(p.tollAllowanceCents)row('Toll allowance already in fare',money(p.tollAllowanceCents/100));
-            if(p.discountCents)row('Eligible Discount','−'+money(p.discountCents/100));
-            if(p.gratuityCents)row('Gratuity',money(p.gratuityCents/100));
+            row('Trip Fare',money((p.totalCents-(p.tollsCents||0))/100));
+            row('Tolls',p.tollsIncluded||p.tollStatus==='absorbed'?'Included':money((p.tollsCents||0)/100));
           }
-          row(p&&!p.tollsIncluded&&p.interstate!==false?'Total Including Tolls':'Total',money(q.total));
+          row('Total',money(q.total));
           row('Payment',refund?{processing:'Refund processing',confirmed:'Refund confirmed',review_required:'Refund review required',failed:'Refund review required'}[refund]:paid?'Paid':processing?'Payment verification in progress':'Payment Pending / Unpaid');
           if(b.paymentHoldExpiresAt&&!paid&&!cancelled)row('Start payment before',new Intl.DateTimeFormat('en-US',{dateStyle:'medium',timeStyle:'short',timeZone:'America/New_York'}).format(new Date(b.paymentHoldExpiresAt))+' (New York time)');
           if(t.returnDate)row('Return pickup',t.returnDate+' '+t.returnTime);

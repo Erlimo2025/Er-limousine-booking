@@ -149,12 +149,9 @@ function tripCard(trip){
  if(trip.dropoffTerminal)add('Drop-off terminal',trip.dropoffTerminal);
  const p=trip.pricingBreakdown,price=value=>new Intl.NumberFormat('en-US',{style:'currency',currency:trip.currency}).format(value/100);
  if(p?.version===1){
-  add(p.tollsIncluded?'EWR → Manhattan Special':'Trip Fare',price(p.tripFareCents));
-  for(const item of p.surcharges)add(item.label,price(item.amountCents));
-  add(p.interstate?'Estimated Interstate Tolls':p.tollsCents>0?'Estimated Tolls':'Tolls',p.tollsIncluded?'Included':p.tollStatus==='waived'?'No added tolls — same-state trip':p.tollStatus==='none'?'None expected':p.tollsCents>0?price(p.tollsCents):p.tollAllowanceCents?'Included in fare allowance':'No additional charge');
-  if(p.tollAllowanceCents)add('Toll allowance already in fare',price(p.tollAllowanceCents));
-  if(p.discountCents)add('Eligible Discount','−'+price(p.discountCents));
-  if(p.gratuityCents)add('Gratuity',price(p.gratuityCents));
+  add('Trip Fare',price(p.totalCents-(p.tollsCents||0)));
+  add('Tolls',p.tollsIncluded||p.tollStatus==='absorbed'?'Included':price(p.tollsCents||0));
+  add('Total',price(p.totalCents));
  }
  add('Booked on',new Intl.DateTimeFormat('en-US',{dateStyle:'medium',timeZone:'America/New_York'}).format(new Date(trip.createdAt)));
  details.append(summary,list);card.append(details);

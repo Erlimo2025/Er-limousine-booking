@@ -1,0 +1,150 @@
+{
+  "schema": "er-first-route-software-results-v1",
+  "engineCommit": "8cf3b47494560331f3e5e2f6aba5aa1a4c43251e",
+  "mode": "local_HTTP_synthetic_providers_only",
+  "publicSourceDeskReviewPassed": true,
+  "manualReviewCasesPassed": 6,
+  "softwareFlowCasesPassed": 12,
+  "expectedFlowCases": 12,
+  "softwareControlsPassed": true,
+  "realRoutesPassed": 0,
+  "realVehicleClassesVerified": 0,
+  "settledEzpassComparisonsCompleted": 0,
+  "liveStripeCalls": 0,
+  "realCustomerCharges": 0,
+  "automaticCustomerChargingActivated": false,
+  "results": [
+    {
+      "caseId": "F001",
+      "paymentChoice": "now",
+      "status": "passed_software_simulation_only",
+      "quoteMatchesStoredAndStripeMock": true,
+      "mockCheckoutCreates": 1,
+      "mockWebhookPaid": true,
+      "realRouteVerified": false,
+      "realVehicleClassVerified": false,
+      "actualCustomerCharged": false
+    },
+    {
+      "caseId": "F001",
+      "paymentChoice": "later",
+      "status": "passed_software_simulation_only",
+      "quoteMatchesStoredAndStripeMock": true,
+      "mockCheckoutCreates": 1,
+      "mockWebhookPaid": true,
+      "realRouteVerified": false,
+      "realVehicleClassVerified": false,
+      "actualCustomerCharged": false
+    },
+    {
+      "caseId": "F002",
+      "paymentChoice": "now",
+      "status": "passed_software_simulation_only",
+      "quoteMatchesStoredAndStripeMock": true,
+      "mockCheckoutCreates": 1,
+      "mockWebhookPaid": true,
+      "realRouteVerified": false,
+      "realVehicleClassVerified": false,
+      "actualCustomerCharged": false
+    },
+    {
+      "caseId": "F002",
+      "paymentChoice": "later",
+      "status": "passed_software_simulation_only",
+      "quoteMatchesStoredAndStripeMock": true,
+      "mockCheckoutCreates": 1,
+      "mockWebhookPaid": true,
+      "realRouteVerified": false,
+      "realVehicleClassVerified": false,
+      "actualCustomerCharged": false
+    },
+    {
+      "caseId": "F003",
+      "paymentChoice": "now",
+      "status": "passed_software_simulation_only",
+      "quoteMatchesStoredAndStripeMock": true,
+      "mockCheckoutCreates": 1,
+      "mockWebhookPaid": true,
+      "realRouteVerified": false,
+      "realVehicleClassVerified": false,
+      "actualCustomerCharged": false
+    },
+    {
+      "caseId": "F003",
+      "paymentChoice": "later",
+      "status": "passed_software_simulation_only",
+      "quoteMatchesStoredAndStripeMock": true,
+      "mockCheckoutCreates": 1,
+      "mockWebhookPaid": true,
+      "realRouteVerified": false,
+      "realVehicleClassVerified": false,
+      "actualCustomerCharged": false
+    },
+    {
+      "caseId": "F004",
+      "paymentChoice": "now",
+      "status": "passed_software_simulation_only",
+      "quoteMatchesStoredAndStripeMock": true,
+      "mockCheckoutCreates": 1,
+      "mockWebhookPaid": true,
+      "realRouteVerified": false,
+      "realVehicleClassVerified": false,
+      "actualCustomerCharged": false
+    },
+    {
+      "caseId": "F004",
+      "paymentChoice": "later",
+      "status": "passed_software_simulation_only",
+      "quoteMatchesStoredAndStripeMock": true,
+      "mockCheckoutCreates": 1,
+      "mockWebhookPaid": true,
+      "realRouteVerified": false,
+      "realVehicleClassVerified": false,
+      "actualCustomerCharged": false
+    },
+    {
+      "caseId": "F005",
+      "paymentChoice": "now",
+      "status": "passed_software_simulation_only",
+      "quoteMatchesStoredAndStripeMock": true,
+      "mockCheckoutCreates": 1,
+      "mockWebhookPaid": true,
+      "realRouteVerified": false,
+      "realVehicleClassVerified": false,
+      "actualCustomerCharged": false
+    },
+    {
+      "caseId": "F005",
+      "paymentChoice": "later",
+      "status": "passed_software_simulation_only",
+      "quoteMatchesStoredAndStripeMock": true,
+      "mockCheckoutCreates": 1,
+      "mockWebhookPaid": true,
+      "realRouteVerified": false,
+      "realVehicleClassVerified": false,
+      "actualCustomerCharged": false
+    },
+    {
+      "caseId": "F006",
+      "paymentChoice": "now",
+      "status": "passed_software_simulation_only",
+      "quoteMatchesStoredAndStripeMock": true,
+      "mockCheckoutCreates": 1,
+      "mockWebhookPaid": true,
+      "realRouteVerified": false,
+      "realVehicleClassVerified": false,
+      "actualCustomerCharged": false
+    },
+    {
+      "caseId": "F006",
+      "paymentChoice": "later",
+      "status": "passed_software_simulation_only",
+      "quoteMatchesStoredAndStripeMock": true,
+      "mockCheckoutCreates": 1,
+      "mockWebhookPaid": true,
+      "realRouteVerified": false,
+      "realVehicleClassVerified": false,
+      "actualCustomerCharged": false
+    }
+  ]
+}

@@ -102,7 +102,7 @@ test('paid cancellation toast uses only the safe current server refund state',as
  }
 });
 
-test('reservation status page renders only server-authorized refund states and ignores URL claims',async()=>{
+test('reservation status page follows guest/account paid, unpaid, cancelled and verification-pending states, and ignores URL claims',async()=>{
  const script=fs.readFileSync(path.join(__dirname,'../public/success.html'),'utf8').match(/<script>([\s\S]*?)<\/script>/)[1];
  const cases=[
   {status:'cancelled',paymentStatus:'paid',refundStatus:'processing',message:/full refund is processing; it has not been confirmed yet/,label:'Refund processing'},
@@ -110,7 +110,9 @@ test('reservation status page renders only server-authorized refund states and i
   ...['review_required','failed'].map(refundStatus=>({status:'cancelled',paymentStatus:'paid',refundStatus,message:/refund requires review.*no refund has been confirmed/,label:'Refund review required'})),
   {status:'cancelled',paymentStatus:'paid',message:/cancelled reservation.*payment review/,label:'Paid'},
   {status:'cancelled',paymentStatus:'paid',refundStatus:'<script>provider-body</script>',message:/cancelled reservation.*payment review/,label:'Paid'},
+  {status:'cancelled',paymentStatus:'unpaid',message:/reservation is cancelled/,label:'Payment Pending / Unpaid'},
   {status:'awaiting_payment',paymentStatus:'unpaid',message:/Payment is still required/,label:'Payment Pending / Unpaid',payable:true},
+  {status:'awaiting_payment',paymentStatus:'unpaid',paymentVerificationPending:true,message:/confirming your payment.*do not need to pay again/,label:'Payment verification in progress'},
   {status:'confirmed',paymentStatus:'paid',message:/Payment received\. Your reservation is confirmed/,label:'Paid'}
  ];
  for(const account of [false,true])for(const c of cases){

@@ -541,6 +541,10 @@ textarea:focus {
   font-weight: 900;
 }
 
+#completePayment[hidden] {
+  display: none;
+}
+
 .btn-primary,
 .main-quote-btn {
   background:
@@ -644,7 +648,7 @@ textarea:focus {
 
 .summary-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 0;
   border-top: 1px solid #eee;
   border-bottom: 1px solid #eee;
@@ -685,10 +689,12 @@ textarea:focus {
   margin: 10px 0 0;
 }
 
-.fare-breakdown{padding:12px 0;font-size:.82rem;overflow-wrap:anywhere}
+.fare-breakdown{grid-column:1/-1;padding:12px 18px;font-size:.82rem;overflow-wrap:anywhere}
+.summary-grid>.total-row{grid-column:1/-1;flex-direction:row;justify-content:space-between;align-items:center;border-right:0}
 .fare-breakdown[hidden]{display:none}
 .fare-breakdown-row{display:flex;justify-content:space-between;gap:12px;padding:5px 0}
 .fare-breakdown-row strong{text-align:right;flex-shrink:0;max-width:75%}
+.fare-breakdown-note{font-size:.78rem;line-height:1.45;margin:6px 0}
 
 
 /* =========================

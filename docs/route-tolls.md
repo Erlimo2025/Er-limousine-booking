@@ -1,5 +1,19 @@
 # Route toll estimates
 
+**Current draft policy:** see [Advance estimated tolls](estimated-toll-policy.md).
+Default estimate mode uses the approved NJ/NYC included-tolls fallback and does
+not require exact account settlement. The optional `verified` mode retains the
+[official tariff/network evidence path](official-toll-tariffs.md).
+With `ROUTE_TOLLS_ENABLED` false/unset, customer charging remains disabled.
+The separate admin estimate-only tool below still shows Google's original estimate.
+
+## Historical Google pricing and accepted-snapshot compatibility
+
+The following description, up to the Admin Toll Validation section, records the
+earlier implementation and legacy accepted snapshots. **Do not activate new
+customer charging using its historical profile instructions.** Existing accepted
+amounts are preserved, including older Google-based tolls.
+
 Customer toll calculation is disabled by default. No Google, Render,
 Stripe or database configuration is changed. ER confirmed a NJ E-ZPass business
 account and Suburban class **2Ax**. Commercial-rate equivalence and congestion
