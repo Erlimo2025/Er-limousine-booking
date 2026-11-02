@@ -1204,65 +1204,122 @@ textarea:focus {
 ========================= */
 
 .booking-step {
-  display: contents;
+  display: block;
+  min-width: 0;
 }
 
-.mobile-booking-controls,
-.mobile-booking-continue {
+.quick-booking {
+  scroll-margin-top: 110px;
+}
+
+.booking-step[hidden],
+#bookingBack[hidden],
+#summaryReturnRow[hidden] {
   display: none;
+}
+
+.booking-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+#bookingStepLabel {
+  flex: 1;
+  margin: 0;
+  color: #9a711f;
+  font-size: .8rem;
+  font-weight: 700;
+}
+
+.booking-back {
+  flex-shrink: 0;
+  white-space: nowrap;
+  border: 0;
+  background: transparent;
+  color: var(--navy);
+  min-height: 44px;
+  padding: 6px 10px 6px 0;
+  font-size: .875rem;
+}
+
+.booking-back:focus-visible,
+.booking-continue:focus-visible,
+.quick-booking button:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 3px;
+}
+
+.quick-booking .booking-continue,
+.quick-booking .main-quote-btn {
+  width: 100%;
+  min-height: 48px;
+  white-space: normal;
+  margin-top: 6px;
+}
+
+.quick-booking .quote-area {
+  padding: 0;
+  background: transparent;
+  border: 0;
+}
+
+.quick-booking .summary-card {
+  padding: 0;
+  border: 0;
+  box-shadow: none;
+}
+
+.quick-booking .summary-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.quick-booking .summary-row {
+  flex-direction: row;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  border-right: 0;
+  border-bottom: 1px solid #eee;
+  padding: 10px 0;
+}
+
+.quick-booking .summary-row strong {
+  max-width: 68%;
+  margin-top: 0;
+  text-align: right;
+  overflow-wrap: anywhere;
+  font-size: .87rem;
+}
+
+.quick-booking .fare-breakdown {
+  padding: 10px 0;
+}
+
+.quick-booking .payment-choice-description {
+  color: #566572;
+  line-height: 1.45;
+}
+
+.quick-booking .total-row {
+  padding: 12px 10px;
+  align-items: center;
+}
+
+.quick-booking .total-row .quote-price {
+  font-size: 1.5rem;
+}
+
+.quick-booking button:disabled {
+  cursor: not-allowed;
+  opacity: .5;
 }
 
 @media (max-width: 650px) {
   .quick-booking {
     scroll-margin-top: 90px;
-  }
-
-  .quick-booking .mobile-booking-controls {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    margin-bottom: 12px;
-  }
-
-  #bookingStepLabel {
-    margin: 0;
-    color: #9a711f;
-    font-size: .8rem;
-    font-weight: 700;
-  }
-
-  .booking-back {
-    border: 0;
-    background: transparent;
-    color: var(--navy);
-    min-height: 44px;
-    padding: 6px 10px 6px 0;
-    font-size: .875rem;
-  }
-
-  .quick-booking:not([data-mobile-step="2"]) #bookingBack,
-  .quick-booking:not([data-mobile-step="2"]) #bookingCustomerStep,
-  .quick-booking[data-mobile-step="2"] #bookingTripStep,
-  .quick-booking[data-mobile-step="2"] .trip-tabs,
-  .quick-booking[data-mobile-step="2"] #bookingContinue {
-    display: none;
-  }
-
-  .quick-booking .booking-step {
-    display: block;
-  }
-
-  .quick-booking:not([data-mobile-step="2"]) #bookingCustomerStep,
-  .quick-booking[data-mobile-step="2"] #bookingTripStep {
-    display: none;
-  }
-
-  .quick-booking .mobile-booking-continue {
-    display: block;
-    width: 100%;
-    min-height: 48px;
-    margin-top: 6px;
   }
 
   .quick-booking .field {
@@ -1780,12 +1837,6 @@ textarea:focus {
 
 }
 
-/* Phone layout based on the approved mobile mockup. */
-@media (max-width: 650px) {
-  .quote-area:not(.has-completed-quote) {
-    display: none;
-  }
-}
 
 .mobile-menu-toggle,
 .mobile-special-image {

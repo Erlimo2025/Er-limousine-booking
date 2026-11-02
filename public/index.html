@@ -190,11 +190,18 @@
 
       <h2>Book Your Ride</h2>
 
-      <div class="mobile-booking-controls">
-        <button type="button" id="bookingBack" class="booking-back">← Back</button>
-        <p id="bookingStepLabel" aria-live="polite">Step 1 of 2 — Trip Details</p>
+      <div class="booking-controls">
+        <button type="button" id="bookingBack" class="booking-back" hidden>← Back</button>
+        <p id="bookingStepLabel" aria-live="polite">Step 1 of 3 — Trip Details</p>
       </div>
 
+      <form id="bookingForm" novalidate>
+
+        <input type="hidden" id="tripType" name="tripType" value="oneway">
+        <input type="hidden" id="offerCode" name="offerCode" value="">
+        <div id="notice" class="notice" role="status" aria-live="polite"></div>
+
+        <div id="bookingTripStep" class="booking-step" role="group" aria-label="Trip Details">
       <div class="trip-tabs">
 
         <button
@@ -228,24 +235,6 @@
       </div>
 
 
-      <form id="bookingForm">
-
-        <input
-          type="hidden"
-          id="tripType"
-          name="tripType"
-          value="oneway"
-        >
-
-        <input
-          type="hidden"
-          id="offerCode"
-          name="offerCode"
-          value=""
-        >
-
-
-        <div id="bookingTripStep" class="booking-step">
         <div class="field full">
 
           <label for="pickup">
@@ -537,14 +526,14 @@
         </div>
 
 
-        <!-- PASSENGER INFORMATION -->
+        <button type="button" id="bookingContinue" class="btn btn-primary booking-continue">CONTINUE TO CUSTOMER INFORMATION →</button>
         </div>
-        <button type="button" id="bookingContinue" class="btn btn-primary mobile-booking-continue">CONTINUE →</button>
-        <div id="bookingCustomerStep" class="booking-step">
+        <!-- CUSTOMER INFORMATION -->
+        <div id="bookingCustomerStep" class="booking-step" role="group" aria-label="Customer Information" hidden>
         <div class="customer-details">
 
           <h3>
-            Passenger Information
+            Customer Information
           </h3>
 
 
@@ -668,54 +657,16 @@
         </div>
 
 
-        <div
-          id="notice"
-          class="notice">
-        </div>
-
-
         <button
           class="btn btn-primary main-quote-btn"
           type="button"
           id="quoteBtn">
-          Get Quote
+          CONTINUE TO TRIP SUMMARY →
         </button>
-
-
-        <button
-          class="btn btn-pay"
-          type="submit"
-          id="payBtn"
-          disabled>
-          RESERVE & PAY NOW
-        </button>
-
-
-        <p class="payment-choice-description">Reserve your trip and continue to secure payment.</p>
-        <button class="btn btn-pay-later" type="submit" id="payLaterBtn" disabled>RESERVE & PAY LATER</button>
-        <p class="payment-choice-description">Reserve your trip now and complete payment later from your reservation. FIRST15 holds expire after 24 hours if payment has not started.</p>
-        <div class="secure-line">
-          🔒 Safe & Secure Booking
-          <span>•</span>
-          Pay Online
         </div>
 
-        </div>
-
-      </form>
-
-    </div>
-
-  </div>
-
-</section>
-
-
-<!-- TRIP SUMMARY -->
-<section class="quote-area">
-
-  <div class="wrap">
-
+        <!-- TRIP SUMMARY & PAYMENT: one summary, inside the booking form. -->
+        <section id="bookingSummaryStep" class="booking-step quote-area" aria-labelledby="bookingSummaryHeading" hidden>
     <aside class="summary-card">
 
       <div class="summary-heading">
@@ -724,12 +675,14 @@
           YOUR QUOTE
         </div>
 
-        <h3>
+        <h3 id="bookingSummaryHeading" tabindex="-1">
           Trip Summary
         </h3>
 
       </div>
 
+
+      <button type="button" id="bookingEditTrip" class="booking-back">Edit Trip Details</button>
 
       <div class="summary-grid">
 
@@ -744,6 +697,11 @@
           </strong>
 
         </div>
+
+        <div class="summary-row"><span>Pickup</span><strong id="sumPickup">—</strong></div>
+        <div class="summary-row"><span>Destination</span><strong id="sumDestination">—</strong></div>
+        <div class="summary-row"><span>Pickup Date &amp; Time</span><strong id="sumPickupTime">—</strong></div>
+        <div class="summary-row" id="summaryReturnRow" hidden><span>Return Date &amp; Time</span><strong id="sumReturnTime">—</strong></div>
 
 
         <div class="summary-row">
@@ -813,10 +771,16 @@
         Your fare is calculated securely before payment.
       </p>
 
+        <button class="btn btn-pay" type="submit" id="payBtn" disabled>RESERVE & PAY NOW</button>
+        <p class="payment-choice-description">Reserve your trip and continue to secure payment.</p>
+        <button class="btn btn-pay-later" type="submit" id="payLaterBtn" disabled>RESERVE & PAY LATER</button>
+        <p class="payment-choice-description">Reserve your trip now and complete payment later from your reservation. FIRST15 holds expire after 24 hours if payment has not started.</p>
+        <div class="secure-line">🔒 Safe &amp; Secure Booking <span>•</span> Pay Online</div>
     </aside>
-
+        </section>
+      </form>
+    </div>
   </div>
-
 </section>
 
 
