@@ -85,6 +85,16 @@ evidence is supported, otherwise included tolls.
 
 ## Configuration and class eligibility
 
+**Shared Luxury SUV pricing update:** current Suburban and Escalade bookings use
+the operator-approved server category in
+[shared-luxury-suv-tolls.md](shared-luxury-suv-tolls.md). Its Class 1/congestion
+inputs are customer pricing assumptions, not individual fleet certification.
+The same category supplies both vehicles' route modifiers and estimate arithmetic;
+their individual trip-fare rates remain unchanged. Missing/invalid category
+configuration uses included tolls. The per-vehicle inputs below describe legacy
+unassigned estimate profiles and the separately verified path, not a requirement
+to certify each shared-category vehicle before using an advance estimate.
+
 `ROUTE_TOLLS_ENABLED=false` and `ADMIN_TOLL_VALIDATION_ENABLED=false` remain
 defaults. No production configuration is changed. `ROUTE_TOLLS_MODE=estimate`
 is the default if customer toll pricing is separately activated. `verified`
@@ -102,8 +112,9 @@ verification flags true. No real vehicle classification is certified here.
 
 Exact settled transactions and a real Google test key/export remain unavailable.
 Their comparison is pending; settlement history is no longer an advance-estimate
-gate. Operator confirmation of eligible class/plan and acceptance of the estimate
-policy are still necessary before separately approved activation. No migration
+gate. Shared-category assumptions are operator-approved pricing inputs; actual
+vehicle eligibility is still unverified. Separate deployment/activation approval
+is required. No migration
 or persistent GPS/E-ZPass history is introduced; accepted snapshots contain only
 compact hashes, assumptions and cents.
 

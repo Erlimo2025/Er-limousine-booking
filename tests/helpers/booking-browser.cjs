@@ -1,7 +1,7 @@
 'use strict';
 // Isolated browser fixtures. Provider paths and fleet inputs are synthetic;
 // these do not certify actual Google routes or the company's toll classification.
-const fs=require('node:fs'),path=require('node:path'),http=require('node:http'),{createRequire}=require('node:module');
+const fs=require('node:fs'),path=require('node:path'),http=require('node:http'),vm=require('node:vm'),{createRequire}=require('node:module');
 const root=path.resolve(__dirname,'../..'),anchor=path.join(root,'tests/security-abuse.test.cjs');
 const raw=fs.readFileSync(anchor,'utf8').replace('server.listen(0, "127.0.0.1", resolve)','server.listen(Number(env.PORT || 0), "127.0.0.1", resolve)');
 const {harness}=new Function('require','__dirname',raw.slice(0,raw.indexOf('test("approved prices'))+'\nreturn {harness};')(createRequire(anchor),path.dirname(anchor));
@@ -20,25 +20,26 @@ const orange={id:'orange',pickup:'Orange, NJ',dropoff:'Times Square, Manhattan, 
 const cases=[
  {...orange,id:'interstate_estimate',expected:'estimated'},
  {...orange,id:'reverse',pickup:orange.dropoff,dropoff:orange.pickup,direction:'nj_bound',expected:'estimated'},
- {...orange,id:'included',pickup:'Newark, NJ',dropoff:'Lower Manhattan, NY',crossing:'holland',street:'CANAL ST',missingProfile:true,expected:'absorbed'},
+ {...orange,id:'included',pickup:'Newark, NJ',dropoff:'Lower Manhattan, NY',crossing:'holland',street:'CANAL ST',missingCategory:true,expected:'absorbed'},
  {...orange,id:'unknown',pickup:'Newark, NJ',dropoff:'Lower Manhattan, NY',crossing:'holland',street:'CANAL ST',unknown:true,expected:'absorbed'},
  {...orange,id:'same_state',dropoff:'Trenton, NJ',sameState:true,expected:'waived'},
  {...orange,id:'round_trip',tripType:'roundtrip',expected:'estimated'},
  {...orange,id:'hourly',tripType:'hourly'},
  {...orange,id:'ewr_special',pickup:'EWR',dropoff:'Manhattan',special:true,expected:'included'},
- {...orange,id:'regular_airport',pickup:'EWR',dropoff:'Manhattan',tripType:'airport',vehicle:'escalade',missingProfile:true,expected:'absorbed'},
+ {...orange,id:'regular_airport',pickup:'EWR',dropoff:'Manhattan',tripType:'airport',vehicle:'escalade',expected:'estimated'},
  {...orange,id:'first15',promoCode:'FIRST15',account:true,expected:'estimated'},
  {...orange,id:'flag_off',disabled:true}
 ];
-async function create(t,c=cases[0]){
+async function create(t,c=cases[0],store){
  const probe=http.createServer();await new Promise(r=>probe.listen(0,'127.0.0.1',r));const port=probe.address().port;await new Promise(r=>probe.close(r));
  const env={...base.env,PORT:String(port),SITE_URL:'http://127.0.0.1:'+port,ADMIN_TOLL_VALIDATION_ENABLED:'false'};
  if(c.missingProfile)env.TOLL_VEHICLE_PROFILES_JSON=undefined;if(c.disabled)env.ROUTE_TOLLS_ENABLED='false';
- const h=base.configureLocations(await harness(t,env));
+ const h=base.configureLocations(await harness(t,env,'[]',store));
+ if(c.missingCategory)vm.runInContext('delete pricing.tollPricingCategories.luxury_suv;',h.context);
  if(c.special)h.state.rejectTerminalCDetails=true;
  const input={...base.normal,pickup:c.pickup,dropoff:c.dropoff,vehicle:c.vehicle||'suv',date:'2026-11-10',time:'12:00',tripType:c.tripType||'oneway',returnDate:'2026-11-11',returnTime:'18:00',hours:'3.5',promoCode:c.promoCode||'',notes:'Please keep these requests'};
  for(const [key,label,state]of [['pickup',c.pickup,c.direction==='ny_bound'?'NJ':'NY'],['dropoff',c.dropoff,c.sameState?'NJ':c.direction==='ny_bound'?'NY':'NJ']])if(label!=='EWR')h.state.searchResults[label]=[base.place(state,'ChIJ_browser_mock_'+c.id+'_'+key,label)];
  h.state.routeResult=r=>{const reverse=c.tripType==='roundtrip'&&String(r.origin.placeId).includes('_dropoff'),trip=reverse?{...c,direction:'nj_bound'}:c;return route(trip,c.unknown?null:trip.direction==='nj_bound'?225:2500);};
  return {h,input,c};
 }
-module.exports={create,cases};
+module.exports={create,cases,route};

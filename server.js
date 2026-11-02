@@ -1213,7 +1213,9 @@ async function calculateQuote(body,req) {
   }
 
   const {fixedOffer,verifiedPickup,verifiedDropoff} = await verifyBookingLocations(body,req);
-  const tollProfile = tollPricingEnabled ? routeTollPricing.vehicleProfile(process.env,body.vehicle) : null;
+  const tollProfile = tollPricingEnabled ? (tollEstimateMode
+    ? routeTollPricing.customerEstimateProfile(pricing,process.env,body.vehicle)
+    : routeTollPricing.vehicleProfile(process.env,body.vehicle)) : null;
   const tollOptions = {enabled:tollPricingEnabled,profile:tollProfile,special:!!fixedOffer};
   let tollEligibility=null,routePickup=verifiedPickup?{placeId:verifiedPickup.placeId}:body.pickup,
     routeDropoff=verifiedDropoff?{placeId:verifiedDropoff.placeId}:body.dropoff;
