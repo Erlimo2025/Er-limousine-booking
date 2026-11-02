@@ -1,9 +1,10 @@
 # Route toll estimates
 
-**Current customer-toll integration:** see [Official 2026 tariffs](official-toll-tariffs.md).
-New toll-enabled regular quotes require that verified tariff/evidence path. A Google
-aggregate and the earlier generic commercial/congestion booleans no longer authorize
-a new customer toll amount. With `ROUTE_TOLLS_ENABLED` false/unset, prices are unchanged.
+**Current draft policy:** see [Advance estimated tolls](estimated-toll-policy.md).
+Default estimate mode uses the approved NJ/NYC included-tolls fallback and does
+not require exact account settlement. The optional `verified` mode retains the
+[official tariff/network evidence path](official-toll-tariffs.md).
+With `ROUTE_TOLLS_ENABLED` false/unset, customer charging remains disabled.
 The separate admin estimate-only tool below still shows Google's original estimate.
 
 ## Historical Google pricing and accepted-snapshot compatibility

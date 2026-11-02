@@ -1,6 +1,7 @@
 const crypto = require('node:crypto');
 const officialRates = require('./official-toll-rates');
 const officialRoutes = require('./toll-route-evidence');
+const advance = require('./advance-toll-estimate');
 
 const REVIEW_MESSAGE = 'Toll estimate unavailable — contact us for a final quote';
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -67,6 +68,7 @@ function vehicleProfile(env, vehicle) {
     return {emissionType:p.emissionType,tollPasses:[...tollPasses],
       ...(suburban ? {accountType:'business',vehicleClass:'2Ax',axles:2} : {}),
       verified:compatibleClass && p.commercialRatesVerified === true && p.congestionCoverageVerified === true,
+      ...(plain(p.estimate2026)?{estimate:p.estimate2026}:{}),
       ...(plain(p.official2026)&&p.official2026.vehicleKey===vehicle?{official:p.official2026}:{})};
   } catch (_) { return null; }
 }
@@ -125,6 +127,9 @@ function quoteRevision(quote) {
   return crypto.createHash('sha256').update(canonical({pricing:quote.pricingBreakdown,total:quote.total,
     offer:quote.fixedOffer?.code || null,promo:quote.promotion?.code || null,
     ...(quote.tolls?.eligibility?{eligibility:quote.tolls.eligibility}:{}),
+    ...(quote.tolls?.format==='advance_estimate_2026'||quote.tolls?.status==='absorbed'?{advance:{
+      policy:quote.tolls.policy,status:quote.tolls.status,referenceHash:quote.tolls.referenceHash,
+      legs:quote.tolls.legs.map(({geometryHash,...financial})=>financial)}}:{}),
     ...(isOfficial(quote.tolls)?{official:{coverageHash:quote.tolls.coverageHash,fleetHash:quote.tolls.fleetHash,
       ...(quote.tolls.format==='official_network_2026'?{networkVersion:quote.tolls.networkVersion}:{}),
       routes:quote.tolls.legs.map(leg=>({...(quote.tolls.format==='official_network_2026'?{}:{geometryHash:leg.geometryHash}),
@@ -203,8 +208,10 @@ function validQuote(quote) {
     const p=quote.pricingBreakdown,t=quote.tolls;
     if (!plain(p) || p.version !== 1 || !plain(t) || t.version !== 1 || p.currency !== 'usd' || quote.currency !== 'usd' ||
         !Array.isArray(p.surcharges) || !Array.isArray(t.legs) || t.legs.length > 2 ||
-        !['none','estimated','included','waived'].includes(t.status)) return false;
-    if(t.format!==undefined&&(!isOfficial(t)||t.status!=='estimated'||!validOfficial(t)))return false;
+        !['none','estimated','included','waived','absorbed'].includes(t.status)) return false;
+    if(t.format!==undefined&&(t.format==='advance_estimate_2026'?(!advance.valid(t)||t.status!=='estimated'):(!isOfficial(t)||t.status!=='estimated'||!validOfficial(t))))return false;
+    if((t.format==='advance_estimate_2026'||t.status==='absorbed')&&!advance.covered(
+      {state:t.eligibility?.pickupState,county:t.eligibility?.pickupCounty},{state:t.eligibility?.dropoffState,county:t.eligibility?.dropoffCounty}))return false;
     if(t.eligibility !== undefined || p.tollScope !== undefined || p.interstate !== undefined){
       const e=t.eligibility;
       if(!plain(e) || e.policy!=='interstate_only' || p.tollScope!=='interstate_only' ||
@@ -223,10 +230,15 @@ function validQuote(quote) {
         t.estimatedRouteCents!==null || t.allowanceCents!==0 || t.reason!=='same_state' || t.legs.length<1 ||
         t.legs.some(leg=>!plain(leg) || leg.status!=='waived' || leg.amountCents!==0))return false;
     } else {
+      if(t.status==='absorbed') {
+        if(t.policy!==advance.FALLBACK||t.scope!=='nj_nyc_five_boroughs'||!t.eligibility||p.interstate!==true||p.tollsIncluded!==false||
+          t.amountCents!==0||t.estimatedRouteCents!==null||t.allowanceCents!==0||p.tollsCents!==0||t.legs.length!==0||t.reason!=='estimate_unavailable')return false;
+      } else {
       if (p.tollsIncluded !== false || !Number.isSafeInteger(t.amountCents) || t.amountCents < 0 || p.tollsCents !== t.amountCents || t.legs.length < 1) return false;
       for (const leg of t.legs) if (!plain(leg) || !['none','estimated'].includes(leg.status) || !Number.isSafeInteger(leg.amountCents) || leg.amountCents < 0 || leg.status === 'none' && leg.amountCents !== 0) return false;
       if (!Number.isSafeInteger(t.allowanceCents) || t.allowanceCents < 0 || sum(t.legs.map(leg => leg.amountCents)) !== t.estimatedRouteCents ||
           Math.max(0,t.estimatedRouteCents-t.allowanceCents) !== t.amountCents || (t.status === 'none' && t.estimatedRouteCents !== 0)) return false;
+      }
     }
     const expected=priceBreakdown(quote,t,t.status === 'included');
     if (canonical(expected) !== canonical(p) || cents(quote.discountedFare) !== Math.max(0,cents(quote.baseTotal)-cents(quote.discount)) ||
@@ -237,7 +249,14 @@ function validQuote(quote) {
 }
 function customerPricing(quote) {
   if (!quote.pricingBreakdown || !validQuote(quote)) return null;
-  return {...quote.pricingBreakdown,tollStatus:quote.tolls.status};
+  const {tollComponents,tollAssumptions,...pricing}=quote.pricingBreakdown;
+  return {...pricing,tollStatus:quote.tolls.status};
+}
+function customerQuote(quote){
+  if(quote.tolls?.format!=='advance_estimate_2026'&&quote.tolls?.status!=='absorbed')return quote;
+  return {...quote,pricingBreakdown:customerPricing(quote),tolls:{version:1,status:quote.tolls.status,amountCents:quote.tolls.amountCents}};
 }
 module.exports={REVIEW_MESSAGE,cents,sum,usdCents,routeTolls,vehicleProfile,requestModifiers,verifiedState,eligibility,aggregateTolls,attachTolls,validQuote,customerPricing,
+  customerQuote,
+  advanceCoverage:advance.covered,advanceEligible:advance.eligible,priceAdvanceRoutes:(routes,profile,eligibility)=>advance.estimate(routes,profile,eligibility,routeTolls),
   officialFieldMask:officialRoutes.FIELD_MASK,priceOfficialRoutes:officialRoutes.priceRoutes};

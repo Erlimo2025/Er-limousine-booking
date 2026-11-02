@@ -1,5 +1,12 @@
 # Official 2026 toll tariffs — inactive preparation
 
+**Policy update:** the default new-quote mode is now the operator-approved
+[advance estimate policy](estimated-toll-policy.md), with included unknown tolls
+within NJ/NYC. The strict evidence/settlement requirements below describe optional
+`ROUTE_TOLLS_MODE=verified` and historical accepted-snapshot compatibility.
+They are not prerequisites for the new advance-estimate mode. Both modes remain
+behind the disabled customer-charging flag; this is not activation approval.
+
 The reusable road-network replacement is implemented in `services/toll-road-network.js`
 and used by new toll-enabled interstate quotes. It replaces full-route/address-pair
 approvals. It is **not activated or production-certified**. Both feature flags

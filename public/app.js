@@ -928,26 +928,17 @@ function enableAddressAutocomplete(
 function renderFareBreakdown(data, review = false) {
   const container=document.getElementById('fareBreakdown');
   if(!container)return;
+  const policyNotice=document.getElementById('tollPolicyNotice');
+  if(policyNotice&&policyNotice!==container)policyNotice.textContent=data?.pricingBreakdown?'Tolls are estimated or included. No toll charges will be added to your accepted total.':'Your fare is calculated securely before payment.';
   container.replaceChildren();container.hidden=true;
   if(review){container.textContent='Toll estimate unavailable — contact us for a final quote';container.hidden=false;return;}
   const p=data?.pricingBreakdown;
   if(!p || p.version!==1)return;
   const amount=value=>formatMoney(value/100,data.currency);
   const row=(label,value)=>{const item=document.createElement('div'),name=document.createElement('span'),price=document.createElement('strong');item.className='fare-breakdown-row';name.textContent=label;price.textContent=value;item.append(name,price);container.append(item);};
-  row(p.tollsIncluded?'EWR → Manhattan Special':'Trip Fare',amount(p.tripFareCents));
-  for(const item of p.surcharges)row(item.label,amount(item.amountCents));
-  if(p.tollsIncluded)row('Tolls','Included');
-  else if(Array.isArray(p.tollComponents)){
-    for(const c of p.tollComponents)row(c.label,amount(c.amountCents));
-    for(const note of p.tollAssumptions||[]){const item=document.createElement('p');item.className='fare-breakdown-note';item.textContent=note;container.append(item);}
-  }
-  else if(data.tolls.status==='waived')row('Tolls','No added tolls — same-state trip');
-  else if(data.tolls.status==='none')row(p.interstate?'Estimated Interstate Tolls':'Tolls','None expected');
-  else if(p.tollsCents>0)row((p.interstate?'Estimated Interstate Tolls':'Estimated Tolls')+(p.tollAllowanceCents?' (additional)':''),amount(p.tollsCents));
-  else row(p.interstate?'Estimated Interstate Tolls':'Tolls',p.tollAllowanceCents?'Included in fare allowance':'No additional charge');
-  if(p.tollAllowanceCents)row('Toll allowance already in fare',amount(p.tollAllowanceCents));
-  if(p.discountCents)row('Eligible Discount','−'+amount(p.discountCents));
-  if(p.gratuityCents)row('Gratuity',amount(p.gratuityCents));
+  const fare=Number.isSafeInteger(p.totalCents)?p.totalCents-(p.tollsCents||0):p.tripFareCents+p.surcharges.reduce((n,s)=>n+s.amountCents,0)-p.discountCents+p.gratuityCents;
+  row('Trip Fare',amount(fare));
+  row('Tolls',p.tollsIncluded||data.tolls?.status==='absorbed'?'Included':amount(p.tollsCents||0));
   container.hidden=false;
 }
 
@@ -1081,7 +1072,7 @@ async function requestQuote(event) {
 
     showPromoResult(data);
     if(typeof renderFareBreakdown==='function')renderFareBreakdown(data);
-    if(data.pricingBreakdown){sumTotalLabel.textContent=data.pricingBreakdown.tollsIncluded || data.pricingBreakdown.interstate===false?'Total':'Total Including Tolls';if(promoSummary)promoSummary.hidden=true;}
+    if(data.pricingBreakdown){sumTotalLabel.textContent='Total';if(promoSummary)promoSummary.hidden=true;}
 
     if (showMobileSummary) quoteArea.classList.add("has-completed-quote");
 

@@ -19,7 +19,7 @@ const place=(state,id,address)=>({id,formattedAddress:address,displayName:{text:
  addressComponents:[{types:['country'],shortText:'US',longText:'United States'},{types:['administrative_area_level_1'],shortText:state,longText:{NJ:'New Jersey',NY:'New York',CT:'Connecticut',PA:'Pennsylvania'}[state]},...(state==='NY'?[{types:['administrative_area_level_2'],shortText:'New York County',longText:'New York County'}]:[])]});
 const ids={newark:'ChIJ_toll_newark',midtown:'ChIJ_toll_midtown',trenton:'ChIJ_toll_trenton',stamford:'ChIJ_toll_stamford',ewr:'ChIJ7wzsxeFSwokRhvLXxTe087M'};
 const coverage=official.catalog();
-const enabled={ROUTE_TOLLS_ENABLED:'true',TOLL_VEHICLE_PROFILES_JSON:JSON.stringify({suv:profile,escalade:{...profile,official2026:{...profile.official2026,vehicleKey:'escalade'}}}),OFFICIAL_TOLL_COVERAGE_JSON:JSON.stringify(coverage)};
+const enabled={ROUTE_TOLLS_ENABLED:'true',ROUTE_TOLLS_MODE:'verified',TOLL_VEHICLE_PROFILES_JSON:JSON.stringify({suv:profile,escalade:{...profile,official2026:{...profile.official2026,vehicleKey:'escalade'}}}),OFFICIAL_TOLL_COVERAGE_JSON:JSON.stringify(coverage)};
 function editCoverage(h,change){const c=JSON.parse(h.context.process.env.OFFICIAL_TOLL_COVERAGE_JSON);change(c);h.context.process.env.OFFICIAL_TOLL_COVERAGE_JSON=JSON.stringify(c);}
 function configureLocations(h){h.state.searchResults={
  [normal.pickup]:[place('NJ',ids.newark,normal.pickup)],[normal.dropoff]:[place('NY',ids.midtown,normal.dropoff)],
@@ -28,7 +28,7 @@ function configureLocations(h){h.state.searchResults={
  EWR:[place('NJ',ids.ewr,'Newark Liberty International Airport (EWR)')],
  'Newark Liberty International Airport (EWR)':[place('NJ',ids.ewr,'Newark Liberty International Airport (EWR)')],
  Manhattan:[place('NY',ids.midtown,'Manhattan, NY')]};return h;}
-async function fixture(t,amount=1375,env=enabled){const h=configureLocations(await harness(t,env));h.state.routeResult=request=>googleRoute(amount,request);return h;}
+async function fixture(t,amount=1375,env=enabled){const h=configureLocations(await harness(t,{ROUTE_TOLLS_MODE:'verified',...env}));h.state.routeResult=request=>googleRoute(amount,request);return h;}
 const cookie=r=>r.headers.getSetCookie().find(value=>value.includes('er_customer_session'))?.split(';')[0];
 const access=r=>r.headers.getSetCookie().filter(value=>value.includes('er_booking_')).map(value=>value.split(';')[0]).join('; ');
 
@@ -46,7 +46,7 @@ test('toll states use only the route-level total and never sum duplicate leg tot
 
 test('a reviewed reverse route has no PA or new zone charge; a Google zero is not billing authority',async t=>{
  const h=await fixture(t,0),q=await h.request('/api/quote',{...normal,pickup:normal.dropoff,dropoff:normal.pickup});assert.equal(q.status,200);assert.equal(q.body.tolls.status,'estimated');assert.equal(q.body.tolls.amountCents,0);assert.equal(q.body.total,80);assert.equal(q.body.pricingBreakdown.tollAllowanceCents,0);
- const receipt=require('../services/booking-emails').bookingMessage({trip:normal,quote:q.body,customer:{firstName:'Toll',lastName:'Fixture',email:'fixture@example.test'},paymentStatus:'unpaid',id:crypto.randomUUID()},'customer_reservation_created',{email:'support@example.test',phone:''});assert.match(receipt.text,/Port Authority crossing: \$0.00/);assert.doesNotMatch(receipt.text,/Included in fare allowance/);
+ const receipt=require('../services/booking-emails').bookingMessage({trip:normal,quote:q.body,customer:{firstName:'Toll',lastName:'Fixture',email:'fixture@example.test'},paymentStatus:'unpaid',id:crypto.randomUUID()},'customer_reservation_created',{email:'support@example.test',phone:''});assert.match(receipt.text,/Tolls: \$0.00/);assert.doesNotMatch(receipt.text,/Port Authority crossing|MTA congestion|Included in fare allowance/);
 });
 
 test('Routes requests retain distance/duration, request TOLLS once, and send only the server vehicle profile and scheduled departure',async t=>{
@@ -78,7 +78,7 @@ test('same-state NJ and NY trips waive real or unknown road tolls, even without 
   const q=await h.request('/api/quote',trip);assert.equal(q.status,200);assert.equal(q.body.total,80);assert.equal(q.body.tolls.status,'waived');assert.equal(q.body.tolls.amountCents,0);assert.equal(q.body.tolls.estimatedRouteCents,null);assert.equal(q.body.pricingBreakdown.interstate,false);assert.ok(tolls.validQuote(q.body));
   assert.equal(q.body.tolls.eligibility.pickupState,state);assert.equal(q.body.tolls.eligibility.dropoffState,state);assert.ok(h.state.routes.every(route=>route.extraComputations===undefined));
   const reserved=await h.request('/api/checkout',{...trip,quoteRevision:q.body.quoteRevision});assert.equal(reserved.status,200);assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount,8000);
-  const receipt=require('../services/booking-emails').bookingMessage(h.records()[0],'customer_reservation_created',{email:'support@example.test',phone:''});assert.match(receipt.text,/No added tolls — same-state trip/);
+  const receipt=require('../services/booking-emails').bookingMessage(h.records()[0],'customer_reservation_created',{email:'support@example.test',phone:''});assert.match(receipt.text,/Tolls: \$0.00/);assert.doesNotMatch(receipt.text,/Port Authority crossing|MTA congestion/);
  }
 });
 
@@ -347,7 +347,7 @@ test('authenticated owner receipt and guest status expose the same safe breakdow
  const owned=await h.request('/api/customer/trips/'+id,undefined,auth);assert.equal(owned.status,200);assert.equal(owned.body.trip.pricingBreakdown.totalCents,10079);assert.equal(owned.body.trip.pricingBreakdown.tollsCents,2079);
  assert.equal((await h.request('/api/customer/trips/'+id,undefined,{cookie:cookie(b)})).status,404);
  const guest=await h.request('/api/booking/'+id,undefined,{cookie:access(r)});assert.equal(guest.body.quote.pricingBreakdown.totalCents,10079);assert.equal(guest.body.quote.total,100.79);assert.ok(!JSON.stringify(guest.body).includes('commercialRatesVerified'));
- const receipt=require('../services/booking-emails').bookingMessage(h.records()[0],'customer_reservation_created',{email:'support@example.test',phone:''});assert.match(receipt.text,/Port Authority crossing: \$14.79/);assert.match(receipt.text,/MTA congestion: \$9.00/);assert.match(receipt.text,/Eligible credit: -\$3.00/);assert.match(receipt.text,/Total: \$100.79/);
+ const receipt=require('../services/booking-emails').bookingMessage(h.records()[0],'customer_reservation_created',{email:'support@example.test',phone:''});assert.match(receipt.text,/Trip Fare: \$80.00/);assert.match(receipt.text,/Tolls: \$20.79/);assert.doesNotMatch(receipt.text,/Port Authority crossing|MTA congestion|Eligible credit/);assert.match(receipt.text,/Total: \$100.79/);
 });
 
 test('Trip Summary uses server cents, shows inclusive $150 without a lower invented fare, and does not display unknown tolls as zero',()=>{
@@ -355,11 +355,11 @@ test('Trip Summary uses server cents, shows inclusive $150 without a lower inven
  vm.createContext(context);vm.runInContext(app.slice(app.indexOf('function renderFareBreakdown('),app.indexOf('async function requestQuote(')),context);
  const q={currency:'usd',tolls:{status:'estimated'},pricingBreakdown:{version:1,tripFareCents:8000,surcharges:[],tollsCents:1375,discountCents:0,gratuityCents:0,tollAllowanceCents:0,tollsIncluded:false}};context.renderFareBreakdown(q);assert.equal(container.children[0].children[1].textContent,'$80.00');assert.equal(container.children[1].children[1].textContent,'$13.75');
  const itemized={...q,pricingBreakdown:{...q.pricingBreakdown,tollComponents:[{label:'Port Authority crossing',amountCents:1479},{label:'MTA congestion',amountCents:900},{label:'Eligible credit',amountCents:-300}],tollAssumptions:['Synthetic policy note']}};
- context.renderFareBreakdown(itemized);assert.equal(container.children[1].children[0].textContent,'Port Authority crossing');assert.equal(container.children[1].children[1].textContent,'$14.79');
- assert.equal(container.children[3].children[0].textContent,'Eligible credit');assert.equal(container.children[3].children[1].textContent,'$-3.00');assert.equal(container.children[4].textContent,'Synthetic policy note');
- context.renderFareBreakdown({...q,pricingBreakdown:{...q.pricingBreakdown,tollScope:'interstate_only',interstate:true}});assert.equal(container.children[1].children[0].textContent,'Estimated Interstate Tolls');
- context.renderFareBreakdown({...q,tolls:{status:'waived'},pricingBreakdown:{...q.pricingBreakdown,tollScope:'interstate_only',interstate:false,tollsCents:0}});assert.equal(container.children[1].children[1].textContent,'No added tolls — same-state trip');
- context.renderFareBreakdown({...q,pricingBreakdown:{...q.pricingBreakdown,tollsCents:0}});assert.equal(container.children[1].children[1].textContent,'No additional charge');
+ context.renderFareBreakdown(itemized);assert.equal(container.children.length,2);assert.equal(container.children[1].children[0].textContent,'Tolls');assert.equal(container.children[1].children[1].textContent,'$13.75');
+ context.renderFareBreakdown({...q,pricingBreakdown:{...q.pricingBreakdown,tollScope:'interstate_only',interstate:true}});assert.equal(container.children[1].children[0].textContent,'Tolls');
+ context.renderFareBreakdown({...q,tolls:{status:'waived'},pricingBreakdown:{...q.pricingBreakdown,tollScope:'interstate_only',interstate:false,tollsCents:0}});assert.equal(container.children[1].children[1].textContent,'$0.00');
+ context.renderFareBreakdown({...q,tolls:{status:'absorbed'},pricingBreakdown:{...q.pricingBreakdown,tollsCents:0}});assert.equal(container.children[1].children[1].textContent,'Included');
+ const net={...q,pricingBreakdown:{...q.pricingBreakdown,tripFareCents:8000,surcharges:[{label:'Existing surcharge',amountCents:500}],discountCents:1275,gratuityCents:0,totalCents:8600}};context.renderFareBreakdown(net);assert.equal(container.children[0].children[1].textContent,'$72.25');assert.equal(container.children.length,2);
  context.renderFareBreakdown({...q,pricingBreakdown:{...q.pricingBreakdown,tollsIncluded:true,tripFareCents:15000,tollsCents:null}});assert.equal(container.children[0].children[1].textContent,'$150.00');assert.equal(container.children[1].children[1].textContent,'Included');
  context.renderFareBreakdown(null,true);assert.match(container.textContent,/contact us for a final quote/);assert.ok(!container.textContent.includes('$0'));assert.equal(container.hidden,false);
  context.renderFareBreakdown(null);assert.equal(container.hidden,true);
