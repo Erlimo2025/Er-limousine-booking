@@ -541,6 +541,10 @@ textarea:focus {
   font-weight: 900;
 }
 
+#completePayment[hidden] {
+  display: none;
+}
+
 .btn-primary,
 .main-quote-btn {
   background:
