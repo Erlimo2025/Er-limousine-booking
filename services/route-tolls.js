@@ -2,6 +2,7 @@ const crypto = require('node:crypto');
 const officialRates = require('./official-toll-rates');
 const officialRoutes = require('./toll-route-evidence');
 const advance = require('./advance-toll-estimate');
+const categories = require('./toll-pricing-categories');
 
 const REVIEW_MESSAGE = 'Toll estimate unavailable — contact us for a final quote';
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -75,6 +76,10 @@ function vehicleProfile(env, vehicle) {
 function requestModifiers(profile) {
   return profile ? {vehicleInfo:{emissionType:profile.emissionType},tollPasses:profile.tollPasses} : {};
 }
+function customerEstimateProfile(pricing,env,vehicle){
+  const selected=categories.resolve(pricing,vehicle);
+  return selected.assigned?selected.profile:vehicleProfile(env,vehicle);
+}
 const states = new Set('AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY'.split(' '));
 function verifiedState(place) {
   if (!plain(place) || typeof place.id !== 'string' || !/^[A-Za-z0-9_-]{1,255}$/.test(place.id) ||
@@ -129,6 +134,7 @@ function quoteRevision(quote) {
     ...(quote.tolls?.eligibility?{eligibility:quote.tolls.eligibility}:{}),
     ...(quote.tolls?.format==='advance_estimate_2026'||quote.tolls?.status==='absorbed'?{advance:{
       policy:quote.tolls.policy,status:quote.tolls.status,referenceHash:quote.tolls.referenceHash,
+      ...(quote.tolls.pricingCategory?{pricingCategory:quote.tolls.pricingCategory}:{}),
       legs:quote.tolls.legs.map(({geometryHash,...financial})=>financial)}}:{}),
     ...(isOfficial(quote.tolls)?{official:{coverageHash:quote.tolls.coverageHash,fleetHash:quote.tolls.fleetHash,
       ...(quote.tolls.format==='official_network_2026'?{networkVersion:quote.tolls.networkVersion}:{}),
@@ -209,6 +215,8 @@ function validQuote(quote) {
     if (!plain(p) || p.version !== 1 || !plain(t) || t.version !== 1 || p.currency !== 'usd' || quote.currency !== 'usd' ||
         !Array.isArray(p.surcharges) || !Array.isArray(t.legs) || t.legs.length > 2 ||
         !['none','estimated','included','waived','absorbed'].includes(t.status)) return false;
+    if(t.pricingCategory!==undefined&&(!categories.validSnapshot(t.pricingCategory)||
+      t.format!=='advance_estimate_2026'&&t.status!=='absorbed'))return false;
     if(t.format!==undefined&&(t.format==='advance_estimate_2026'?(!advance.valid(t)||t.status!=='estimated'):(!isOfficial(t)||t.status!=='estimated'||!validOfficial(t))))return false;
     if((t.format==='advance_estimate_2026'||t.status==='absorbed')&&!advance.covered(
       {state:t.eligibility?.pickupState,county:t.eligibility?.pickupCounty},{state:t.eligibility?.dropoffState,county:t.eligibility?.dropoffCounty}))return false;
@@ -256,7 +264,7 @@ function customerQuote(quote){
   if(quote.tolls?.format!=='advance_estimate_2026'&&quote.tolls?.status!=='absorbed')return quote;
   return {...quote,pricingBreakdown:customerPricing(quote),tolls:{version:1,status:quote.tolls.status,amountCents:quote.tolls.amountCents}};
 }
-module.exports={REVIEW_MESSAGE,cents,sum,usdCents,routeTolls,vehicleProfile,requestModifiers,verifiedState,eligibility,aggregateTolls,attachTolls,validQuote,customerPricing,
+module.exports={REVIEW_MESSAGE,cents,sum,usdCents,routeTolls,vehicleProfile,customerEstimateProfile,requestModifiers,verifiedState,eligibility,aggregateTolls,attachTolls,validQuote,customerPricing,
   customerQuote,
   advanceCoverage:advance.covered,advanceEligible:advance.eligible,priceAdvanceRoutes:(routes,profile,eligibility)=>advance.estimate(routes,profile,eligibility,routeTolls),
   officialFieldMask:officialRoutes.FIELD_MASK,priceOfficialRoutes:officialRoutes.priceRoutes};

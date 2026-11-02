@@ -2,6 +2,7 @@
 // Advance estimate policy, not E-ZPass settlement or certified road coverage.
 const geo=require('./toll-route-evidence'),rates=require('./official-toll-rates');
 const reference=require('./data/toll-estimate-reference-2026.json');
+const categories=require('./toll-pricing-categories');
 const VERSION='interstate-advance-estimate-2026-v1',FALLBACK='company_includes_unknown_tolls_v1';
 const counties=new Set(['New York County','Kings County','Queens County','Bronx County','Richmond County']);
 const servicePlace=p=>p?.state==='NJ'||p?.state==='NY'&&counties.has(p.county);
@@ -11,6 +12,7 @@ function included(eligibility,reason='estimate_unavailable'){
   eligibility,policy:FALLBACK,reason,scope:'nj_nyc_five_boroughs'};
 }
 function eligible(profile){
+ if(profile?.customerEstimate!==undefined)return categories.validProfile(profile);
  const p=profile?.estimate;
  return !!(p?.paClass1Eligible===true&&p.axles===2&&p.singleRearWheels===true&&p.noTrailer===true&&
   p.mtaPlan==='standard_daily'&&p.tlcLicensed===false&&typeof p.crossingCreditEligible==='boolean'&&
@@ -58,6 +60,7 @@ function windowRate(g,start,end,departure,kind){
  const final=rates.rateAt(last,kind);if(final.day!==rate.day)rates.review('day_boundary_uncertain');return final.cents>rate.cents?final:rate;
 }
 function estimate(routes,profile,eligibility,parseProvider){
+ const pricingCategory=categories.snapshot(profile);
  try{
   if(!eligible(profile)||!Array.isArray(routes)||!routes.length||routes.length>2)rates.review('vehicle_estimate_profile_missing');
   const ledger=new Map(),providerByDay=new Map(),legs=[];let priorEnd=0;
@@ -82,7 +85,7 @@ function estimate(routes,profile,eligibility,parseProvider){
     const before=ledger.get(day)||{chargedCents:0,creditedCents:0};
     const source=['lincoln','holland'].includes(gate.crossing)?gate.crossing:null;
     const c=rates.creditAmounts({kind:'entry',period:mta.peak?'peak':'overnight',creditSource:source,
-     crossingPeriod:mta.peak?'peak':'overnight',creditEligibility:profile.estimate.crossingCreditEligible?'eligible':'ineligible',crossingPaidCents:pa,
+     crossingPeriod:mta.peak?'peak':'overnight',creditEligibility:(pricingCategory?pricingCategory.crossingCreditAssumption==='eligible_peak':profile.estimate.crossingCreditEligible)?'eligible':'ineligible',crossingPaidCents:pa,
      chargedBefore:before.chargedCents,creditedBefore:before.creditedCents});
     congestion=c.amountCents;credit=c.creditCents;ledger.set(day,c.stateAfter);
    }
@@ -102,12 +105,15 @@ function estimate(routes,profile,eligibility,parseProvider){
   }
   const amountCents=legs.reduce((n,l)=>n+l.amountCents,0);if(!Number.isSafeInteger(amountCents)||amountCents<0)rates.review('invalid_total');
   return {version:1,format:'advance_estimate_2026',policy:VERSION,status:'estimated',amountCents,estimatedRouteCents:amountCents,
+   ...(pricingCategory?{pricingCategory}:{}),
    allowanceCents:0,eligibility,legs,assumption:'First chargeable entry per booking/day; no assertion of actual vehicle-day history.',referenceHash:geo.digest(reference)};
- }catch(error){return {...included(eligibility),reviewReason:error instanceof rates.TollReviewError?error.reason:'estimate_unavailable'};}
+ }catch(error){return {...included(eligibility),...(pricingCategory?{pricingCategory}:{}),reviewReason:error instanceof rates.TollReviewError?error.reason:'estimate_unavailable'};}
 }
 function valid(t){
  if(t.format!=='advance_estimate_2026'||t.policy!==VERSION||!t.eligibility||t.eligibility.pickupState===t.eligibility.dropoffState||
   typeof t.referenceHash!=='string'||!/^[a-f0-9]{64}$/.test(t.referenceHash)||!Array.isArray(t.legs)||t.legs.length<1||t.legs.length>2)return false;
+ if(t.pricingCategory!==undefined&&(!categories.validSnapshot(t.pricingCategory)||
+  t.pricingCategory.crossingCreditAssumption==='none'&&t.legs.some(l=>l.creditCents!==0)))return false;
  const ledger=new Map();
  return t.legs.every(l=>{
   if(l.day!==null){

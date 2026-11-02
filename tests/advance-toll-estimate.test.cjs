@@ -2,7 +2,11 @@ const test=require('node:test'),assert=require('node:assert/strict'),fs=require(
 const advance=require('../services/advance-toll-estimate'),tolls=require('../services/route-tolls'),geo=require('../services/toll-route-evidence'),official=require('./helpers/official-toll-fixtures.cjs');
 const reference=require('../services/data/toll-estimate-reference-2026.json');
 const file=path.join(__dirname,'tolls.test.cjs'),source=fs.readFileSync(file,'utf8'),cut=source.indexOf("test('provider Money");
-const {fixture,normal,origin,access,place,harness,configureLocations}=new Function('require','__dirname',source.slice(0,cut)+'\nreturn {fixture,normal,origin,access,place,harness,configureLocations};')(createRequire(file),__dirname);
+const {fixture:legacyFixture,normal,origin,access,place,harness,configureLocations}=new Function('require','__dirname',source.slice(0,cut)+'\nreturn {fixture,normal,origin,access,place,harness,configureLocations};')(createRequire(file),__dirname);
+// Preserve regression coverage for previously accepted per-vehicle policies.
+// Current shared-category behavior is covered separately in shared-suv-tolls.
+function legacyPricing(h){vm.runInContext('delete pricing.vehicleRates.suv.tollPricingCategory;delete pricing.vehicleRates.escalade.tollPricingCategory;',h.context);return h;}
+async function fixture(...args){return legacyPricing(await legacyFixture(...args));}
 // Operator assumptions below are synthetic tests, NOT verified ER fleet facts.
 const profile={emissionType:'GASOLINE',tollPasses:['US_NJ_EZPASSNJ'],commercialRatesVerified:false,congestionCoverageVerified:false,
  estimate2026:{paClass1Eligible:true,axles:2,singleRearWheels:true,noTrailer:true,mtaPlan:'standard_daily',tlcLicensed:false,crossingCreditEligible:true}};
@@ -146,7 +150,7 @@ test('PostgreSQL advance and included-tolls snapshots survive restart without re
  t.after(async()=>{await pool.end();await secondPool.end();if(created)await admin.query('DROP SCHEMA '+schema+' CASCADE');await admin.end();});
  await admin.query('CREATE SCHEMA '+schema);created=true;const {createStore}=require('../storage/postgres'),store=createStore({},pool),second=createStore({},secondPool);await store.migrate();
  for(const available of [true,false]){
-  const h=configureLocations(await harness(t,available?env:{...env,TOLL_VEHICLE_PROFILES_JSON:undefined},'[]',store));h.state.routeResult=()=>route();
+  const h=legacyPricing(configureLocations(await harness(t,available?env:{...env,TOLL_VEHICLE_PROFILES_JSON:undefined},'[]',store)));h.state.routeResult=()=>route();
   const trip={...normal,email:'pg-advance-'+available+'@example.test'},q=await h.request('/api/quote',trip),r=await h.request('/api/checkout',{...trip,paymentChoice:'later',quoteRevision:q.body.quoteRevision});assert.equal(r.status,200);
   const record=await second.get(r.body.bookingId);assert.equal(record.quote.tolls.status,available?'estimated':'absorbed');assert.ok(tolls.validQuote(record.quote));assert.equal(record.quote.totalCents,q.body.totalCents);
   const restarted=await harness(t,{ROUTE_TOLLS_ENABLED:'false'},'[]',second);restarted.state.routeResult=()=>{throw Error('No repricing');};

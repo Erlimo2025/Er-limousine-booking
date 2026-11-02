@@ -12,6 +12,7 @@ module.exports = {
   vehicleRates: {
     escalade: {
       label: "Cadillac Escalade",
+      tollPricingCategory: "luxury_suv",
       baseFare: 30,
       perMile: 4.5,
       perMinute: 1.25,
@@ -23,12 +24,28 @@ module.exports = {
 
     suv: {
       label: "Black SUV",
+      tollPricingCategory: "luxury_suv",
       baseFare: 20,
       perMile: 4,
       perMinute: 1,
       minimumFare: 20,
       maxPassengers: 6,
       hourlyRate: 130
+    }
+  },
+
+  // Operator-approved customer estimate model, NOT an individual vehicle's
+  // E-ZPass class, tag, commercial-rate or congestion-plan certification.
+  tollPricingCategories: {
+    luxury_suv: {
+      policy: "nj-ezpass-class1-advance-2026-v1",
+      operatorApprovedEstimate: true,
+      emissionType: "GASOLINE",
+      tollPasses: ["US_NJ_EZPASSNJ"],
+      portAuthorityTariffClass: "1",
+      congestionPlan: "standard_daily",
+      crossingCreditAssumption: "eligible_peak",
+      companyAbsorbsDifferences: true
     }
   },
 
