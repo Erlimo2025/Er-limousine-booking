@@ -139,7 +139,7 @@ function uiHarness(){
   setAttribute(k,v){this.attributes[k]=v;},addEventListener(k,fn){events[this.id+':'+k]=fn;}});
  const html=fs.readFileSync(path.join(__dirname,'../public/account.html'),'utf8');for(const match of html.matchAll(/id="([^"]+)"/g)){elements[match[1]]=node('element');elements[match[1]].id=match[1];}
  for(const prefix of ['login','register']){const form=elements[prefix+'Form'];form.reset=()=>{};form.querySelector=selector=>selector==='button[type=submit]'?node('button'):elements[prefix+'Password'];}
- const context={document:{getElementById:id=>elements[id],querySelectorAll:()=>[],createElement:node},window:{addEventListener:(event,fn)=>{events['window:'+event]=fn;}},history:{replaceState(){}},location:{hash:''},setTimeout,
+ const context={TripDateFormat:require('../public/trip-date-format'),document:{getElementById:id=>elements[id],querySelectorAll:()=>[],createElement:node},window:{addEventListener:(event,fn)=>{events['window:'+event]=fn;}},history:{replaceState(){}},location:{hash:''},setTimeout,
   fetch:async(url,options)=>{state.requests.push({url,options});if(url.endsWith('/profile')&&state.profilePending)return await state.profilePending;if(url.includes('/trips'))return state.pending?await state.pending:{ok:!state.error,status:state.error?503:200,json:async()=>state.error?{error:'Service temporarily unavailable.'}:state.tripResult};return {ok:state.profile || url.endsWith('/logout'),status:state.profile?200:401,json:async()=>url.endsWith('/logout')?{ok:true}:{customer:{fullName:'Test Customer',email:'synthetic@example.test',phone:'2015550188'}}};}};
  require('node:vm').createContext(context);require('node:vm').runInContext(fs.readFileSync(path.join(__dirname,'../public/account.js'),'utf8'),context);
  return {elements,events,state,context,node};
@@ -147,7 +147,7 @@ function uiHarness(){
 test('My Trips UI uses safe text nodes, wraps long addresses and displays read-only return/terminal details',()=>{
  const h=uiHarness(),r=fixture();r.trip.pickup='<img src=x onerror=alert(1)>'+('Very long address '.repeat(30));r.trip.tripType='roundtrip';r.trip.returnDate='2026-11-12';r.trip.returnTime='13:00';r.trip.pickupPlaceId='ChIJ2dQDPZNSwokRVJr9XE2SPt0';
  const card=h.context.tripCard(tripDto(r));const nodes=[];const walk=n=>{nodes.push(n);for(const child of n.children||[])walk(child);};walk(card);
- assert.ok(nodes.some(n=>n.textContent===r.trip.pickup+' → '+r.trip.dropoff));assert.ok(nodes.some(n=>n.textContent==='Terminal A'));assert.ok(nodes.some(n=>n.textContent.includes('2026-11-12')));assert.ok(!nodes.some(n=>['script','img','iframe'].includes(n.tag)));
+ assert.ok(nodes.some(n=>n.textContent===r.trip.pickup+' → '+r.trip.dropoff));assert.ok(nodes.some(n=>n.textContent==='Terminal A'));assert.ok(nodes.some(n=>n.textContent.includes('11/12/2026 · 1:00 PM')));assert.ok(!nodes.some(n=>['script','img','iframe'].includes(n.tag)));
  const source=fs.readFileSync(path.join(__dirname,'../public/account.js'),'utf8');assert.doesNotMatch(source,/innerHTML|outerHTML|insertAdjacentHTML|localStorage|sessionStorage|indexedDB/);
  assert.match(fs.readFileSync(path.join(__dirname,'../public/account.css'),'utf8'),/overflow-wrap:anywhere/);
 });
@@ -251,7 +251,7 @@ test('My Trips renders payment action for unpaid only and scopes full payment re
  const src=fs.readFileSync(path.join(__dirname,'../public/account.js'),'utf8');
  const start=src.indexOf('function tripCard('),end=src.indexOf('async function loadTrips',start);
  const node=tag=>({tag,children:[],textContent:'',append(...x){this.children.push(...x)},addEventListener(){},setAttribute(){}});
- const ctx={document:{createElement:node},Intl};require('node:vm').createContext(ctx);require('node:vm').runInContext(src.slice(start,end),ctx);
+ const ctx={document:{createElement:node},Intl,TripDateFormat:require('../public/trip-date-format')};require('node:vm').createContext(ctx);require('node:vm').runInContext(src.slice(start,end),ctx);
  const walk=n=>[n,...n.children.flatMap(walk)];
  const r=fixture(),dto=tripDto(r),original=JSON.stringify(dto),unpaidNodes=walk(ctx.tripCard(dto));
  assert.deepEqual(unpaidNodes.filter(x=>x.className==='trip-badge').map(x=>x.textContent),['Unpaid']);
@@ -265,7 +265,7 @@ test('My Trips renders payment action for unpaid only and scopes full payment re
 
 test('My Trips pending verification hides payment action without claiming Paid or trusting client flags',()=>{
  const src=fs.readFileSync(path.join(__dirname,'../public/account.js'),'utf8'),start=src.indexOf('function tripCard('),end=src.indexOf('async function loadTrips',start);
- const node=tag=>({tag,children:[],textContent:'',append(...x){this.children.push(...x)},addEventListener(){},setAttribute(){}}),ctx={document:{createElement:node},Intl};
+ const node=tag=>({tag,children:[],textContent:'',append(...x){this.children.push(...x)},addEventListener(){},setAttribute(){}}),ctx={document:{createElement:node},Intl,TripDateFormat:require('../public/trip-date-format')};
  require('node:vm').createContext(ctx);require('node:vm').runInContext(src.slice(start,end),ctx);const walk=n=>[n,...n.children.flatMap(walk)];
  const r=fixture();r.paymentVerificationPending=true;assert.equal(tripDto(r).paymentVerificationPending,false);
  r.checkoutAttempt={state:'session_identified',evidence:'verified_paid_awaiting_webhook'};const dto=tripDto(r);assert.equal(dto.paymentStatus,'unpaid');assert.equal(dto.paymentVerificationPending,true);

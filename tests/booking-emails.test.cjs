@@ -114,7 +114,7 @@ test('customer reservation presentation uses Total, New York time and concise su
  const {bookingMessage}=require('../services/booking-emails'),r=presentationRecord(),before=JSON.stringify(r),m=bookingMessage(r,'customer_reservation_created',envContact());
  assert.equal(m.subject,'Reservation Confirmed — Payment Due | ER Limousine Service');assert.ok(!m.subject.includes(r.id));assert.ok(m.text.includes('Reservation ID: '+r.id));assert.ok(m.html.includes(r.id));
  assert.match(m.text,/Total: \$150\.00/);assert.match(m.html,/>Total<\/th>/);assert.doesNotMatch(m.text+m.html,/Authoritative total|America\/New_York/);
- for(const dt of ['2026-11-10 12:00 (New York time)','2026-11-12 18:00 (New York time)'])assert.ok(m.text.includes(dt));
+ for(const dt of ['11/10/2026 · 12:00 PM (New York time)','11/12/2026 · 6:00 PM (New York time)'])assert.ok(m.text.includes(dt));
  assert.equal(JSON.stringify(r),before);const admin=bookingMessage(r,'reservation_created',envContact());assert.ok(admin.subject.includes(r.id));assert.match(admin.text,/Authoritative total: \$150\.00/);assert.match(admin.text,/America\/New_York/);assert.ok(admin.text.includes(r.trip.pickup));
 });
 function envContact(){return {email:env.COMPANY_EMAIL,phone:env.COMPANY_PHONE};}

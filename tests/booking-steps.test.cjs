@@ -10,7 +10,7 @@ function ui(){
  for(const id of ['bookingBack','bookingEditTrip','bookingContinue','bookingStepLabel','bookingSummaryHeading','sumPickup','sumDestination','sumPickupTime','summaryReturnRow','sumReturnTime'])fields[id]=element();
  const tripKeys=['pickup','dropoff','date','time','vehicle','passengers'],customerKeys=['firstName','lastName','email','phone','notes','promoCode'];
  const tripStep={querySelectorAll:()=>tripKeys.map(k=>fields[k]),contains:e=>tripKeys.some(k=>fields[k]===e)},customerStep={querySelectorAll:()=>customerKeys.map(k=>fields[k])};
- const ctx={AbortController,JSON,Number,...fields,tripStep,customerStep,summaryStep:element(),activeBookingStep:1,bookingPanel:element(),reservationBusy:false,quoteRequestGeneration:0,quoteController:null,quotedFormKey:null,currentQuote:null,
+ const ctx={TripDateFormat:require('../public/trip-date-format'),AbortController,JSON,Number,...fields,tripStep,customerStep,summaryStep:element(),activeBookingStep:1,bookingPanel:element(),reservationBusy:false,quoteRequestGeneration:0,quoteController:null,quotedFormKey:null,currentQuote:null,
   document:{getElementById:id=>fields[id]},form:{addEventListener:(name,fn)=>events[name]=fn},quoteBtn:element(),payBtn:element(),payLaterBtn:element(),quoteArea:element(),promoSummary:element(),hours:element('3'),
   clearNotice(){messages.length=0;},showNotice(text){messages.push(text);},showPromoResult(){},renderFareBreakdown(){},formatMoney:n=>'$'+n.toFixed(2),
   getFormData:()=>Object.fromEntries([...tripKeys,...customerKeys].map(k=>[k,fields[k].value])),window:{location:{},addEventListener:(name,fn)=>events[name]=fn}};

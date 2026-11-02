@@ -137,7 +137,7 @@ function tripCard(trip){
  if(!(trip.status==='awaiting_payment' && trip.paymentStatus==='unpaid' && !processing))badges.append(node('span','trip-badge',processing&&trip.status!=='cancelled'?'Payment verification in progress':labels[trip.status]||trip.status));
  badges.append(node('span','trip-badge',refund?{processing:'Refund processing',confirmed:'Refund confirmed',review_required:'Refund review required',failed:'Refund review required'}[refund]:processing?'Payment verification in progress':labels[trip.paymentStatus]||trip.paymentStatus));
  const money=new Intl.NumberFormat('en-US',{style:'currency',currency:trip.currency}).format(trip.total);
- const dateTime=(date,time)=>date+' · '+time+' (New York time)';
+ const dateTime=(date,time)=>TripDateFormat.trip(date,time);
  const fareRow=node('div','trip-fare-row');fareRow.append(node('p','trip-vehicle',trip.vehicle),node('p','trip-total',money));
  card.append(badges,heading,node('p','trip-date',dateTime(trip.date,trip.time)),fareRow);
  const details=node('details','trip-details'),summary=node('summary','', 'Trip details'),list=node('dl');
@@ -153,7 +153,7 @@ function tripCard(trip){
   add('Tolls',p.tollsIncluded||p.tollStatus==='absorbed'?'Included':price(p.tollsCents||0));
   add('Total',price(p.totalCents));
  }
- add('Booked on',new Intl.DateTimeFormat('en-US',{dateStyle:'medium',timeZone:'America/New_York'}).format(new Date(trip.createdAt)));
+ add('Booked on',TripDateFormat.instant(trip.createdAt,false));
  details.append(summary,list);card.append(details);
  const primaryActions=node('div','trip-primary-actions');
  if(trip.canBookAgain===true){
@@ -222,7 +222,8 @@ function tripManagement(trip,node){
   const consentLabel=node('label','trip-management-confirm');consentLabel.htmlFor=consent.id;consentLabel.append(consent,node('span','','I confirm this new pickup date and time (New York time).'));
   const save=node('button','primary','Save Pickup Time');save.type='submit';
   form.append(field('New pickup date',date),field('New pickup time (New York time)',time),consentLabel,save);
-  open.addEventListener('click',()=>{if(!current()||pending)return;form.hidden=!form.hidden;open.setAttribute('aria-expanded',String(!form.hidden));if(!form.hidden)date.focus();});open.setAttribute('aria-expanded','false');open.setAttribute('aria-controls',prefix+'-form');form.id=prefix+'-form';
+  if(typeof BookingDateControls!=='undefined')BookingDateControls.mount(form);
+  open.addEventListener('click',()=>{if(!current()||pending)return;form.hidden=!form.hidden;open.setAttribute('aria-expanded',String(!form.hidden));if(!form.hidden){if(typeof BookingDateControls!=='undefined')BookingDateControls.focus(date);else date.focus();}});open.setAttribute('aria-expanded','false');open.setAttribute('aria-controls',prefix+'-form');form.id=prefix+'-form';
   form.addEventListener('submit',event=>{event.preventDefault();if(!current()||pending)return;if(!consent.checked||!date.value||!time.value){message.textContent='Choose a pickup date and time and confirm the change before saving.';return;}submit('pickup-time',{date:date.value,time:time.value},[open,date,time,consent,save]);});
   actions.append(open);section.append(form);
  }

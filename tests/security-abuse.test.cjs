@@ -1712,7 +1712,7 @@ test('EWR HTTP failures expose only explicitly allowlisted structured Google sta
 
 test('Trip Summary displays Luxury SUV while quote/request keep the internal suv key and original provider label',async()=>{
  const app=fs.readFileSync(path.join(root,'public/app.js'),'utf8'),cell=()=>({textContent:''});
- const context={sumVehicle:cell(),sumMiles:cell(),sumMinutes:cell(),sumTotal:cell(),sumMilesLabel:cell(),sumMinutesLabel:cell(),sumTotalLabel:cell(),
+ const context={TripDateFormat:require('../public/trip-date-format'),sumVehicle:cell(),sumMiles:cell(),sumMinutes:cell(),sumTotal:cell(),sumMilesLabel:cell(),sumMinutesLabel:cell(),sumTotalLabel:cell(),
   currentQuote:null,promoSummary:{hidden:false},payBtn:{},quoteBtn:{},quoteArea:{classList:{contains:()=>false,remove(){},add(){}}},
   reservationBusy:false,quoteController:null,quoteRequestGeneration:0,activeBookingStep:2,payLaterBtn:null,AbortController,tripStep:{},customerStep:{},
   document:{getElementById:()=>cell()},validateBookingStep:()=>true,updatePaymentControls(){},

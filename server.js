@@ -144,7 +144,7 @@ app.set("trust proxy", process.env.TRUSTED_PROXY_CIDRS
 const productionHttps = process.env.NODE_ENV === "production" || process.env.RENDER === "true";
 const contentSecurityPolicy = [
   "default-src 'self'",
-  "script-src 'self' 'sha256-xfs6JOWjCSwD8y5uXlumY7a9uA3YpuI6CMUdbviubRU='",
+  "script-src 'self' 'sha256-/LugorlSI9hC97/QZQ5hZDU3cX3kcROxwLAeplEDzAA='",
   "script-src-attr 'none'",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data:",
