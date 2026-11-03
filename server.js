@@ -309,7 +309,8 @@ const reportBookingEmailFailure=()=>logDiagnostic({referenceId:crypto.randomUUID
 const bookingEmailService=require('./services/booking-emails').createBookingEmails({store:reservationStore,provider:bookingEmailProvider,siteUrl:SITE_URL,
  contact:{email:process.env.COMPANY_EMAIL || 'bookings@erlimousineservice.com',phone:process.env.COMPANY_PHONE || '(973) 555-0100'},
  now:()=>Date.now(),reportFailure:reportBookingEmailFailure});
-async function runBookingEmails(){await storageReady;return bookingEmailService.run();}
+let adminPaymentLinkService=null;
+async function runBookingEmails(){await storageReady;await bookingEmailService.run();if(adminPaymentLinkService)await adminPaymentLinkService.runEmails();}
 const bookingEmailTimer=setInterval(()=>{void runBookingEmails().catch(reportBookingEmailFailure);},60000);bookingEmailTimer.unref();
 const readBookings = () => reservationStore.list();
 const route = handler => async (req, res, next) => {
@@ -1813,6 +1814,7 @@ require('./auth/recovery').installPasswordRecovery(app,{store:reservationStore,e
   reportFailure:req=>logDiagnostic(req,503,'provider_error')});
 
 app.get('/payment-methods.html',(req,res,next)=>{res.set({'Cache-Control':'no-store','Referrer-Policy':'no-referrer'});next();},route(customerAuth.requireCustomer));
+app.get('/payment-link-result.html',(req,res,next)=>{res.set({'Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Robots-Tag':'noindex, nofollow'});next();});
 app.use(['/payment-methods.html','/payment-methods.js'],(req,res,next)=>{
   res.set({'Cache-Control':'no-store','Referrer-Policy':'no-referrer','Content-Security-Policy':"default-src 'none'; script-src 'self' https://js.stripe.com https://*.js.stripe.com; script-src-attr 'none'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://api.stripe.com; frame-src https://js.stripe.com https://*.js.stripe.com https://hooks.stripe.com; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self'"});next();
 });
@@ -2381,7 +2383,14 @@ async function verifyPaymentAuthority(req,booking){
     if(mapping?.state!=='ready' || mapping.stripe_customer_id!==customer)throw Object.assign(new Error('Checkout is temporarily unavailable. Please try again.'),{status:503});
   }
 }
-async function checkoutStoredBooking(body,booking,req,storedOnly=true){
+function adminPaymentLinkResult(session,booking){
+ if(!validStoredSession(session,booking) || session.status!=='open' || session.payment_status!=='unpaid')throw require('./services/admin-payment-links').paymentLinkError(409,'Checkout is already processing or unavailable for this reservation.');
+ if(session.customer || booking.checkoutAttempt?.parameters?.customer)throw require('./services/admin-payment-links').paymentLinkError(409,'An account-specific Checkout is active. The customer must use Complete Payment in their account.');
+ const url=require('./services/admin-payment-links').hostedUrl(session.url,session.id);
+ if(!Number.isSafeInteger(session.expires_at) || session.expires_at*1000<=Date.now())throw Object.assign(new Error('Checkout is temporarily unavailable. Please try again.'),{status:503});
+ return {...checkoutCustomerResult(url,booking.id),expiresAt:new Date(session.expires_at*1000).toISOString()};
+}
+async function checkoutStoredBooking(body,booking,req,storedOnly=true,adminPaymentLink=false){
   if(await expireDeferredUnderLock(booking))throw Object.assign(new Error('Reservation unavailable.'),{status:409});
   if(!stripe)throw Object.assign(new Error('Checkout is temporarily unavailable. Please try again.'),{status:503});
   if(booking.status==='cancelled')throw Object.assign(new Error('Reservation unavailable.'),{status:409});
@@ -2403,6 +2412,7 @@ async function checkoutStoredBooking(body,booking,req,storedOnly=true){
       existing.amount_total!==Math.round(booking.quote.total*100) || existing.currency!==booking.quote.currency)throw Object.assign(new Error('Checkout is temporarily unavailable. Please try again.'),{status:503});
     if(booking.checkoutAttempt?.parameters?.customer && (existing.customer?.id || existing.customer)!==booking.checkoutAttempt.parameters.customer)throw Object.assign(new Error('Checkout is temporarily unavailable. Please try again.'),{status:503});
     if (existing.status === "open" && existing.payment_status==='unpaid' && existing.url) {
+      if(adminPaymentLink)return adminPaymentLinkResult(existing,booking);
       await verifyPaymentAuthority(req,booking);
       return checkoutCustomerResult(existing.url, booking.id);
     }
@@ -2418,6 +2428,7 @@ async function checkoutStoredBooking(body,booking,req,storedOnly=true){
     booking.stripeSessionId = null;
     booking.checkoutAttempt = null;
   }
+  if(adminPaymentLink && booking.checkoutAttempt?.parameters?.customer)throw require('./services/admin-payment-links').paymentLinkError(409,'An account-specific Checkout is active. The customer must use Complete Payment in their account.');
   const resumingFirstRideAttempt=!!booking.checkoutAttempt;
   // Persist the attempt before contacting Stripe. Network failures retry the same
   // key/reservation, including after a process restart, rather than double-create.
@@ -2525,10 +2536,10 @@ async function checkoutStoredBooking(body,booking,req,storedOnly=true){
             )
         },
 
-        success_url:
+        success_url:adminPaymentLink?`${SITE_URL}/payment-link-result.html`:
           `${SITE_URL}/success.html?booking=${booking.id}&session_id={CHECKOUT_SESSION_ID}`,
 
-        cancel_url:
+        cancel_url:adminPaymentLink?`${SITE_URL}/payment-link-result.html`:
           `${SITE_URL}/success.html?booking=${booking.id}&cancelled=1`
   };
   // Never modify frozen parameters on retries, including legacy/guest attempts.
@@ -2586,8 +2597,10 @@ async function checkoutStoredBooking(body,booking,req,storedOnly=true){
     }
     throw Object.assign(new Error("Checkout is temporarily unavailable. Please try again."),{status:503});
   }
+  if(adminPaymentLink && (!session || typeof session.id!=='string' || !/^cs_[A-Za-z0-9_]{1,180}$/.test(session.id) || !validStoredSession(session,{...booking,stripeSessionId:session.id})))throw require('./services/admin-payment-links').paymentLinkError(503,'Checkout is temporarily unavailable. Please try again.');
   if(booking.checkoutAttempt.parameters.customer && (session.customer?.id || session.customer)!==booking.checkoutAttempt.parameters.customer)throw Object.assign(new Error('Checkout is temporarily unavailable. Please try again.'),{status:503});
   booking.checkoutAttempt.state='session_identified';if(firstRide)booking.checkoutAttempt.evidence='creation_response';
+  if(adminPaymentLink && session.status==='complete' && ['paid','unpaid'].includes(session.payment_status))booking.checkoutAttempt.evidence=session.payment_status==='paid'?'verified_paid_awaiting_webhook':'payment_pending';
 
   booking.stripeSessionId =
     session.id;
@@ -2595,6 +2608,7 @@ async function checkoutStoredBooking(body,booking,req,storedOnly=true){
   await saveCheckoutBooking(booking);
 
   await verifyPaymentAuthority(req,booking);
+  if(adminPaymentLink)return adminPaymentLinkResult(session,booking);
   return checkoutCustomerResult(session.url, booking.id);
 }
 
@@ -2669,6 +2683,19 @@ app.post('/api/booking/:id/checkout',rateLimit('booking-payment',15),paymentMuta
   return completeReservationPayment(req,res,false);
 }));
 require('./routes/customer-trip-management').installCustomerTripManagement(app,{store:reservationStore,customerAuth,route,rateLimit,siteUrl:SITE_URL,contact:tripCompanyContact,parseServiceDateTime,cancellationProof:cancellationPaymentProof,timeChangeProof:pickupTimePaymentProof,refundService:reservationRefundService,runEmails:runBookingEmails,now:()=>Date.now()});
+
+adminPaymentLinkService=require('./services/admin-payment-links').adminPaymentLinks({store:reservationStore,checkout:checkoutStoredBooking,actionKey:paymentActionKey,provider:bookingEmailProvider,contact:tripCompanyContact,siteUrl:SITE_URL,now:()=>Date.now(),reportFailure:reportBookingEmailFailure});
+for(const action of ['copy','email'])app.post('/api/bookings/:id/payment-link/'+action,requireAdmin,rateLimit('admin-payment-link-'+action,action==='email'?10:20),route(async(req,res)=>{
+ if(req.get('origin')!==new URL(SITE_URL).origin || req.get('sec-fetch-site') && !['same-origin','none'].includes(req.get('sec-fetch-site')) || !req.is('application/json') || !req.body || Array.isArray(req.body) ||
+  (action==='copy'?Object.keys(req.body).length!==0:Object.keys(req.body).join(',')!=='confirmed' || req.body.confirmed!==true))return res.status(403).json({error:'Invalid request.'});
+ try{res.json(await adminPaymentLinkService.request(req.adminArchiveAuthority,req.params.id,action));}
+ catch(error){
+  if([401,404].includes(error.status))return res.status(error.status).json({error:error.status===401?'Authentication required.':'Booking not found.'});
+  if(error.paymentLinkSafe===true && [400,409,503].includes(error.status))return res.status(error.status).json({error:error.message});
+  throw error;
+ }
+ finally{void runBookingEmails().catch(reportBookingEmailFailure);}
+}));
 
 /* =========================================
    ADMIN — GET BOOKINGS

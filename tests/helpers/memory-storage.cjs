@@ -13,6 +13,7 @@ function memoryStore(initial=[], shared={records:clone(initial),locks:new Map(),
  for(const record of shared.records)recordMemoryPayment(shared,record);
  return {
   ...emails.methods,
+  ...require('./admin-payment-link-memory.cjs').adminPaymentLinkMemory(shared,fail,atomic,actionScope),
   ...require('./admin-archive-memory.cjs').adminArchiveMemory(shared,fail,atomic,actionScope),
   ...refundMemory(shared,fail,atomic,actionScope,emails),
   ...require('./customer-memory.cjs').customerMemory(shared,failures),

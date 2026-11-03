@@ -24,7 +24,7 @@ const description = 'Private car and limousine transportation from New Jersey to
 const read = file => fs.readFileSync(path.join(publicDirectory, file), 'utf8');
 const schemaText = html => html.match(/<script type="application\/ld\+json" id="business-schema">([\s\S]*?)<\/script>/)[1];
 const graph = html => JSON.parse(schemaText(html))['@graph'];
-const privatePages = ['account.html', 'admin.html', 'payment-methods.html', 'success.html', 'reset-password.html'];
+const privatePages = ['account.html', 'admin.html', 'payment-methods.html', 'payment-link-result.html', 'success.html', 'reset-password.html'];
 
 test('homepage has a concise NJ-origin title/description, root canonical and matching social metadata', async t => {
   const h = await harness(t, {SITE_URL: 'https://unrelated.example.test'});

@@ -11,6 +11,7 @@ let searchGeneration=0,nextCursor=null,activeQuery='';
 const filters=document.getElementById('reservationFilters'),moreBtn=document.getElementById('moreBookings');
 const filterIds={view:'filterView',status:'filterStatus',payment:'filterPayment',timing:'filterTiming',airport:'filterAirport',vehicle:'filterVehicle'};
 const archiveRequests=new Map();
+const paymentLinkActions=new Map();
 
 // Delete credentials left by the former implementation; never read/store them.
 for (const store of ["localStorage", "sessionStorage"]) {
@@ -28,6 +29,7 @@ function setLoggedIn(value) {
   window.erTollValidation?.setAuthenticated(value,adminFetch);
   if (!value) {
     archiveRequests.clear();
+    paymentLinkActions.clear();
     authGeneration++;
     searchGeneration++;nextCursor=null;moreBtn.hidden=true;filters.reset();document.getElementById('activeFilters').textContent='';
     bookingsEl.innerHTML = "";
@@ -222,6 +224,10 @@ function renderBooking(b) {
           <button type="button" class="btn btn-secondary cancelArchiveBtn">Keep current view</button>
         </div>
       </div>`:'<p class="dispatch-secondary">Cancel or complete an active trip before archiving it.</p>'}
+        ${b.canRequestPaymentLink===true?`<div class="hero-actions payment-link-actions" data-payment-email="${esc(email)}">
+          <button type="button" class="btn btn-secondary sendPaymentLinkBtn">Send Payment Link</button>
+          <button type="button" class="btn btn-secondary copyPaymentLinkBtn">Copy Payment Link</button>
+        </div><p class="dispatch-secondary paymentLinkStatus" role="status"></p><input class="paymentLinkValue hidden-field" type="text" readonly aria-label="Payment link to copy" hidden>`:''}
       </details>
     </article>
   `;
@@ -229,6 +235,29 @@ function renderBooking(b) {
 
 bookingsEl.addEventListener("click", async (event) => {
   const button=event.target;
+  if(button.classList.contains('sendPaymentLinkBtn') || button.classList.contains('copyPaymentLinkBtn')){
+    const card=button.closest('.booking-item'),id=card?.dataset.id;
+    if(!authenticated || button.disabled || !card?.isConnected || paymentLinkActions.has(id))return;
+    const email=button.classList.contains('sendPaymentLinkBtn'),action=email?'email':'copy';
+    if(email && !window.confirm('Send a payment link to '+card.querySelector('.payment-link-actions').dataset.paymentEmail+'?'))return;
+    const generation=authGeneration,search=searchGeneration,current=()=>authenticated && generation===authGeneration && search===searchGeneration && card.isConnected;
+    const controls=card.querySelectorAll('.sendPaymentLinkBtn,.copyPaymentLinkBtn'),status=card.querySelector('.paymentLinkStatus'),fallback=card.querySelector('.paymentLinkValue');
+    const operation={};paymentLinkActions.set(id,operation);controls.forEach(control=>control.disabled=true);fallback.hidden=true;fallback.classList.add('hidden-field');fallback.value='';status.textContent=email?'Queuing payment link…':'Preparing payment link…';
+    try{
+      const result=await adminFetch('/api/bookings/'+encodeURIComponent(id)+'/payment-link/'+action,{method:'POST',body:JSON.stringify(email?{confirmed:true}:{})});
+      if(!current())return;
+      if(email)status.textContent=result.state==='sent'?'Payment link already emailed for this Checkout session. You can copy it to share again.':result.state==='review_required'?'Email delivery requires review. You can copy the payment link to share it manually.':'Payment link email queued. Failed deliveries will retry safely.';
+      else{
+        // A stale/logged-out response must never populate the clipboard or DOM.
+        let copied=false;try{if(navigator.clipboard?.writeText){await navigator.clipboard.writeText(result.url);copied=true;}}catch(_){}
+        if(!current())return;
+        if(copied)status.textContent='Payment link copied. Share it only with the intended payer.';
+        else{fallback.value=result.url;fallback.hidden=false;fallback.classList.remove('hidden-field');fallback.focus();fallback.select();status.textContent='Copy the selected payment link and share it only with the intended payer.';}
+      }
+    }catch(err){if(current())status.textContent=err.message;}
+    finally{if(paymentLinkActions.get(id)===operation)paymentLinkActions.delete(id);if(current())controls.forEach(control=>control.disabled=false);}
+    return;
+  }
   if(button.classList.contains('archiveBtn') || button.classList.contains('cancelArchiveBtn')){
     const card=button.closest('.booking-item'),confirm=button.classList.contains('archiveBtn');
     card.querySelector('.archive-confirmation').hidden=!confirm;card.querySelector('.archiveBtn').hidden=confirm;
@@ -307,6 +336,7 @@ moreBtn.addEventListener('click',()=>{if(!moreBtn.disabled&&nextCursor)loadBooki
 logoutBtn.addEventListener("click", logout);
 window.addEventListener("pagehide", () => {
   archiveRequests.clear();
+  paymentLinkActions.clear();
   tokenInput.value = "";
   authGeneration++;
   searchGeneration++;nextCursor=null;moreBtn.hidden=true;filters.reset();document.getElementById('activeFilters').textContent='';
