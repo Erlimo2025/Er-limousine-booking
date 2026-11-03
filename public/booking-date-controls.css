@@ -1,7 +1,8 @@
 .us-date-control{position:relative;width:100%;min-width:0}
 .us-date-control>.us-date-display{padding-right:48px;width:100%;min-width:0}
-.us-date-control>.us-date-native{position:absolute;right:0;top:0;width:44px!important;min-width:0;height:100%;opacity:0;pointer-events:none;padding:0}
-.us-date-picker{position:absolute;right:2px;top:2px;bottom:2px;min-width:40px;min-height:40px;border:0;border-radius:5px;background:transparent;color:#77530c;font-size:21px;cursor:pointer;padding:0 8px}
-.us-date-picker:focus-visible{outline:2px solid #b58426;outline-offset:1px}
-.us-date-picker:disabled{opacity:.5;cursor:default}
+.us-date-control>.us-date-native{position:absolute;right:0;top:0;z-index:2;width:44px!important;min-width:0;height:100%;opacity:0;pointer-events:auto;cursor:pointer;padding:0 12px 0 0;border:0}
+.us-date-native::-webkit-calendar-picker-indicator{position:absolute;inset:0;width:100%;height:100%;margin:0;padding:0;opacity:0;cursor:pointer}
+.us-date-picker{position:absolute;right:2px;top:2px;bottom:2px;display:grid;place-items:center;width:40px;min-height:40px;border-radius:5px;color:#77530c;font-size:21px;pointer-events:none}
+.us-date-native:focus-visible+.us-date-picker{outline:2px solid #b58426;outline-offset:1px}
+.us-date-native:disabled+.us-date-picker{opacity:.5}
 @media(max-width:350px){.quick-booking .two-fields.us-date-pair{grid-template-columns:minmax(0,1fr)}}
