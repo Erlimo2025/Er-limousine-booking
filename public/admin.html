@@ -7,6 +7,7 @@
   <meta name="robots" content="noindex, nofollow">
   <link rel="stylesheet" href="/styles.css?v=dispatch-archive-1">
   <link rel="stylesheet" href="/admin-toll-validation.css?v=1">
+  <link rel="stylesheet" href="/customer-reviews.css">
 </head>
 <body>
   <nav class="nav">
@@ -83,6 +84,15 @@
         </form>
       </details>
 
+      <details id="adminReviews" class="booking-card admin-reviews" hidden>
+        <summary>Customer Reviews</summary>
+        <p class="review-policy">Moderate consistently for spam, authenticity, privacy and inappropriate content. Do not hold feedback because its rating is negative. Approval publishes the original rating and comment. Automated privacy checks can miss sensitive details; inspect every comment before publishing.</p>
+        <div class="field"><label for="adminReviewsView">Review view</label><select id="adminReviewsView"><option value="pending">Pending Reviews</option><option value="published">Published Reviews</option><option value="held">Held Reviews</option></select></div>
+        <p id="adminReviewsStatus" role="status" aria-live="polite"></p>
+        <div id="adminReviewsList" class="review-list"></div>
+        <button id="adminReviewsMore" class="btn btn-secondary" type="button" hidden>Load More Reviews</button>
+      </details>
+
       <form id="reservationFilters" class="booking-card dispatch-filters" hidden>
         <div class="form-grid">
           <div class="field full"><label for="filterView">Trip view</label><select id="filterView"><option value="dispatch">Dispatch trips</option><option value="archived">Archived Trips</option></select></div>
@@ -102,6 +112,7 @@
   </main>
 
   <script src="/admin-toll-validation.js?v=1"></script>
+  <script src="/admin-reviews.js"></script>
   <script src="/admin.js?v=dispatch-archive-1-toll-validation-1"></script>
 </body>
 </html>

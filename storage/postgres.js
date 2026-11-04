@@ -139,6 +139,7 @@ function createStore(env = process.env, suppliedPool) {
       await client.query('UPDATE er_reservations SET record = $2::jsonb, version = version + 1, updated_at = now() WHERE id = $1',[id,JSON.stringify(record)]);
       await recordPaid(client,record);
       if(options.paymentEmail===true && priorPayment!=='paid' && record.paymentStatus==='paid'){await enqueueBookingEmail(client,record,'payment_confirmed');await enqueueBookingEmail(client,record,'admin_payment_confirmed');}
+      if(options.reviewCompletion && !['completed','cancelled'].includes(priorStatus) && record.status==='completed')await require('./customer-reviews').enqueueReviewInvitation(client,record,options.reviewCompletion.authority,options.reviewCompletion.now);
       const cancelledWithoutPaymentAuthority=record.deferredPayment && record.status==='cancelled' &&
         (record.checkoutAttempt?.state==='confirmed_unpaid' || (!record.stripeSessionId && (!record.checkoutAttempt ||
           record.checkoutAttempt.version===1 && record.checkoutAttempt.firstSubmittedAt===null && record.checkoutAttempt.submissionCount===0)));
@@ -231,6 +232,7 @@ function createStore(env = process.env, suppliedPool) {
       await client.query(fs.readFileSync(path.join(__dirname,'../migrations/009-customer-trip-management.sql'),'utf8'));
       await client.query(fs.readFileSync(path.join(__dirname,'../migrations/010-admin-trip-archives.sql'),'utf8'));
       await client.query(fs.readFileSync(path.join(__dirname,'../migrations/011-admin-payment-links.sql'),'utf8'));
+      await client.query(fs.readFileSync(path.join(__dirname,'../migrations/012-customer-reviews.sql'),'utf8'));
     });
   }
   async function importLegacy(records) {
@@ -244,7 +246,7 @@ function createStore(env = process.env, suppliedPool) {
     });
   }
   const assertActionLock=key=>{if(actionScope.getStore()!==key)throw Object.assign(new Error('Reservation action is already processing. Please try again.'),{status:409});};
-  const adminSearch={...require('./admin-reservations').adminReservationStorage(pool,transaction,validateRecord),...require('./admin-archives').adminArchiveStorage(transaction,validateRecord,assertActionLock)};
+  const adminSearch={...require('./admin-reservations').adminReservationStorage(pool,transaction,validateRecord),...require('./admin-archives').adminArchiveStorage(transaction,validateRecord,assertActionLock),...require('./customer-reviews').customerReviewStorage(pool,transaction,safe)};
   return {...adminSearch,...require('./admin-payment-links').adminPaymentLinkStorage(pool,transaction,safe,validateRecord,assertActionLock),...require('./refunds').refundStorage(pool,transaction,validateRecord,assertActionLock,()=>scope.getStore() || pool),...require('./trip-management').tripManagementStorage(pool,transaction,validateRecord,assertActionLock,()=>scope.getStore() || pool),...bookingEmailStorage(pool,transaction,safe),...require('./customer-payments').customerPaymentStorage(pool,transaction,safe),...require('./customer-trips').customerTripsStorage(pool,safe,validateRecord),...require('./recovery').recoveryStorage(pool,transaction,safe),...require('./customers').customerStorage(pool,transaction,safe),list,get,hasPaidRide,update,createWithBudget,withActionLock,firstRideConflicts,claimFirstRide,releaseExpiredFirstRide,reconciliationCandidates,abandonedDeferredCandidates,finalizeReconciliation,migrate,importLegacy,close:()=>pool.end()};
 }
 module.exports={createStore,StorageError,validateRecord,validateRecords,connectionOptions};

@@ -310,7 +310,8 @@ const bookingEmailService=require('./services/booking-emails').createBookingEmai
  contact:{email:process.env.COMPANY_EMAIL || 'bookings@erlimousineservice.com',phone:process.env.COMPANY_PHONE || '(973) 555-0100'},
  now:()=>Date.now(),reportFailure:reportBookingEmailFailure});
 let adminPaymentLinkService=null;
-async function runBookingEmails(){await storageReady;await bookingEmailService.run();if(adminPaymentLinkService)await adminPaymentLinkService.runEmails();}
+const reviewInvitationService=require('./services/customer-reviews').reviewInvitations({store:reservationStore,provider:bookingEmailProvider,siteUrl:SITE_URL,secret:process.env.REVIEW_INVITATION_SECRET,now:()=>Date.now(),reportFailure:reportBookingEmailFailure});
+async function runBookingEmails(){await storageReady;await bookingEmailService.run();if(adminPaymentLinkService)await adminPaymentLinkService.runEmails();await reviewInvitationService.run();}
 const bookingEmailTimer=setInterval(()=>{void runBookingEmails().catch(reportBookingEmailFailure);},60000);bookingEmailTimer.unref();
 const readBookings = () => reservationStore.list();
 const route = handler => async (req, res, next) => {
@@ -1815,6 +1816,7 @@ require('./auth/recovery').installPasswordRecovery(app,{store:reservationStore,e
 
 app.get('/payment-methods.html',(req,res,next)=>{res.set({'Cache-Control':'no-store','Referrer-Policy':'no-referrer'});next();},route(customerAuth.requireCustomer));
 app.get('/payment-link-result.html',(req,res,next)=>{res.set({'Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Robots-Tag':'noindex, nofollow'});next();});
+require('./routes/customer-reviews').installCustomerReviews(app,{store:reservationStore,route,rateLimit,requireAdmin,siteUrl:SITE_URL,now:()=>Date.now()});
 app.use(['/payment-methods.html','/payment-methods.js'],(req,res,next)=>{
   res.set({'Cache-Control':'no-store','Referrer-Policy':'no-referrer','Content-Security-Policy':"default-src 'none'; script-src 'self' https://js.stripe.com https://*.js.stripe.com; script-src-attr 'none'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://api.stripe.com; frame-src https://js.stripe.com https://*.js.stripe.com https://hooks.stripe.com; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self'"});next();
 });
@@ -2804,7 +2806,7 @@ app.patch(
       new Date()
         .toISOString();
 
-    });
+    },req.body.status==='completed'?{reviewCompletion:{authority:req.adminArchiveAuthority,now:Date.now()}}:{});
     };
     const booking=req.body.status?await reservationStore.withActionLock(paymentActionKey(initial),mutate):await mutate();
     if (!booking) return res.status(404).json({error:"Booking not found."});
@@ -2812,6 +2814,7 @@ app.patch(
     res.json(
       booking
     );
+    void runBookingEmails().catch(reportBookingEmailFailure);
   })
 );
 

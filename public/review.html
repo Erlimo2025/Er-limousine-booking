@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en-US">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow"><meta name="referrer" content="no-referrer">
+  <title>How Was Your Ride? | ER Limousine Service</title>
+  <link rel="stylesheet" href="/styles.css"><link rel="stylesheet" href="/customer-reviews.css">
+</head>
+<body>
+  <nav class="nav"><div class="wrap nav-inner"><a class="brand" href="/">ER <span>LIMOUSINE</span> SERVICE</a><a class="nav-cta" href="/">Home</a></div></nav>
+  <main class="section"><div class="wrap review-page"><div class="booking-card">
+    <div class="eyebrow">Your experience</div>
+    <h1>How was your experience with ER Limousine Service?</h1>
+    <p id="reviewStatus" role="status" aria-live="polite">Loading your review invitation…</p>
+    <form id="customerReviewForm" hidden>
+      <fieldset class="review-rating"><legend>Rating (required)</legend><div class="review-stars">
+        <label><input type="radio" name="rating" value="1" required aria-label="1 star"><span aria-hidden="true">★</span></label>
+        <label><input type="radio" name="rating" value="2" required aria-label="2 stars"><span aria-hidden="true">★</span></label>
+        <label><input type="radio" name="rating" value="3" required aria-label="3 stars"><span aria-hidden="true">★</span></label>
+        <label><input type="radio" name="rating" value="4" required aria-label="4 stars"><span aria-hidden="true">★</span></label>
+        <label><input type="radio" name="rating" value="5" required aria-label="5 stars"><span aria-hidden="true">★</span></label>
+      </div></fieldset>
+      <div class="field"><label for="reviewComment">Written review (optional)</label><textarea id="reviewComment" maxlength="2000" rows="4" placeholder="Tell us about your ride"></textarea></div>
+      <button type="submit" class="btn btn-primary" id="submitReview">Submit Review</button>
+    </form>
+    <p class="review-privacy"><a href="/privacy.html" target="_blank" rel="noopener noreferrer">Privacy Policy</a></p>
+    <noscript>Enable JavaScript to use your private review invitation.</noscript>
+  </div></div></main>
+  <script src="/customer-reviews.js"></script>
+</body>
+</html>

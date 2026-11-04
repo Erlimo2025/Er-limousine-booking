@@ -27,6 +27,7 @@ function setLoggedIn(value) {
   loadBtn.textContent = value ? "Load bookings" : "Admin login";
   filters.hidden=!value;
   window.erTollValidation?.setAuthenticated(value,adminFetch);
+  window.erCustomerReviews?.setAuthenticated(value,adminFetch);
   if (!value) {
     archiveRequests.clear();
     paymentLinkActions.clear();
@@ -134,6 +135,7 @@ async function restoreSession() {
 
 async function logout() {
   window.erTollValidation?.setAuthenticated(false);
+  window.erCustomerReviews?.setAuthenticated(false);
   loadBtn.disabled = true;
   logoutBtn.disabled = true;
   authGeneration++;

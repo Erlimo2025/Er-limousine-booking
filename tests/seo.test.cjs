@@ -24,7 +24,7 @@ const description = 'Private car and limousine transportation from New Jersey to
 const read = file => fs.readFileSync(path.join(publicDirectory, file), 'utf8');
 const schemaText = html => html.match(/<script type="application\/ld\+json" id="business-schema">([\s\S]*?)<\/script>/)[1];
 const graph = html => JSON.parse(schemaText(html))['@graph'];
-const privatePages = ['account.html', 'admin.html', 'payment-methods.html', 'payment-link-result.html', 'success.html', 'reset-password.html'];
+const privatePages = ['account.html', 'admin.html', 'payment-methods.html', 'payment-link-result.html', 'review.html', 'success.html', 'reset-password.html'];
 
 test('homepage has a concise NJ-origin title/description, root canonical and matching social metadata', async t => {
   const h = await harness(t, {SITE_URL: 'https://unrelated.example.test'});
@@ -87,8 +87,8 @@ test('schema omits unconfigured/invalid company telephone and cannot leak config
     const r = await h.request('/');
     assert.ok(!Object.hasOwn(graph(r.body)[0], 'telephone'));
     assert.doesNotMatch(r.body, /synthetic.private|alert\(1\)|442071234567/);
-    assert.equal((r.body.match(/<script\b/g) || []).length, 5);
-    assert.deepEqual([...r.body.matchAll(/<script src="([^"]+)"/g)].map(match=>match[1]),['/trip-date-format.js','/booking-date-controls.js','/pickup-location.js','/app.js']);
+    assert.equal((r.body.match(/<script\b/g) || []).length, 6);
+    assert.deepEqual([...r.body.matchAll(/<script src="([^"]+)"/g)].map(match=>match[1]),['/trip-date-format.js','/booking-date-controls.js','/pickup-location.js','/app.js','/customer-reviews.js']);
   }
 });
 
@@ -134,7 +134,7 @@ test('sitemap contains only approved canonical public pages, with no private/tra
 
 test('all private HTML pages and their API/auth surfaces carry noindex without removing no-store', async t => {
   const h = await harness(t);
-  assert.deepEqual(fs.readdirSync(publicDirectory).filter(file => file.endsWith('.html')).sort(), ['index.html', serviceFile, ewrFile, ...privatePages].sort());
+  assert.deepEqual(fs.readdirSync(publicDirectory).filter(file => file.endsWith('.html')).sort(), ['index.html','privacy.html', serviceFile, ewrFile, ...privatePages].sort());
   for (const page of privatePages) {
     assert.match(read(page), /<meta name="robots" content="noindex, nofollow">/);
     const r = await h.request('/' + page);
