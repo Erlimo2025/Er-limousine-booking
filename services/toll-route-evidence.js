@@ -8,6 +8,8 @@ const digest=value=>crypto.createHash('sha256').update(JSON.stringify(value,(_,i
   Object.fromEntries(Object.keys(item).sort().map(key=>[key,item[key]])):item)).digest('hex');
 const point=p=>Array.isArray(p)&&p.length===2&&p.every(Number.isFinite)&&Math.abs(p[0])<=180&&Math.abs(p[1])<=90;
 const seconds=value=>typeof value==='string'&&/^\d+(?:\.\d{1,9})?s$/.test(value)?Number(value.slice(0,-1)):NaN;
+// Resolution of a validated provider Duration, not a guessed travel time.
+const durationResolution=value=>{const fraction=/\.(\d+)s$/.exec(value);return fraction?10**-fraction[1].length:1;};
 function decode(encoded){
   if(typeof encoded!=='string'||encoded.length>80000)fail('geometry_missing');
   let cursor=0,lat=0,lng=0;const result=[];
@@ -52,12 +54,13 @@ const envelopes={lincoln:[-74.04,40.748,-73.99,40.78],holland:[-74.06,40.712,-73
 const inEnvelope=(p,b)=>p[0]>=b[0]&&p[0]<=b[2]&&p[1]>=b[1]&&p[1]<=b[3];
 function geometry(route){
   if(!route||!Array.isArray(route.legs)||route.legs.length<1||route.legs.length>3)fail('geometry_missing');
-  const points=[],segments=[];let elapsed=0,count=0;
+  const points=[],segments=[];let elapsed=0,count=0,stepResolution=0;
   for(const leg of route.legs){
     if(!Array.isArray(leg.steps)||!leg.steps.length)fail('geometry_missing');
     for(const step of leg.steps){
       if(++count>600)fail('geometry_too_large');const path=decode(step.polyline?.encodedPolyline),duration=seconds(step.staticDuration);
       if(!Number.isFinite(duration)||duration<0||duration>21600)fail('timing_missing');
+      stepResolution+=durationResolution(step.staticDuration);
       if(points.length&&distance(points.at(-1),path[0])>25)fail('geometry_disconnected');
       if(!points.length)points.push(path[0]);else if(distance(points.at(-1),path[0])>.01){segments.push({start:elapsed,end:elapsed});points.push(path[0]);}
       for(let i=1;i<path.length;i++){
@@ -68,10 +71,29 @@ function geometry(route){
     }
   }
   const staticTime=seconds(route.staticDuration),travel=seconds(route.duration);
-  if(!Number.isFinite(staticTime)||Math.abs(staticTime-elapsed)>1||!Number.isFinite(travel)||travel<staticTime-1||travel>21600||points.length<2)fail('timing_inconsistent');
+  if(!Number.isFinite(staticTime)||staticTime<=0)fail('timing_static_invalid');
+  if(!Number.isFinite(travel)||travel<=0)fail('timing_travel_invalid');
+  if(Math.max(staticTime,travel,elapsed)>21600)fail('timing_route_limit');
+  // Independently quantized step ETAs may accumulate more than one second of
+  // rounding/truncation. Bound it by one reported unit per value; never
+  // accept an arbitrary discrepancy or synthesize missing step durations.
+  const difference=Math.abs(staticTime-elapsed);
+  const roundingBound=Math.max(1,stepResolution+durationResolution(route.staticDuration)+1e-6);
+  if(difference>roundingBound)fail('timing_step_sum_mismatch');
+  if(points.length<2)fail('geometry_invalid');
+  const routeBounds=travel<staticTime||difference>1;
+  if(routeBounds){
+    // Traffic ETA can be faster than the historical baseline. There is no
+    // per-step live ETA, so do not proportionally scale or invent one. Every
+    // crossing/entry is bounded by departure and the longest provider ETA.
+    // Existing tariff-window/day checks still decide whether pricing is safe.
+    const end=Math.max(staticTime,travel,elapsed);
+    for(const segment of segments){segment.start=0;segment.end=end;}
+  }
   const length=points.reduce((n,p,i)=>n+(i?distance(points[i-1],p):0),0);
   if(!Number.isFinite(route.distanceMeters)||route.distanceMeters<=0||length>route.distanceMeters*1.1+100)fail('geometry_distance_inconsistent');
-  return {points,segments,hash:digest(points),traffic:Math.max(0,travel-staticTime),travel};
+  return {points,segments,hash:digest(points),traffic:routeBounds?0:Math.max(0,travel-staticTime),travel,
+    timingBasis:routeBounds?'provider_route_bounds':'provider_step_bounds'};
 }
 function validateGeography(c){
   if(!c||c.version!==VERSION||!ref(c.evidence)||

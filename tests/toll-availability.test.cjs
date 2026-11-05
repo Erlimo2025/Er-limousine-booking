@@ -12,7 +12,7 @@ const badRoutes=[
  ['provider_toll_evidence_conflict',data=>{delete data.travelAdvisory;}],
  ['geometry_missing',data=>{delete data.legs;}],
  ['geometry_invalid',data=>{data.legs[0].steps[0].polyline.encodedPolyline='!';}],
- ['timing_inconsistent',data=>{data.staticDuration='1s';}],
+ ['timing_step_sum_mismatch',data=>{data.staticDuration='1s';}],
  ['crossing_missing_or_ambiguous',data=>{const encode=require('./helpers/official-toll-fixtures.cjs').encode;data.legs=[{steps:[{staticDuration:'1200s',polyline:{encodedPolyline:encode([[-74.2,40.7],[-74.199,40.701]])}}]}];}]
 ];
 for(const [reason,mutate]of badRoutes)test('unverified new quote fails closed: '+reason,async t=>{

@@ -14,11 +14,16 @@ function route(c,amount){
  if(street.length){const end=points.at(-1),first=street[0];for(let i=1;i<=8;i++)points.push([end[0]+(first[0]-end[0])*i/8,end[1]+(first[1]-end[1])*i/8]);points.push(...street);}
  if(c.direction==='nj_bound')points.reverse();
  const seconds=1200/(points.length-1);
- return {distanceMeters:100000,duration:'1500s',staticDuration:'1200s',legs:[{steps:points.slice(1).map((p,i)=>({staticDuration:seconds.toFixed(6)+'s',polyline:{encodedPolyline:official.encode([points[i],p])}}))}],travelAdvisory:{tollInfo:amount===null?{}:{estimatedPrice:[{currencyCode:'USD',units:String(Math.floor(amount/100)),nanos:amount%100*10000000}]}}};
+ const data={distanceMeters:100000,duration:'1500s',staticDuration:'1200s',legs:[{steps:points.slice(1).map((p,i)=>({staticDuration:seconds.toFixed(6)+'s',polyline:{encodedPolyline:official.encode([points[i],p])}}))}],travelAdvisory:{tollInfo:amount===null?{}:{estimatedPrice:[{currencyCode:'USD',units:String(Math.floor(amount/100)),nanos:amount%100*10000000}]}}};
+ if(c.timing==='faster_traffic')data.duration='1100s';
+ if(c.timing==='rounded_steps')for(const step of data.legs[0].steps)step.staticDuration=Math.round(Number(step.staticDuration.slice(0,-1)))+'s';
+ return data;
 }
 const orange={id:'orange',pickup:'Orange, NJ',dropoff:'Times Square, Manhattan, NY',crossing:'lincoln',direction:'ny_bound',street:'W  42 ST'};
 const cases=[
  {...orange,id:'interstate_estimate',expected:'estimated'},
+ {...orange,id:'faster_traffic',timing:'faster_traffic',expected:'estimated'},
+ {...orange,id:'rounded_step_timing',timing:'rounded_steps',expected:'estimated'},
  {...orange,id:'reverse',pickup:orange.dropoff,dropoff:orange.pickup,direction:'nj_bound',expected:'estimated'},
  {...orange,id:'missing_category',pickup:'Newark, NJ',dropoff:'Lower Manhattan, NY',crossing:'holland',street:'CANAL ST',missingCategory:true,expected:'review_required'},
  {...orange,id:'unknown',pickup:'Newark, NJ',dropoff:'Lower Manhattan, NY',crossing:'holland',street:'CANAL ST',unknown:true,expected:'review_required'},

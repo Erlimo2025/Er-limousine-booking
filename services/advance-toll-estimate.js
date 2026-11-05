@@ -9,7 +9,7 @@ const failureReasons=new Set(('estimate_unavailable vehicle_estimate_profile_mis
  'provider_request_failed provider_configuration_unavailable provider_response_invalid provider_fallback_route provider_amount_unknown provider_toll_evidence_conflict '+
  'route_unavailable route_metrics_invalid route_time_order geometry_missing geometry_invalid geometry_disconnected geometry_distance_inconsistent geometry_too_large '+
  'crossing_missing_or_ambiguous direction_conflict congestion_entry_unknown reverse_congestion_entry_unknown reverse_starting_zone_unknown daily_provider_overlap_unknown '+
- 'timing_missing timing_inconsistent timing_unavailable day_boundary_uncertain unsupported_tariff_date unsupported_tariff unverified_time '+
+ 'timing_missing timing_inconsistent timing_static_invalid timing_travel_invalid timing_route_limit timing_step_sum_mismatch timing_unavailable day_boundary_uncertain unsupported_tariff_date unsupported_tariff unverified_time '+
  'daily_context_unknown crossing_credit_unverified congestion_event_unverified credit_period_uncertain overnight_daily_credit_unverified estimate_out_of_bounds invalid_total').split(' '));
 const failureReason=reason=>failureReasons.has(reason)?reason:'estimate_unavailable';
 const counties=new Set(['New York County','Kings County','Queens County','Bronx County','Richmond County']);
@@ -64,9 +64,15 @@ function detect(g,refs=facilities){
 function windowRate(g,start,end,departure,kind){
  const first=rates.instant(departure)+g.segments[start].start*1000,last=rates.instant(departure)+(g.segments[end].end+g.traffic)*1000;
  if(last<first||last-first>8*3600000)rates.review('timing_unavailable');
- let rate=rates.rateAt(first,kind);
- for(let t=first;t<=last;t+=60000){const r=rates.rateAt(t,kind);if(r.day!==rate.day)rates.review('day_boundary_uncertain');if(r.cents>rate.cents)rate=r;}
- const final=rates.rateAt(last,kind);if(final.day!==rate.day)rates.review('day_boundary_uncertain');return final.cents>rate.cents?final:rate;
+ const initial=rates.rateAt(first,kind),check=r=>{
+  if(r.day!==initial.day)rates.review('day_boundary_uncertain');
+  // A whole-route interval cannot prove a peak crossing credit if it spans
+  // MTA periods. Do not combine a peak fee with an uncertain credit.
+  if(g.timingBasis==='provider_route_bounds'&&kind==='mta'&&r.peak!==initial.peak)rates.review('credit_period_uncertain');
+ };
+ let rate=initial;
+ for(let t=first;t<=last;t+=60000){const r=rates.rateAt(t,kind);check(r);if(r.cents>rate.cents)rate=r;}
+ const final=rates.rateAt(last,kind);check(final);return final.cents>rate.cents?final:rate;
 }
 function estimate(routes,profile,eligibility,parseProvider){
  const pricingCategory=categories.snapshot(profile);

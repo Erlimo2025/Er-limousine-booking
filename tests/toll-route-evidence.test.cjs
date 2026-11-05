@@ -40,7 +40,7 @@ test('missing road coverage, duplicate network identity, stale evidence and wron
 test('missing, malformed, oversize, disconnected and incomplete provider geometry/timing requires review',()=>{
  for(const change of [h=>delete h.data.legs,h=>h.data.legs[0].steps[0].polyline.encodedPolyline='?',h=>h.data.legs[0].steps[0].polyline.encodedPolyline='a'.repeat(80001),
   h=>h.data.legs[0].steps[1].polyline.encodedPolyline=f.encode([[-73,40],[-72.99,40]]),h=>delete h.data.legs[0].steps[0].staticDuration,
-  h=>h.data.staticDuration='999s',h=>h.data.duration='900s',h=>h.data.legs[0].steps[0].staticDuration='NaNs']){
+  h=>h.data.staticDuration='999s',h=>h.data.duration='NaNs',h=>h.data.legs[0].steps[0].staticDuration='NaNs']){
   const h=fixture();change(h);assert.throws(()=>price(h),r.TollReviewError);
  }
  assert.throws(()=>e.coverage({}),r.TollReviewError);assert.throws(()=>e.decode('~'.repeat(20)),r.TollReviewError);
