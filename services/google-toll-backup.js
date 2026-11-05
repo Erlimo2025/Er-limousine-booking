@@ -4,7 +4,11 @@
 // Pure adapter: no requests, route changes, storage or payment operations.
 const crypto=require('node:crypto');
 const advance=require('./advance-toll-estimate'),rates=require('./official-toll-rates'),categories=require('./toll-pricing-categories');
+const serviceCoverage=require('./toll-service-coverage');
 const FORMAT='google_routes_backup_v1',POLICY='selected-route-google-toll-estimate-v1';
+const EXPANDED_FORMAT='google_routes_backup_v2',EXPANDED_POLICY='selected-route-google-toll-estimate-v2';
+const isSnapshot=t=>t?.format===FORMAT||t?.format===EXPANDED_FORMAT;
+const savedStatus=(expanded,cents)=>expanded&&cents===0?'none':'estimated';
 const recoverable=new Set(('crossing_missing_or_ambiguous crossing_not_matched crossing_ambiguous direction_conflict '+
  'geometry_missing geometry_invalid geometry_disconnected geometry_distance_inconsistent geometry_too_large '+
  'timing_missing timing_inconsistent timing_static_invalid timing_travel_invalid timing_route_limit timing_step_sum_mismatch timing_unavailable '+
@@ -76,22 +80,26 @@ function estimate(routes,profile,eligibility,parseProvider,primaryReason){
 }
 function valid(t){
  try{
-  if(!plain(t)||t.version!==1||t.format!==FORMAT||t.policy!==POLICY||t.status!=='estimated'||t.currency!=='USD'||
-   !recoverable.has(t.primaryReviewReason)||!eligibleLocations(t.eligibility)||!validAssumptions(t.googleAssumptions)||
+  const expanded=t?.format===EXPANDED_FORMAT;
+  if(!plain(t)||t.version!==1||!isSnapshot(t)||t.policy!==(expanded?EXPANDED_POLICY:POLICY)||t.currency!=='USD'||
+   !(recoverable.has(t.primaryReviewReason)||expanded&&t.primaryReviewReason==='custom_coverage_unavailable')||!validAssumptions(t.googleAssumptions)||
    !Array.isArray(t.legs)||t.legs.length<1||t.legs.length>2)return false;
+  if(expanded ? (t.eligibility?.policy!==serviceCoverage.POLICY||!serviceCoverage.validEligibility(t.eligibility)) :
+    !eligibleLocations(t.eligibility))return false;
   if(t.pricingCategory!==undefined&&(!categories.validSnapshot(t.pricingCategory)||
    t.pricingCategory.emissionType!==t.googleAssumptions.emissionType||JSON.stringify(t.pricingCategory.tollPasses)!==JSON.stringify(t.googleAssumptions.tollPasses)))return false;
   let previousArrival=-Infinity,total=0;
   for(const [index,l]of t.legs.entries()){
-   if(!plain(l)||l.status!=='estimated'||l.source!=='google_routes'||l.direction!==(index?'return':'outbound')||
+   if(!plain(l)||l.status!==savedStatus(expanded,l.amountCents)||l.source!=='google_routes'||l.direction!==(index?'return':'outbound')||
     !Number.isSafeInteger(l.amountCents)||l.amountCents<0||l.amountCents>100000||l.googleRouteCents!==l.amountCents||
-    !Number.isSafeInteger(l.distanceMeters)||l.distanceMeters<=0||!Number.isFinite(l.travelSeconds)||l.travelSeconds<=0||l.travelSeconds>21600||
+    !Number.isSafeInteger(l.distanceMeters)||l.distanceMeters<=0||!Number.isFinite(l.travelSeconds)||l.travelSeconds<=0||
+    l.travelSeconds>(expanded?7*24*3600:21600)||
     Object.keys(l).some(k=>!['status','source','direction','amountCents','googleRouteCents','departure','departureDay','arrivalDay','distanceMeters','travelSeconds','routeHash'].includes(k)))return false;
    const departure=rates.instant(l.departure),arrival=departure+l.travelSeconds*1000;
    if(l.departure!==new Date(departure).toISOString()||departure<previousArrival||l.departureDay!==day(departure)||l.arrivalDay!==day(arrival)||l.routeHash!==routeHash(t.eligibility,l,index))return false;
    previousArrival=arrival;total+=l.amountCents;
   }
-  return noDailyOverlap(t.legs)&&Number.isSafeInteger(total)&&t.estimatedRouteCents===total&&
+  return t.status===savedStatus(expanded,total)&&noDailyOverlap(t.legs)&&Number.isSafeInteger(total)&&t.estimatedRouteCents===total&&
    Number.isSafeInteger(t.allowanceCents)&&t.allowanceCents>=0&&t.amountCents===Math.max(0,total-t.allowanceCents);
  }catch(_){return false;}
 }
@@ -99,4 +107,4 @@ function valid(t){
 // not a different customer price. No geometry or provider response is retained.
 function revision(t){return {policy:t.policy,googleAssumptions:t.googleAssumptions,
  ...(t.pricingCategory?{pricingCategory:t.pricingCategory}:{}),legs:t.legs};}
-module.exports={FORMAT,POLICY,canFallback:reason=>recoverable.has(reason),estimate,valid,revision};
+module.exports={FORMAT,POLICY,EXPANDED_FORMAT,isSnapshot,canFallback:reason=>recoverable.has(reason),estimate,valid,revision};
