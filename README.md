@@ -98,7 +98,9 @@ tolls included. See [toll policy, configuration, costs and tests](docs/route-tol
 The booking form offers **📍 Use My Current Location** before pickup suggestions
 and when the pickup is empty. Only a customer click requests browser location
 permission. HTTPS (or localhost during development) and device/browser location
-services are required. The customer should check the resulting street address.
+services are required. **Confirm Pickup** accepts the detected address.
+**Edit Address** lets the customer type a correction or choose an address from
+the existing Places suggestions. Manually entered addresses can continue as usual.
 
 Enable **Geocoding API** in the existing Google Cloud project, confirm billing is
 enabled, and allow that API in the existing server key's API restrictions. Keep

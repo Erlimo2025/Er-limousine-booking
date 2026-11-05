@@ -526,7 +526,13 @@ textarea:focus {
 .current-location-option:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
 .current-location-option:disabled{cursor:wait;opacity:.65}
 .pickup-location-status{overflow-wrap:anywhere}
-#currentLocationBtn[hidden],#pickupLocationStatus[hidden]{display:none}
+#currentLocationBtn[hidden],#pickupLocationStatus[hidden],#pickupLocationReview[hidden]{display:none}
+.pickup-location-review{margin-top:8px;padding:12px;border:1px solid var(--gold);border-radius:7px;background:#fcf8ef;overflow-wrap:anywhere}
+.pickup-location-review strong{display:block;margin-bottom:4px}
+.pickup-location-review small{display:block;margin-top:6px}
+.pickup-location-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.pickup-location-actions .btn{flex:1 1 110px;min-height:44px;padding:10px;font-size:.8rem;white-space:normal}
+.pickup-location-actions .btn-outline{color:#0b1822}
 
 
 /* BUTTONS */

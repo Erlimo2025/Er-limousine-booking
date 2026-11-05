@@ -38,20 +38,48 @@ test('reverse geocoding is rate limited and only booking documents permit same-o
 });
 
 function locationUi(){
- const node=()=>({value:'',dataset:{},hidden:false,disabled:false,textContent:'',children:[],handlers:{},attributes:{},addEventListener(type,handler){(this.handlers[type] ||= []).push(handler);},setAttribute(key,value){this.attributes[key]=value;},appendChild(child){this.children.push(child);}});
- const input=node(),button=node(),status=node(),events={},timers=new Map(),calls=[],selected=[];let timerId=0,gps;
+ const node=()=>({value:'',dataset:{},hidden:false,disabled:false,textContent:'',children:[],handlers:{},attributes:{},focus(){this.focused=true;},addEventListener(type,handler){(this.handlers[type] ||= []).push(handler);},setAttribute(key,value){this.attributes[key]=value;},appendChild(child){this.children.push(child);}});
+ const input=node(),button=node(),status=node(),review=node(),proposed=node(),confirmButton=node(),editButton=node(),events={},timers=new Map(),calls=[],selected=[];let timerId=0,gps;
+ review.hidden=true;
  const ctx={document:{createElement:node},window:{isSecureContext:true,addEventListener:(e,f)=>events[e]=f},navigator:{geolocation:{getCurrentPosition(success,failure,options){gps={success,failure,options};}}},AbortController,Number,JSON,Error,
   setTimeout(fn,delay){const id=++timerId;timers.set(id,{fn,delay});return id;},clearTimeout(id){timers.delete(id);},fetch:async(url,options)=>{calls.push({url,options});return {ok:true,json:async()=>({description:'1 Main Street',placeId:'ChIJ_main'})};}};
  vm.createContext(ctx);vm.runInContext(fs.readFileSync(path.join(__dirname,'../public/pickup-location.js'),'utf8'),ctx);
- const controller=ctx.createPickupLocation({input,button,status,beforeStart(){},onSelect(address){selected.push(address);input.value=address.description;input.dataset.placeId=address.placeId;controller.clearOption();}});
+ const controller=ctx.createPickupLocation({input,button,status,review,proposed,confirmButton,editButton,beforeStart(){},onSelect(address){selected.push(address);input.value=address.description;input.dataset.placeId=address.placeId;controller.clearOption();}});
  const fire=(el,event)=>Promise.all((el.handlers[event] || []).map(fn=>fn({preventDefault(){}})));
- return {ctx,input,button,status,events,timers,calls,selected,controller,node,fire,get gps(){return gps;}};
+ return {ctx,input,button,status,review,proposed,confirmButton,editButton,events,timers,calls,selected,controller,node,fire,get gps(){return gps;}};
 }
 
-test('current location starts only on click, announces progress, sends POST coordinates, fills address/ID and adds the option first',async()=>{
+test('current location requests GPS on click and requires confirmation before setting the address or Place ID',async()=>{
  const h=locationUi();assert.equal(h.gps,undefined);const menu=h.node();h.controller.addOption(menu);assert.equal(menu.children[0].type,'button');assert.match(menu.children[0].textContent,/Use My Current Location/);assert.equal(h.button.hidden,true);
  await h.fire(menu.children[0],'click');assert.equal(h.status.textContent,'Detecting your location…');assert.equal(h.input.attributes['aria-busy'],'true');assert.equal(h.button.disabled,true);assert.equal(h.gps.options.enableHighAccuracy,true);assert.equal(h.gps.options.maximumAge,0);assert.equal(h.gps.options.timeout,10000);
- await h.gps.success({coords:coordinates});assert.equal(h.input.value,'1 Main Street');assert.equal(h.input.dataset.placeId,'ChIJ_main');assert.equal(h.button.disabled,false);assert.equal(h.status.hidden,false);assert.match(h.status.textContent,/Please check/);assert.equal(h.calls[0].url,'/api/reverse-geocode');assert.equal(h.calls[0].options.method,'POST');assert.deepEqual(JSON.parse(h.calls[0].options.body),coordinates);assert.equal(h.timers.size,0);
+ await h.gps.success({coords:coordinates});
+ assert.equal(h.review.hidden,false);assert.equal(h.proposed.textContent,'1 Main Street');
+ assert.equal(h.input.value,'');assert.equal(h.input.dataset.placeId,undefined);assert.equal(h.selected.length,0);
+ assert.equal(h.controller.validate(),false);assert.equal(h.confirmButton.focused,true);
+ await h.fire(h.confirmButton,'click');
+ assert.equal(h.input.value,'1 Main Street');assert.equal(h.input.dataset.placeId,'ChIJ_main');
+ assert.equal(h.review.hidden,true);assert.equal(h.controller.validate(),true);assert.equal(h.button.disabled,false);
+ assert.equal(h.calls[0].url,'/api/reverse-geocode');assert.equal(h.calls[0].options.method,'POST');assert.deepEqual(JSON.parse(h.calls[0].options.body),coordinates);assert.equal(h.timers.size,0);
+});
+
+test('Edit Address keeps a manual pickup intact and discards a low-accuracy lookup proposal',async()=>{
+ const h=locationUi();h.input.value='Previously typed pickup';
+ h.controller.start();await h.gps.success({coords:{...coordinates,accuracy:500}});
+ assert.equal(h.review.hidden,false);assert.equal(h.input.value,'Previously typed pickup');
+ assert.deepEqual(JSON.parse(h.calls[0].options.body),coordinates);
+ await h.fire(h.editButton,'click');
+ assert.equal(h.review.hidden,true);assert.equal(h.input.value,'Previously typed pickup');assert.equal(h.input.focused,true);
+ assert.equal(h.controller.validate(),true);assert.equal(h.selected.length,0);
+});
+
+test('repeat lookup keeps the confirmed pickup and a changed pickup can be entered normally',async()=>{
+ const h=locationUi();h.controller.start();await h.gps.success({coords:coordinates});await h.fire(h.confirmButton,'click');
+ h.controller.cancel();h.controller.start();await h.gps.success({coords:coordinates});
+ assert.equal(h.review.hidden,true);assert.equal(h.selected.length,1);
+ h.input.value='New manual pickup';await h.fire(h.input,'input');
+ assert.equal(h.controller.validate(),true);
+ h.controller.start();await h.gps.success({coords:coordinates});
+ assert.equal(h.review.hidden,false);assert.equal(h.input.value,'New manual pickup');assert.equal(h.selected.length,1);
 });
 
 test('permission denial, unavailable GPS, timeout, insecure/unsupported devices and reverse failure keep manual pickup usable',async()=>{

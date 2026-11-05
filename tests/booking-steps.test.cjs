@@ -39,8 +39,10 @@ test('required trip and customer inputs fail before any quote request without lo
  const h=ui();h.fields.pickup.value=' ';h.ctx.continueBooking();assert.equal(h.ctx.activeBookingStep,1);assert.ok(h.fields.pickup.reported);
  h.fields.pickup.value='Orange, NJ';h.ctx.continueBooking();h.fields.firstName.value=' ';assert.equal(await h.continue(),null);assert.equal(h.ctx.activeBookingStep,2);assert.equal(h.requests.length,0);assert.ok(h.fields.firstName.reported);assert.equal(h.fields.notes.value,'Keep these notes');
 });
-test('leaving valid Trip Details cancels unfinished GPS work while preserving the selected address',()=>{
- const h=ui();let cancelled=0;h.ctx.pickupLocation={cancel(){cancelled++;}};h.fields.pickup.value='';h.ctx.continueBooking();assert.equal(cancelled,0);h.fields.pickup.value='Orange, NJ';h.ctx.continueBooking();assert.equal(cancelled,1);assert.equal(h.fields.pickup.value,'Orange, NJ');assert.equal(h.ctx.activeBookingStep,2);
+test('Trip Details waits for GPS confirmation or correction before continuing and preserves the selected address',async()=>{
+ const h=ui();let cancelled=0,confirmed=false;h.ctx.pickupLocation={cancel(){cancelled++;},validate:()=>confirmed};
+ h.ctx.continueBooking();assert.equal(h.ctx.activeBookingStep,1);assert.equal(cancelled,0);await h.continue();assert.equal(h.requests.length,0);
+ confirmed=true;h.fields.pickup.value='';h.ctx.continueBooking();assert.equal(cancelled,0);h.fields.pickup.value='Orange, NJ';h.ctx.continueBooking();assert.equal(cancelled,1);assert.equal(h.fields.pickup.value,'Orange, NJ');assert.equal(h.ctx.activeBookingStep,2);
 });
 test('early and implicit submissions cannot quote-and-pay or create a reservation',async()=>{
  const h=ui();await h.submit('now');h.ctx.continueBooking();await h.submit('later');assert.equal(h.requests.length,0);assert.equal(h.ctx.activeBookingStep,2);

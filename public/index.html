@@ -259,6 +259,15 @@
 
           <button type="button" id="currentLocationBtn" class="current-location-option">📍 Use My Current Location</button>
           <small id="pickupLocationStatus" class="pickup-location-status" role="status" aria-live="polite" hidden></small>
+          <div id="pickupLocationReview" class="pickup-location-review" role="group" aria-labelledby="pickupLocationHeading" hidden>
+            <strong id="pickupLocationHeading">Confirm Your Pickup Location</strong>
+            <div id="pickupLocationProposed"></div>
+            <small>Please verify that this is the correct address where your chauffeur should arrive.</small>
+            <div class="pickup-location-actions">
+              <button type="button" id="confirmPickupLocation" class="btn btn-primary" aria-describedby="pickupLocationProposed">Confirm Pickup</button>
+              <button type="button" id="editPickupLocation" class="btn btn-outline">Edit Address</button>
+            </div>
+          </div>
 
         </div>
 

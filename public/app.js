@@ -142,6 +142,10 @@ function showBookingStep(step, focus = false) {
 }
 
 function validateBookingStep(panel, step) {
+  if (step === 1 && typeof pickupLocation !== 'undefined' && pickupLocation && !pickupLocation.validate()) {
+    showBookingStep(1);
+    return false;
+  }
   for (const input of panel.querySelectorAll("input, select, textarea")) {
     if (input.disabled) continue;
     input.setCustomValidity(input.required && !input.value.trim() ? "Please complete this field." : "");
@@ -224,6 +228,8 @@ let hourlyVehicles = {};
 
 const pickupLocation=typeof createPickupLocation==='function'?createPickupLocation({
   input:pickup,button:document.getElementById('currentLocationBtn'),status:document.getElementById('pickupLocationStatus'),
+  review:document.getElementById('pickupLocationReview'),proposed:document.getElementById('pickupLocationProposed'),
+  confirmButton:document.getElementById('confirmPickupLocation'),editButton:document.getElementById('editPickupLocation'),
   beforeStart(){pickup._addressGeneration=(pickup._addressGeneration || 0)+1;clearTimeout(suggestionTimers.pickup);pickupSuggestions.innerHTML='';pickupLocation.clearOption();},
   onSelect(address){pickup._addressGeneration=(pickup._addressGeneration || 0)+1;pickup.value=address.description;delete pickup.dataset.placeId;if(address.placeId)pickup.dataset.placeId=address.placeId;syncPickupTerminal();pickupSuggestions.innerHTML='';pickupLocation.clearOption();resetQuote();}
 }):null;
