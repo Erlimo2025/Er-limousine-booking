@@ -5,6 +5,7 @@ const advance = require('./advance-toll-estimate');
 const categories = require('./toll-pricing-categories');
 
 const REVIEW_MESSAGE = 'Toll estimate unavailable — contact us for a final quote';
+const reviewError=reason=>Object.assign(new Error(REVIEW_MESSAGE),{status:422,tollReview:true,tollReason:advance.failureReason(reason)});
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const isOfficial = tolls => ['official_2026','official_network_2026'].includes(tolls?.format);
 const canonical = value => JSON.stringify(value, function (key, item) {
@@ -264,7 +265,7 @@ function customerQuote(quote){
   if(quote.tolls?.format!=='advance_estimate_2026'&&quote.tolls?.status!=='absorbed')return quote;
   return {...quote,pricingBreakdown:customerPricing(quote),tolls:{version:1,status:quote.tolls.status,amountCents:quote.tolls.amountCents}};
 }
-module.exports={REVIEW_MESSAGE,cents,sum,usdCents,routeTolls,vehicleProfile,customerEstimateProfile,requestModifiers,verifiedState,eligibility,aggregateTolls,attachTolls,validQuote,customerPricing,
+module.exports={REVIEW_MESSAGE,reviewError,failureReason:advance.failureReason,cents,sum,usdCents,routeTolls,vehicleProfile,customerEstimateProfile,requestModifiers,verifiedState,eligibility,aggregateTolls,attachTolls,validQuote,customerPricing,
   customerQuote,
   advanceCoverage:advance.covered,advanceEligible:advance.eligible,priceAdvanceRoutes:(routes,profile,eligibility)=>advance.estimate(routes,profile,eligibility,routeTolls),
   officialFieldMask:officialRoutes.FIELD_MASK,priceOfficialRoutes:officialRoutes.priceRoutes};

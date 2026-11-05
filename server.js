@@ -41,6 +41,7 @@ function logDiagnostic(req,status,category='request_rejected',provider) {
     status:Number.isInteger(status)&&status>=400&&status<=599?status:500};
   if(!diagnosticOperations.has(entry.operation))entry.operation='request';
   if(diagnosticProviders.has(provider))entry.provider=provider;
+  if(req.diagnosticTollReason)entry.tollReason=routeTollPricing.failureReason(req.diagnosticTollReason);
   console.error(JSON.stringify(entry));
 }
 app.use((req,res,next)=>{
@@ -116,6 +117,11 @@ function sendSafeError(req,res,error,fallbackStatus=500) {
   }
   if(!message)message=requestOperation(req)==='quote'?'Quote is temporarily unavailable. Please try again.':
     requestOperation(req)==='checkout'?'Checkout is temporarily unavailable. Please try again.':'Service temporarily unavailable. Please try again.';
+  if(error?.tollReview===true){
+    req.diagnosticTollReason=routeTollPricing.failureReason(error.tollReason);
+    if(req.diagnosticTollReason.startsWith('provider_')){category='provider_error';provider='google';}
+    else if(req.diagnosticTollReason==='vehicle_estimate_profile_missing')category='configuration_unavailable';
+  }
   req.diagnosticCategory=category;req.diagnosticProvider=provider;
   return res.status(status).json({error:trusted?message:`${message} Reference: ${req.referenceId}`,
     ...(error?.tollReview===true?{code:'TOLL_ESTIMATE_UNAVAILABLE',tollStatus:'review_required',checkoutAllowed:false}:{})});
@@ -615,6 +621,7 @@ async function getRouteEstimate(
     process.env.GOOGLE_MAPS_API_KEY;
 
   if (!key) {
+    if(tollOptions.enabled)throw routeTollPricing.reviewError('provider_configuration_unavailable');
     throw new Error(
       "Address and route lookup is temporarily unavailable. Please try again."
     );
@@ -660,22 +667,22 @@ async function getRouteEstimate(
     );
   } catch(error) {
     // Toll-provider failure must not alter or block an otherwise valid flat offer.
-    if(tollOptions.enabled && (tollOptions.special || tollOptions.estimate)) {
+    if(tollOptions.enabled && tollOptions.special) {
       const fallback=await getRouteEstimate(origin,destination,departureTime);
       return {...fallback,tolls:{status:'unknown',amountCents:null}};
     }
-    if(tollOptions.enabled)throw Object.assign(new Error(routeTollPricing.REVIEW_MESSAGE),{status:422,tollReview:true});
+    if(tollOptions.enabled)throw routeTollPricing.reviewError('provider_request_failed');
     throw error;
   }
 
-  if(tollOptions.official&&!tollOptions.estimate&&(!data||typeof data!=='object'||Array.isArray(data)||Object.hasOwn(data,'fallbackInfo')))
-    throw Object.assign(new Error(routeTollPricing.REVIEW_MESSAGE),{status:422,tollReview:true});
+  if(tollOptions.official&&(!data||typeof data!=='object'||Array.isArray(data)))throw routeTollPricing.reviewError('provider_response_invalid');
+  if(tollOptions.official&&Object.hasOwn(data,'fallbackInfo'))throw routeTollPricing.reviewError('provider_fallback_route');
   const route =
-    data.routes &&
+    data?.routes &&
     data.routes[0];
 
   if (!route) {
-    if(tollOptions.official)throw Object.assign(new Error(routeTollPricing.REVIEW_MESSAGE),{status:422,tollReview:true});
+    if(tollOptions.official)throw routeTollPricing.reviewError('route_unavailable');
     throw new Error(
       "No drivable route was found."
     );
@@ -694,7 +701,7 @@ async function getRouteEstimate(
 
   if(typeof route.distanceMeters!=='number' || !Number.isFinite(route.distanceMeters) || route.distanceMeters<0 ||
     typeof route.duration!=='string' || !/^\d+(?:\.\d{1,9})?s$/.test(route.duration) || !Number.isFinite(seconds) || seconds<0){
-    if(tollOptions.official)throw Object.assign(new Error(routeTollPricing.REVIEW_MESSAGE),{status:422,tollReview:true});
+    if(tollOptions.official)throw routeTollPricing.reviewError('route_metrics_invalid');
     throw new Error('Route estimate is temporarily unavailable. Please try again.');
   }
 
@@ -1226,17 +1233,18 @@ async function calculateQuote(body,req) {
       const [from,to]=await Promise.all([verifyTollLocation(body.pickup,verifiedPickup),verifyTollLocation(body.dropoff,verifiedDropoff)]);
       tollEligibility=routeTollPricing.eligibility(from,to);
       if(tollEstimateMode){
-        if(!routeTollPricing.advanceCoverage(from,to))throw Error('Outside approved service coverage.');
+        if(!routeTollPricing.advanceCoverage(from,to))throw routeTollPricing.reviewError('service_coverage_unverified');
         tollEligibility.pickupCounty=from.county||null;tollEligibility.dropoffCounty=to.county||null;
       }
       routePickup={placeId:from.placeId};routeDropoff={placeId:to.placeId};
       // A same-state waiver does not imply the physical route has no tolls.
       // Do not request/charge toll estimates or require an E-ZPass profile there.
       tollOptions.estimate=tollEstimateMode&&from.state!==to.state;
+      if(tollOptions.estimate&&!routeTollPricing.advanceEligible(tollProfile))throw routeTollPricing.reviewError('vehicle_estimate_profile_missing');
       tollOptions.enabled=from.state!==to.state&&(!tollEstimateMode||routeTollPricing.advanceEligible(tollProfile));
       tollOptions.official=tollOptions.enabled;
       if(tollOptions.official&&!tollEstimateMode&&!tollProfile?.official)throw Error('Unverified official vehicle profile.');
-    }catch(_){throw Object.assign(new Error(routeTollPricing.REVIEW_MESSAGE),{status:422,tollReview:true});}
+    }catch(error){throw error?.tollReview===true?error:routeTollPricing.reviewError('location_unverified');}
   }
   const route = isHourly ? null :
     await getRouteEstimate(
@@ -1377,9 +1385,9 @@ async function calculateQuote(body,req) {
       const tolls=tollOptions.estimate ? routeTollPricing.priceAdvanceRoutes([route.officialRoute,...(returnRoute?[returnRoute.officialRoute]:[])],tollProfile,tollEligibility) : tollOptions.official ? routeTollPricing.priceOfficialRoutes([route.officialRoute,...(returnRoute?[returnRoute.officialRoute]:[])],tollProfile,process.env,tollEligibility,{now:Date.now()}) :
         routeTollPricing.aggregateTolls([route.tolls,...(returnRoute?[returnRoute.tolls]:[])],tollProfile,false,allowance,tollEligibility);
       if(tollOptions.official&&tolls.status==='estimated'){tolls.allowanceCents=allowance;tolls.amountCents=Math.max(0,tolls.estimatedRouteCents-allowance);}
-      if(tolls.status==='unknown')throw Error('Unknown tolls.');
+      if(tolls.status==='unknown'||tolls.status==='absorbed')throw routeTollPricing.reviewError(tolls.reviewReason);
       routeTollPricing.attachTolls(normalQuote,tolls);
-    }catch(_){throw Object.assign(new Error(routeTollPricing.REVIEW_MESSAGE),{status:422,tollReview:true});}
+    }catch(error){throw error?.tollReview===true?error:routeTollPricing.reviewError(error?.reason);}
   }
   return normalQuote;
 }

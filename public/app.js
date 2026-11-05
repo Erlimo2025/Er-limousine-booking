@@ -481,8 +481,12 @@ function resetQuote() {
   }
 }
 
+function tollQuoteUnavailable(data) {
+  return data?.checkoutAllowed===false || data?.tollStatus==='review_required' ||
+    !!data?.tolls && !['none','estimated','waived','included'].includes(data.tolls.status);
+}
 function hasCurrentQuote() {
-  return !!currentQuote && quotedFormKey === JSON.stringify(getFormData());
+  return !!currentQuote && !tollQuoteUnavailable(currentQuote) && quotedFormKey === JSON.stringify(getFormData());
 }
 
 function updatePaymentControls() {
@@ -993,7 +997,7 @@ function renderFareBreakdown(data, review = false) {
   const policyNotice=document.getElementById('tollPolicyNotice');
   if(policyNotice&&policyNotice!==container)policyNotice.textContent=data?.pricingBreakdown?'Tolls are estimated or included. No toll charges will be added to your accepted total.':'Your fare is calculated securely before payment.';
   container.replaceChildren();container.hidden=true;
-  if(review){container.textContent='Toll estimate unavailable — contact us for a final quote';container.hidden=false;return;}
+  if(review||tollQuoteUnavailable(data)){container.textContent='Toll estimate unavailable — contact us for a final quote';container.hidden=false;return;}
   const p=data?.pricingBreakdown;
   const amount=value=>formatMoney(value/100,data.currency);
   const row=(label,value)=>{const item=document.createElement('div'),name=document.createElement('span'),price=document.createElement('strong');item.className='fare-breakdown-row';name.textContent=label;price.textContent=value;item.append(name,price);container.append(item);};
@@ -1006,7 +1010,7 @@ function renderFareBreakdown(data, review = false) {
   }
   const fare=Number.isSafeInteger(p.totalCents)?p.totalCents-(p.tollsCents||0):p.tripFareCents+p.surcharges.reduce((n,s)=>n+s.amountCents,0)-p.discountCents+p.gratuityCents;
   row('Trip Fare',amount(fare));
-  row('Tolls',p.tollsIncluded||data.tolls?.status==='absorbed'?'Included':amount(p.tollsCents||0));
+  row('Tolls',p.tollsIncluded?'Included':amount(p.tollsCents||0));
   container.hidden=false;
 }
 
@@ -1082,6 +1086,11 @@ async function requestQuote(event) {
       );
     }
 
+    if(tollQuoteUnavailable(data)){
+      sumTotal.textContent='Contact us';sumTotalLabel.textContent='Final quote required';
+      renderFareBreakdown(null,true);
+      throw new Error('Toll estimate unavailable — contact us for a final quote');
+    }
     if (!Number.isFinite(data.total) || data.total <= 0) throw new Error("Unable to calculate quote. Please try again.");
 
     currentQuote =

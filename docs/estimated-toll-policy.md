@@ -1,11 +1,12 @@
 # Advance interstate toll estimate policy
 
-Draft PR #1, November 1, 2026. Not deployed or activated.
+Original advance-estimate policy: November 1, 2026. Local availability correction:
+November 4, 2026. This correction has not been deployed or activated.
 
 The operator approved advance estimates rather than exact E-ZPass settlement,
-NJ and NYC's five boroughs (including reverse trips) as the automatic booking
-area, and company-paid unknown tolls within that area. Outside that area, or
-when provider jurisdiction cannot establish it, require manual review. Hourly
+and NJ and NYC's five boroughs (including reverse trips) as the service area.
+New ordinary interstate bookings now require an available, validated estimate.
+Unavailable estimates, outside coverage, or unverified jurisdiction require manual review. Hourly
 behavior is unchanged. Same-state trips have no added tolls. The qualifying
 EWR → Manhattan SUV offer remains exactly $150, tolls included.
 
@@ -13,15 +14,56 @@ EWR → Manhattan SUV offer remains exactly $150, tolls included.
 
 Display only **Trip Fare, Tolls, Total** pricing rows. Trip Fare includes the
 existing surcharges, discounts and gratuity without changing their arithmetic
-or order. Keep the original breakdown internally. Unavailable estimates show
-**Tolls: Included**, not a false zero estimate; the internal route-cost estimate
-remains null. No facility or credit rows are shown to customers.
+or order. Keep the original breakdown internally. Unavailable estimates display
+**Toll estimate unavailable — contact us for a final quote**. Both quote and new
+reservation endpoints return HTTP 422 with `TOLL_ESTIMATE_UNAVAILABLE` and
+`checkoutAllowed: false`, without an offered total. Customer input is retained;
+neither Pay Now nor Pay Later can accept that new quote. No facility or credit
+rows are shown to customers. The EWR special still shows Included; same-state
+trips still add $0. Hourly and explicitly disabled toll-pricing behavior remain.
 
 The accepted booking amount is fixed. The company absorbs any toll shortfall;
 **no later toll supplement is charged**. Pay Now, Pay Later, payment retries,
 receipts, cancellation and refunds retain the saved authoritative total.
 There is no automatic reconciliation or refund for a difference between the
 advance estimate and an eventual E-ZPass bill. Existing refund rules remain.
+Previously accepted `company_includes_unknown_tolls_v1` snapshots remain valid
+and payable at the saved fare; this correction does not revoke, reprice or
+backfill them. There is no migration or update of historical reservations.
+
+## Failure diagnosis and availability
+
+The prior `advance.estimate()` catch converted every failure into `absorbed`
+with zero added cents, and the booking UI rendered that as Included. An
+estimate-mode provider error also retried distance-only routing and could reach
+the same fallback. These were explicit previous policy choices, not proof that
+the selected route had no tolls. They no longer accept new ordinary bookings.
+
+Server diagnostics retain only a closed `tollReason` category alongside the
+existing request reference, timestamp, operation and HTTP status:
+
+- Missing/invalid pricing category or legacy profile: `vehicle_estimate_profile_missing`.
+- Provider request/response, routing fallback, missing/invalid money:
+  `provider_request_failed`, `provider_response_invalid`, `provider_fallback_route`,
+  `provider_amount_unknown`. A missing toll indication conflicting with a known
+  chargeable PA crossing is `provider_toll_evidence_conflict`.
+- Geometry validity/continuity/size, crossing and direction: `geometry_*`,
+  `crossing_missing_or_ambiguous`, `direction_conflict`.
+- Congestion entry/start evidence and possible repeated daily provider charge:
+  `congestion_entry_unknown`, `reverse_starting_zone_unknown`,
+  `reverse_congestion_entry_unknown`, `daily_provider_overlap_unknown`.
+- Missing/inconsistent time, day-boundary uncertainty and unsupported schedules:
+  `timing_*`, `day_boundary_uncertain`, `unsupported_tariff_date`.
+- Unverified jurisdiction/coverage and unexpected failures use separate closed
+  categories; arbitrary exception text is replaced by `estimate_unavailable`.
+
+No customer addresses, coordinates, place IDs, email, provider bodies, secrets
+or payment credentials enter these diagnostics. Internal categories are not
+returned as customer detail. HTTP errors, timeouts and invalid provider JSON
+share `provider_request_failed`; no unsupported provider cause is asserted.
+No production route response/log was captured for this local correction, so
+the category of any particular reported production trip remains unconfirmed.
+Real route comparisons and fleet eligibility evidence remain outstanding.
 
 ## Estimated-toll arithmetic
 
@@ -32,21 +74,21 @@ advance estimate and an eventual E-ZPass bill. Existing refund rules remain.
    against both NJOGIS and NYC OTI reference portions. A name, nearby point or
    via label is insufficient. These references support estimation, not certified
    commercial coverage. No individual address pair or every local road needs
-   preapproval. Ambiguous/missing/unsupported geometry uses included tolls.
+   preapproval. Ambiguous/missing/unsupported geometry requires manual review.
 3. Use official PA Class 1 NY/NJ E-ZPass rates: $14.79 off-peak / $16.79 peak
    NY-bound, zero PA component NJ-bound. Weekday peaks: 06:00–10:00 and
    16:00–20:00; weekend peaks: 11:00–21:00, America/New_York. Evaluate the
    provider crossing-step static/traffic time window, not pickup time. A window
    spanning a tariff boundary uses its higher applicable rate as a conservative
-   estimate. Unsupported years or uncertain calendar-day boundaries use included
-   tolls. [PA schedule](https://www.portauthoritybuilds.com/bridges-tunnels/en/tolls.html).
+   estimate. Unsupported years or uncertain calendar-day boundaries require
+   manual review. [PA schedule](https://www.portauthoritybuilds.com/bridges-tunnels/en/tolls.html).
 4. Internally estimate standard daily CRZ charges at $9 peak / $2.25 overnight.
    Assume the first chargeable entry of this booking/day, not a verified first
    entry of the actual driver's day. Share only this assumed ledger across this
    booking's directions and do not charge the day twice. Eligible peak Lincoln/
    Holland entries receive up to $3 credit, subject to the $5 daily ceiling.
    No overnight credit or TLC per-trip plan is assumed. Overnight-first/later-
-   peak credit uncertainty uses included tolls.
+   peak credit uncertainty requires manual review.
    [MTA schedule](https://www.mta.info/document/138931).
 5. Lincoln/Holland NY-bound connections follow the MTA connection map. GWB
    entry needs a matched local-street witness below 60th; wholly northern
@@ -56,7 +98,7 @@ advance estimate and an eventual E-ZPass bill. Existing refund rules remain.
    roads cannot be accumulated into an entry. Reverse journeys identified as
    starting on covered Manhattan streets assume no new charge merely for
    exiting; unproved starting zones and uncertain entries from other boroughs
-   use included tolls.
+   require manual review.
    [MTA connection map](https://www.mta.info/map/36226).
 6. For each direction, use the **greater of Google's one whole-route estimate
    and the known official PA + estimated CRZ − eligible credit subtotal**.
@@ -64,16 +106,16 @@ advance estimate and an eventual E-ZPass bill. Existing refund rules remain.
    the residual an identified road charge. This is an estimate envelope, not
    component reconciliation. Google's aggregate can include additional NJTA/MTA
    roads; their commercial accuracy and congestion inclusion remain unverified.
-   Unknown provider money uses included tolls rather than a partial charge.
+   Unknown provider money requires manual review rather than a partial charge.
 7. Sum independently assessed directions and deduct only the existing fare's
    toll allowance once per direction. Do not discount or tip added tolls.
    Provider amounts above $1,000 per direction are outside this estimate policy
-   and use included tolls.
+   and require manual review.
 
 Google has no actual vehicle/day ledger. If another same-day round-trip leg's
-nonzero aggregate could overlap a CRZ charge, the entire toll estimate uses
-**Tolls Included**. Do not guess a subtraction or risk billing a daily charge
-twice. Round trips remain bookable; the company pays that unresolved cost.
+nonzero aggregate could overlap a CRZ charge, the entire toll estimate requires
+**manual review**. Do not guess a subtraction or risk billing a daily charge
+twice. Round trips with independently supported estimates remain bookable.
 
 The envelope can over- or underestimate settlement. It may not capture every
 additional-road adjustment, classification, prior daily entry or later credit.
@@ -81,7 +123,7 @@ The company bears these differences. Unknown road coverage is never labelled
 verified or free. Queens-Midtown/Carey $1.50 eligible peak credits remain in the
 separate verified engine; the simple mode does not add them independently to
 Google's aggregate. Such routes use the envelope only when required PA/CRZ
-evidence is supported, otherwise included tolls.
+evidence is supported, otherwise manual review is required.
 
 ## Configuration and class eligibility
 
@@ -91,7 +133,7 @@ the operator-approved server category in
 inputs are customer pricing assumptions, not individual fleet certification.
 The same category supplies both vehicles' route modifiers and estimate arithmetic;
 their individual trip-fare rates remain unchanged. Missing/invalid category
-configuration uses included tolls. The per-vehicle inputs below describe legacy
+configuration requires manual review for new interstate bookings. The per-vehicle inputs below describe legacy
 unassigned estimate profiles and the separately verified path, not a requirement
 to certify each shared-category vehicle before using an advance estimate.
 
@@ -106,7 +148,7 @@ vehicle: explicitly confirm `paClass1Eligible: true`, two axles, single rear
 wheels, no trailer, `mtaPlan: "standard_daily"`, non-TLC status and a boolean
 crossing-credit entitlement, together with the NJ-issued pass. These are
 operator-confirmed estimate inputs, not independent account verification.
-Business/OL/2Ax alone cannot fill them. Missing inputs use included tolls.
+Business/OL/2Ax alone cannot fill them. Missing inputs require manual review.
 Do not copy synthetic fixtures into production or mark commercial/congestion
 verification flags true. No real vehicle classification is certified here.
 
@@ -129,7 +171,8 @@ package's unresolved access/level/topology limitations.
 [NYC conditions](https://cityofnewyork.github.io/opendatatsm/publicpolicies.html).
 
 Normal usage remains one Google route request per direction with TOLLS and
-bounded geometry fields. A failed toll request retries once without toll extras
-to recover the ordinary fare; if ordinary routing also fails, the existing
-inability to quote remains. Google toll requests retain the existing billable
+bounded geometry fields. A failed ordinary interstate toll request requires
+manual review; there is no distance-only retry that accepts an untolled fare.
+The qualifying $150 EWR special retains its independent toll-included policy
+and existing base-route retry. Google toll requests retain the existing billable
 API tier. No live Google/Stripe call or new paid service was used in tests.

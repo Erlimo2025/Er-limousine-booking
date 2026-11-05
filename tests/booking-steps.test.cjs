@@ -75,3 +75,9 @@ test('Back/Edit, viewport-independent navigation and browser restoration require
 test('a promo preview cannot unlock payment; continuing always obtains another fresh quote',async()=>{
  const h=ui();h.ctx.continueBooking();await h.ctx.requestQuote();assert.equal(h.ctx.activeBookingStep,2);assert.equal(h.ctx.payBtn.disabled,true);await h.continue();assert.equal(h.requests.length,2);assert.equal(h.ctx.activeBookingStep,3);
 });
+
+for(const status of ['absorbed','unknown','review_required'])test('an unavailable toll payload cannot unlock Step 3 or either payment action: '+status,async()=>{
+ const h=ui();h.quote.tolls={status,amountCents:null};h.ctx.continueBooking();assert.equal(await h.continue(),null);
+ assert.equal(h.ctx.activeBookingStep,2);assert.equal(h.ctx.currentQuote,null);assert.equal(h.ctx.payBtn.disabled,true);assert.equal(h.ctx.payLaterBtn.disabled,true);assert.equal(h.fields.notes.value,'Keep these notes');assert.match(h.messages.at(-1),/Toll estimate unavailable/);
+ await h.submit('now');await h.submit('later');assert.equal(h.requests.filter(r=>r.url==='/api/checkout').length,0);
+});

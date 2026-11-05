@@ -32,9 +32,10 @@ this is not a permanent fixed toll or a promise of exact settlement.
 
 The shared category takes precedence over per-vehicle estimate inputs in
 `TOLL_VEHICLE_PROFILES_JSON`. Missing or malformed category configuration does
-not borrow a vehicle's private profile: approved interstate routes use Tolls
-Included. Unknown geometry/prices, unsupported tariff dates and other existing
-estimate failures retain that fallback. Outside approved NJ/NYC coverage still
+not borrow a vehicle's private profile: new interstate quotes require manual
+review. Unknown geometry/prices, unsupported tariff dates and other estimate
+failures also require review; they are never new zero-toll or Included fares.
+Previously accepted company-included fares remain unchanged. Outside NJ/NYC coverage still
 requires manual review. Same-state added tolls remain zero. Hourly behavior stays
 unchanged. The qualifying $150 EWR special remains Suburban-only and all-inclusive.
 
