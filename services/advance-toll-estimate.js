@@ -8,7 +8,7 @@ const VERSION='interstate-advance-estimate-2026-v1',FALLBACK='company_includes_u
 const failureReasons=new Set(('estimate_unavailable vehicle_estimate_profile_missing location_unverified service_coverage_unverified '+
  'provider_request_failed provider_configuration_unavailable provider_response_invalid provider_fallback_route provider_amount_unknown provider_toll_evidence_conflict '+
  'route_unavailable route_metrics_invalid route_time_order geometry_missing geometry_invalid geometry_disconnected geometry_distance_inconsistent geometry_too_large '+
- 'crossing_missing_or_ambiguous direction_conflict congestion_entry_unknown reverse_congestion_entry_unknown reverse_starting_zone_unknown daily_provider_overlap_unknown '+
+ 'crossing_missing_or_ambiguous crossing_not_matched crossing_ambiguous direction_conflict congestion_entry_unknown reverse_congestion_entry_unknown reverse_starting_zone_unknown daily_provider_overlap_unknown '+
  'timing_missing timing_inconsistent timing_static_invalid timing_travel_invalid timing_route_limit timing_step_sum_mismatch timing_unavailable day_boundary_uncertain unsupported_tariff_date unsupported_tariff unverified_time '+
  'daily_context_unknown crossing_credit_unverified congestion_event_unverified credit_period_uncertain overnight_daily_credit_unverified estimate_out_of_bounds invalid_total').split(' '));
 const failureReason=reason=>failureReasons.has(reason)?reason:'estimate_unavailable';
@@ -48,7 +48,7 @@ function streetWitness(points,lines=witnesses){
  }
  return null;
 }
-function detect(g,refs=facilities){
+function crossingEvidence(g,refs=facilities){
  const points=samples(g),matches=[];
  for(const f of refs){
   const nj=points.filter(p=>near(p.point,f.nj)),ny=points.filter(p=>near(p.point,f.ny));
@@ -59,7 +59,14 @@ function detect(g,refs=facilities){
   if(geo.distance(west.point,east.point)<600||east.point[0]-west.point[0]<.004)continue;
   matches.push({crossing:f.id,direction:west.order<east.order?'ny_bound':'nj_bound',start:Math.min(west.segment,east.segment),end:Math.max(west.segment,east.segment)});
  }
- if(matches.length!==1)rates.review('crossing_missing_or_ambiguous');return {gate:matches[0],points};
+ return {matches,points};
+}
+function detect(g,refs=facilities){
+ const {matches,points}=crossingEvidence(g,refs);
+ // A zero match does not establish an unsupported physical crossing: source
+ // coverage or provider geometry can also be incomplete. Never guess a gate.
+ if(matches.length===0)rates.review('crossing_not_matched');
+ if(matches.length!==1)rates.review('crossing_ambiguous');return {gate:matches[0],points};
 }
 function windowRate(g,start,end,departure,kind){
  const first=rates.instant(departure)+g.segments[start].start*1000,last=rates.instant(departure)+(g.segments[end].end+g.traffic)*1000;
@@ -148,4 +155,4 @@ function valid(t){
   l.officialSubtotalCents===l.paCents+l.congestionCents-l.creditCents&&l.amountCents<=100000&&l.amountCents===Math.max(l.googleRouteCents,l.officialSubtotalCents);
  });
 }
-module.exports={VERSION,FALLBACK,covered,included,eligible,estimate,valid,detect,samples,windowRate,streetWitness,failureReason};
+module.exports={VERSION,FALLBACK,covered,included,eligible,estimate,valid,detect,crossingEvidence,samples,windowRate,streetWitness,failureReason};

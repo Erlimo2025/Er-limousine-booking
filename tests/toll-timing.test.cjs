@@ -63,7 +63,7 @@ for(const timing of ['faster_traffic','rounded_steps'])for(const vehicle of ['su
 });
 for(const reason of ['money','geometry','provider','tariff_date','calendar_day'])test('recovered timing cannot bypass other toll verification: '+reason,async t=>{
  const {h,input}=await create(t,{...cases[0],id:'blocked_'+reason,timing:'faster_traffic'}),original=h.state.routeResult;
- h.state.routeResult=r=>{if(reason==='provider')throw Error('Synthetic provider failure');const data=original(r);if(reason==='money')data.travelAdvisory.tollInfo={};if(reason==='geometry')delete data.legs;return data;};
+ h.state.routeResult=r=>{if(reason==='provider')throw Error('Synthetic provider failure');const data=original(r);if(['money','geometry','tariff_date','calendar_day'].includes(reason))data.travelAdvisory.tollInfo={};if(reason==='geometry')delete data.legs;return data;};
  const trip={...input,...(reason==='tariff_date'?{date:'2027-01-10'}:{}),...(reason==='calendar_day'?{time:'23:50'}:{})};
  for(const path of ['/api/quote','/api/checkout']){const r=await h.request(path,{...trip,paymentChoice:'later'});assert.equal(r.status,422);assert.equal(r.body.code,'TOLL_ESTIMATE_UNAVAILABLE');assert.equal(r.body.checkoutAllowed,false);}
  assert.equal(h.records().length,0);assert.equal(h.state.creates.length,0);

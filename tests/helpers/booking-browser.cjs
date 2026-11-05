@@ -10,8 +10,24 @@ const base=new Function('require','__dirname',advanceSource.slice(0,advanceSourc
 const reference=require('../../services/data/toll-estimate-reference-2026.json'),geometry=require('../../services/toll-route-evidence'),official=require('./official-toll-fixtures.cjs');
 function route(c,amount){
  const f=reference.crossings.find(f=>f.id===c.crossing),raw=[...f.nj.flat(),...f.ny.flat()].sort((a,b)=>a[0]-b[0]);
- const points=raw.filter((p,i)=>!i||geometry.distance(raw[i-1],p)>1),street=reference.crzStreetWitnesses.filter(s=>s.name===c.street).flatMap(s=>s.paths.flat()).sort((a,b)=>a[0]-b[0]);
+ let points=raw.filter((p,i)=>!i||geometry.distance(raw[i-1],p)>1);
+ const street=reference.crzStreetWitnesses.filter(s=>s.name===c.street).flatMap(s=>s.paths.flat()).sort((a,b)=>a[0]-b[0]);
  if(street.length){const end=points.at(-1),first=street[0];for(let i=1;i<=8;i++)points.push([end[0]+(first[0]-end[0])*i/8,end[1]+(first[1]-end[1])*i/8]);points.push(...street);}
+ // Synthetic negative controls, never claims about an actual JFK route.
+ if(c.crossingEvidence==='none'){
+  const length=line=>line.slice(1).reduce((n,p,i)=>n+geometry.distance(line[i],p),0);
+  points=[...f.nj.reduce((a,b)=>length(a)>length(b)?a:b)];
+ }
+ if(c.crossingEvidence==='multiple'){
+  const other=reference.crossings.find(x=>x.id==='holland'),all=[...other.nj.flat(),...other.ny.flat()].sort((a,b)=>a[0]-b[0]);
+  const extra=all.filter((p,i)=>i%4===0||i===all.length-1),end=points.at(-1),first=extra[0];
+  for(let i=1;i<=8;i++)points.push([end[0]+(first[0]-end[0])*i/8,end[1]+(first[1]-end[1])*i/8]);points.push(...extra);
+ }
+ if(c.unprovedZone){
+  const source=JSON.parse(fs.readFileSync(path.join(root,'docs/toll-acceptance/2026/candidate-nyc-roads.geojson'),'utf8'));
+  const extra=source.features.find(f=>f.properties.full_street_name==='WEST ST').geometry.coordinates[0],end=points.at(-1),first=extra[0];
+  for(let i=1;i<=8;i++)points.push([end[0]+(first[0]-end[0])*i/8,end[1]+(first[1]-end[1])*i/8]);points.push(...extra);
+ }
  if(c.direction==='nj_bound')points.reverse();
  const seconds=1200/(points.length-1);
  const data={distanceMeters:100000,duration:'1500s',staticDuration:'1200s',legs:[{steps:points.slice(1).map((p,i)=>({staticDuration:seconds.toFixed(6)+'s',polyline:{encodedPolyline:official.encode([points[i],p])}}))}],travelAdvisory:{tollInfo:amount===null?{}:{estimatedPrice:[{currencyCode:'USD',units:String(Math.floor(amount/100)),nanos:amount%100*10000000}]}}};
@@ -25,6 +41,20 @@ const cases=[
  {...orange,id:'faster_traffic',timing:'faster_traffic',expected:'estimated'},
  {...orange,id:'rounded_step_timing',timing:'rounded_steps',expected:'estimated'},
  {...orange,id:'reverse',pickup:orange.dropoff,dropoff:orange.pickup,direction:'nj_bound',expected:'estimated'},
+ // Destination/county controls use synthetic provider paths; no real Google
+ // NJ-to-JFK path or additional-crossing toll coverage is certified by them.
+ {...orange,id:'jfk_lincoln',dropoff:'JFK Airport, Queens, NY',nycCounty:'Queens County',expected:'estimated'},
+ {...orange,id:'jfk_holland',dropoff:'JFK Airport, Queens, NY',crossing:'holland',street:'CANAL ST',nycCounty:'Queens County',expected:'estimated'},
+ {...orange,id:'jfk_gwb_uncertain',dropoff:'JFK Airport, Queens, NY',crossing:'gwb',street:'',unprovedZone:true,nycCounty:'Queens County',expected:'estimated',expectedSource:'google_routes_backup_v1'},
+ {...orange,id:'jfk_reverse',pickup:'JFK Airport, Queens, NY',dropoff:orange.pickup,direction:'nj_bound',nycCounty:'Queens County',expected:'estimated',expectedSource:'google_routes_backup_v1'},
+ {...orange,id:'jfk_unmatched',dropoff:'JFK Airport, Queens, NY',nycCounty:'Queens County',crossingEvidence:'none',expected:'estimated',expectedSource:'google_routes_backup_v1'},
+ {...orange,id:'jfk_ambiguous',dropoff:'JFK Airport, Queens, NY',nycCounty:'Queens County',crossingEvidence:'multiple',expected:'estimated',expectedSource:'google_routes_backup_v1'},
+ {...orange,id:'south_orange_jfk',pickup:'South Orange, NJ',dropoff:'JFK Airport, Queens, NY',nycCounty:'Queens County',crossingEvidence:'none',expected:'estimated',expectedSource:'google_routes_backup_v1'},
+ {...orange,id:'south_orange_times_square',pickup:'South Orange, NJ',expected:'estimated',expectedSource:'advance_estimate_2026'},
+ {...orange,id:'jersey_city_jfk',pickup:'Jersey City, NJ',dropoff:'JFK Airport, Queens, NY',nycCounty:'Queens County',crossingEvidence:'none',expected:'estimated',expectedSource:'google_routes_backup_v1'},
+ {...orange,id:'union_city_jfk',pickup:'Union City, NJ',dropoff:'JFK Airport, Queens, NY',nycCounty:'Queens County',crossingEvidence:'none',expected:'estimated',expectedSource:'google_routes_backup_v1'},
+ {...orange,id:'nj_brooklyn',dropoff:'Brooklyn, NY',nycCounty:'Kings County',crossingEvidence:'none',expected:'estimated',expectedSource:'google_routes_backup_v1'},
+ {...orange,id:'jfk_both_unavailable',dropoff:'JFK Airport, Queens, NY',nycCounty:'Queens County',crossingEvidence:'none',unknown:true,expected:'review_required'},
  {...orange,id:'missing_category',pickup:'Newark, NJ',dropoff:'Lower Manhattan, NY',crossing:'holland',street:'CANAL ST',missingCategory:true,expected:'review_required'},
  {...orange,id:'unknown',pickup:'Newark, NJ',dropoff:'Lower Manhattan, NY',crossing:'holland',street:'CANAL ST',unknown:true,expected:'review_required'},
  {...orange,id:'same_state',dropoff:'Trenton, NJ',sameState:true,expected:'waived'},
@@ -43,7 +73,11 @@ async function create(t,c=cases[0],store){
  if(c.missingCategory)vm.runInContext('delete pricing.tollPricingCategories.luxury_suv;',h.context);
  if(c.special)h.state.rejectTerminalCDetails=true;
  const input={...base.normal,pickup:c.pickup,dropoff:c.dropoff,vehicle:c.vehicle||'suv',date:'2026-11-10',time:'12:00',tripType:c.tripType||'oneway',returnDate:'2026-11-11',returnTime:'18:00',hours:'3.5',promoCode:c.promoCode||'',notes:'Please keep these requests'};
- for(const [key,label,state]of [['pickup',c.pickup,c.direction==='ny_bound'?'NJ':'NY'],['dropoff',c.dropoff,c.sameState?'NJ':c.direction==='ny_bound'?'NY':'NJ']])if(label!=='EWR')h.state.searchResults[label]=[base.place(state,'ChIJ_browser_mock_'+c.id+'_'+key,label)];
+ for(const [key,label,state]of [['pickup',c.pickup,c.direction==='ny_bound'?'NJ':'NY'],['dropoff',c.dropoff,c.sameState?'NJ':c.direction==='ny_bound'?'NY':'NJ']])if(label!=='EWR'){
+  const place=base.place(state,'ChIJ_browser_mock_'+c.id+'_'+key,label);
+  if(state==='NY'&&c.nycCounty)place.addressComponents.find(x=>x.types.includes('administrative_area_level_2')).longText=c.nycCounty;
+  h.state.searchResults[label]=[place];
+ }
  h.state.routeResult=r=>{const reverse=c.tripType==='roundtrip'&&String(r.origin.placeId).includes('_dropoff'),trip=reverse?{...c,direction:'nj_bound'}:c;return route(trip,c.unknown?null:trip.direction==='nj_bound'?225:2500);};
  return {h,input,c};
 }

@@ -3,6 +3,7 @@ const officialRates = require('./official-toll-rates');
 const officialRoutes = require('./toll-route-evidence');
 const advance = require('./advance-toll-estimate');
 const categories = require('./toll-pricing-categories');
+const googleBackup = require('./google-toll-backup');
 
 const REVIEW_MESSAGE = 'Toll estimate unavailable — contact us for a final quote';
 const reviewError=reason=>Object.assign(new Error(REVIEW_MESSAGE),{status:422,tollReview:true,tollReason:advance.failureReason(reason)});
@@ -137,6 +138,7 @@ function quoteRevision(quote) {
       policy:quote.tolls.policy,status:quote.tolls.status,referenceHash:quote.tolls.referenceHash,
       ...(quote.tolls.pricingCategory?{pricingCategory:quote.tolls.pricingCategory}:{}),
       legs:quote.tolls.legs.map(({geometryHash,...financial})=>financial)}}:{}),
+    ...(quote.tolls?.format===googleBackup.FORMAT?{googleBackup:googleBackup.revision(quote.tolls)}:{}),
     ...(isOfficial(quote.tolls)?{official:{coverageHash:quote.tolls.coverageHash,fleetHash:quote.tolls.fleetHash,
       ...(quote.tolls.format==='official_network_2026'?{networkVersion:quote.tolls.networkVersion}:{}),
       routes:quote.tolls.legs.map(leg=>({...(quote.tolls.format==='official_network_2026'?{}:{geometryHash:leg.geometryHash}),
@@ -217,9 +219,10 @@ function validQuote(quote) {
         !Array.isArray(p.surcharges) || !Array.isArray(t.legs) || t.legs.length > 2 ||
         !['none','estimated','included','waived','absorbed'].includes(t.status)) return false;
     if(t.pricingCategory!==undefined&&(!categories.validSnapshot(t.pricingCategory)||
-      t.format!=='advance_estimate_2026'&&t.status!=='absorbed'))return false;
-    if(t.format!==undefined&&(t.format==='advance_estimate_2026'?(!advance.valid(t)||t.status!=='estimated'):(!isOfficial(t)||t.status!=='estimated'||!validOfficial(t))))return false;
-    if((t.format==='advance_estimate_2026'||t.status==='absorbed')&&!advance.covered(
+      t.format!=='advance_estimate_2026'&&t.format!==googleBackup.FORMAT&&t.status!=='absorbed'))return false;
+    if(t.format!==undefined&&(t.format==='advance_estimate_2026'?(!advance.valid(t)||t.status!=='estimated'):
+      t.format===googleBackup.FORMAT?!googleBackup.valid(t):(!isOfficial(t)||t.status!=='estimated'||!validOfficial(t))))return false;
+    if((t.format==='advance_estimate_2026'||t.format===googleBackup.FORMAT||t.status==='absorbed')&&!advance.covered(
       {state:t.eligibility?.pickupState,county:t.eligibility?.pickupCounty},{state:t.eligibility?.dropoffState,county:t.eligibility?.dropoffCounty}))return false;
     if(t.eligibility !== undefined || p.tollScope !== undefined || p.interstate !== undefined){
       const e=t.eligibility;
@@ -262,10 +265,15 @@ function customerPricing(quote) {
   return {...pricing,tollStatus:quote.tolls.status};
 }
 function customerQuote(quote){
-  if(quote.tolls?.format!=='advance_estimate_2026'&&quote.tolls?.status!=='absorbed')return quote;
+  if(quote.tolls?.format!=='advance_estimate_2026'&&quote.tolls?.format!==googleBackup.FORMAT&&quote.tolls?.status!=='absorbed')return quote;
   return {...quote,pricingBreakdown:customerPricing(quote),tolls:{version:1,status:quote.tolls.status,amountCents:quote.tolls.amountCents}};
+}
+function priceAdvanceRoutes(routes,profile,eligibility){
+  const primary=advance.estimate(routes,profile,eligibility,routeTolls);
+  if(primary.status==='estimated'||!googleBackup.canFallback(primary.reviewReason))return primary;
+  return googleBackup.estimate(routes,profile,eligibility,routeTolls,primary.reviewReason);
 }
 module.exports={REVIEW_MESSAGE,reviewError,failureReason:advance.failureReason,cents,sum,usdCents,routeTolls,vehicleProfile,customerEstimateProfile,requestModifiers,verifiedState,eligibility,aggregateTolls,attachTolls,validQuote,customerPricing,
   customerQuote,
-  advanceCoverage:advance.covered,advanceEligible:advance.eligible,priceAdvanceRoutes:(routes,profile,eligibility)=>advance.estimate(routes,profile,eligibility,routeTolls),
+  advanceCoverage:advance.covered,advanceEligible:advance.eligible,priceAdvanceRoutes,
   officialFieldMask:officialRoutes.FIELD_MASK,priceOfficialRoutes:officialRoutes.priceRoutes};

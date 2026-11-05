@@ -676,6 +676,7 @@ async function getRouteEstimate(
   }
 
   if(tollOptions.official&&(!data||typeof data!=='object'||Array.isArray(data)))throw routeTollPricing.reviewError('provider_response_invalid');
+  if(tollOptions.official&&Object.hasOwn(data,'error'))throw routeTollPricing.reviewError('provider_response_invalid');
   if(tollOptions.official&&Object.hasOwn(data,'fallbackInfo'))throw routeTollPricing.reviewError('provider_fallback_route');
   const route =
     data?.routes &&

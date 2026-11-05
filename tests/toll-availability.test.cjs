@@ -3,6 +3,7 @@ const test=require('node:test'),assert=require('node:assert/strict');
 const {create,cases,route}=require('./helpers/booking-browser.cjs');
 const legacyIncluded=require('./helpers/legacy-toll-snapshot.cjs');
 const tolls=require('../services/route-tolls'),advance=require('../services/advance-toll-estimate');
+const backup=require('../services/google-toll-backup');
 const origin=h=>({origin:h.url,'sec-fetch-site':'same-origin'});
 const access=r=>r.headers.getSetCookie().find(s=>s.includes('er_booking_access_')).split(';')[0];
 const privateMarker='private-provider-payload-do-not-log';
@@ -13,16 +14,16 @@ const badRoutes=[
  ['geometry_missing',data=>{delete data.legs;}],
  ['geometry_invalid',data=>{data.legs[0].steps[0].polyline.encodedPolyline='!';}],
  ['timing_step_sum_mismatch',data=>{data.staticDuration='1s';}],
- ['crossing_missing_or_ambiguous',data=>{const encode=require('./helpers/official-toll-fixtures.cjs').encode;data.legs=[{steps:[{staticDuration:'1200s',polyline:{encodedPolyline:encode([[-74.2,40.7],[-74.199,40.701]])}}]}];}]
+ ['crossing_not_matched',data=>{const encode=require('./helpers/official-toll-fixtures.cjs').encode;data.legs=[{steps:[{staticDuration:'1200s',polyline:{encodedPolyline:encode([[-74.2,40.7],[-74.199,40.701]])}}]}];}]
 ];
-for(const [reason,mutate]of badRoutes)test('unverified new quote fails closed: '+reason,async t=>{
- const {h,input,c}=await create(t);h.state.routeResult=()=>{const data=route(c,2500);mutate(data);return data;};
+for(const [reason,mutate]of badRoutes)test('unverified custom quote without usable Google backup fails closed: '+reason,async t=>{
+ const {h,input,c}=await create(t);h.state.routeResult=()=>{const data=route(c,2500);mutate(data);if(backup.canFallback(reason))data.travelAdvisory.tollInfo={};return data;};
  for(const path of ['/api/quote','/api/checkout'])for(const paymentChoice of ['now','later']){
   const r=await h.request(path,{...input,paymentChoice,promoCode:'FIRST15',tolls:{status:'absorbed',amountCents:0},tollReason:'forged',total:1});
   assert.equal(r.status,422);assert.equal(r.body.error,tolls.REVIEW_MESSAGE);assert.equal(r.body.code,'TOLL_ESTIMATE_UNAVAILABLE');assert.equal(r.body.checkoutAllowed,false);assert.equal(r.body.total,undefined);assert.equal(r.body.tollReason,undefined);
  }
  assert.equal(h.records().length,0);assert.equal(h.state.creates.length,0);assert.equal(h.testStore.shared.claims.size,0);
- const diagnostics=h.state.logs.filter(line=>line.startsWith('{')).map(line=>JSON.parse(line));assert.equal(diagnostics.length,4);assert.ok(diagnostics.every(line=>line.tollReason===reason));
+ const diagnostics=h.state.logs.filter(line=>line.startsWith('{')).map(line=>JSON.parse(line));assert.equal(diagnostics.length,4);assert.ok(diagnostics.every(line=>line.tollReason===(backup.canFallback(reason)?'provider_amount_unknown':reason)));
  assert.ok(!JSON.stringify(h.state.logs).includes(input.pickup));assert.ok(!JSON.stringify(h.state.logs).includes(input.email));
 });
 for(const failure of ['http','timeout','invalid_json','fallback','empty','null'])test('Google route '+failure+' cannot fall back to a bookable untolled fare',async t=>{
