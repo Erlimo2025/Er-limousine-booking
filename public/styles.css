@@ -490,6 +490,45 @@ textarea:focus {
   font-size: .72rem;
 }
 
+.booking-contact-preferences {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 12px;
+}
+
+.booking-contact-opt-in {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  cursor: pointer;
+}
+
+.booking-contact-opt-in input {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--navy);
+}
+
+.booking-contact-opt-in input:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
+
+.booking-contact-help {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: .75rem;
+}
+
+.booking-contact-help:empty {
+  margin: 0;
+}
+
 
 /* ADDRESS AUTOCOMPLETE */
 

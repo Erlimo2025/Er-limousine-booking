@@ -11,6 +11,23 @@ const cookie=r=>r.headers.getSetCookie().find(x=>x.includes('er_customer_session
 const register=h=>h.request('/api/customer/register',account);
 const profileUpdate=(h,c,body,extra={})=>h.request('/api/customer/profile',body,{cookie:c,origin:'http://localhost:3000','sec-fetch-site':'same-origin',...extra});
 
+test('booking contact gate discloses only autofill eligibility and never updates the customer session', async t => {
+ const h = await harness(t);
+ const registered = await register(h);
+ assert.equal(registered.status, 201);
+ const accountCookie = cookie(registered);
+ const endpoint = '/api/customer/booking-contact';
+ h.testStore.resolveCustomerSession = async () => { throw Error('Autofill must not query the session store'); };
+ for (const [session, allowed] of [['', true], [accountCookie, false], ['er_customer_session=' + 'a'.repeat(43), false]]) {
+  const result = await h.request(endpoint, undefined, {cookie: session});
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.body, {allowRememberedContact: allowed});
+  assert.match(result.headers.get('cache-control'), /no-store/);
+  assert.match(result.headers.get('vary'), /Cookie/);
+  assert.deepEqual(result.headers.getSetCookie(), []);
+ }
+});
+
 test('profile edits use the session owner, preserve historical bookings/payment mapping and keep the session valid',async t=>{
  const h=await harness(t),a=await register(h),c=cookie(a),stored=[...h.testStore.shared.customers.values()][0],id=stored.id;
  const b=await h.request('/api/customer/register',{...account,email:'other-profile@example.test',phone:'2025550188',fullName:'Other Owner'});

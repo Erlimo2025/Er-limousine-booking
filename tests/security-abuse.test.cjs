@@ -1148,10 +1148,24 @@ test("New audit 1: tokens stay out of JSON, URLs, logs, Stripe data and frontend
   const customer=await h.request('/api/booking/'+first.body.bookingId,undefined,{cookie:first.headers.getSetCookie()[0].split(';')[0]});
   const output=JSON.stringify([first.body,retry.body,denied.body,customer.body,h.state.logs,h.state.creates,h.records()]);
   for(const token of tokens)assert.equal(output.includes(token),false);
-  for(const file of ['public/app.js','public/success.html']) {
-    const source=fs.readFileSync(path.join(root,file),'utf8');
-    assert.doesNotMatch(source,/(?:localStorage|sessionStorage)|er_checkout_access_|er_booking_access_/);
-  }
+  const confirmation=fs.readFileSync(path.join(root,'public/success.html'),'utf8');
+  const app=fs.readFileSync(path.join(root,'public/app.js'),'utf8');
+  const credentials=/er_checkout_access_|er_booking_access_|document\.cookie/;
+  const stores=/\b(?:localStorage|sessionStorage|indexedDB)\b/;
+  assert.doesNotMatch(confirmation,credentials);
+  assert.doesNotMatch(confirmation,stores);
+  assert.doesNotMatch(app,credentials);
+
+  // Device contact storage has a single key. Checkout and confirmation still
+  // cannot use browser stores or read booking credentials.
+  const start=app.indexOf('const bookingContactMemory = (() => {');
+  const end=app.indexOf('const mobileSpecial',start);
+  assert.ok(start>=0 && end>start);
+  assert.doesNotMatch(app.slice(0,start)+app.slice(end),stores);
+  const contact=app.slice(start,end);
+  assert.match(contact,/const key = "er_booking_contact_v1";/);
+  const allowed=/window\.localStorage\.(?:getItem\(key\)|removeItem\(key\)|setItem\(key, JSON\.stringify\(details\)\))/g;
+  assert.doesNotMatch(contact.replace(allowed,''),stores);
 });
 
 

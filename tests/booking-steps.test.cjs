@@ -12,6 +12,7 @@ function ui(){
  const tripStep={querySelectorAll:()=>tripKeys.map(k=>fields[k]),contains:e=>tripKeys.some(k=>fields[k]===e)},customerStep={querySelectorAll:()=>customerKeys.map(k=>fields[k])};
  const ctx={TripDateFormat:require('../public/trip-date-format'),AbortController,JSON,Number,...fields,tripStep,customerStep,summaryStep:element(),activeBookingStep:1,bookingPanel:element(),reservationBusy:false,quoteRequestGeneration:0,quoteController:null,quotedFormKey:null,currentQuote:null,
   document:{getElementById:id=>fields[id]},form:{addEventListener:(name,fn)=>events[name]=fn},quoteBtn:element(),payBtn:element(),payLaterBtn:element(),quoteArea:element(),promoSummary:element(),hours:element('3'),
+  bookingContactMemory:{restore(){},isOptedIn:()=>false},
   clearNotice(){messages.length=0;},showNotice(text){messages.push(text);},showPromoResult(){},renderFareBreakdown(){},formatMoney:n=>'$'+n.toFixed(2),
   getFormData:()=>Object.fromEntries([...tripKeys,...customerKeys].map(k=>[k,fields[k].value])),window:{location:{},addEventListener:(name,fn)=>events[name]=fn}};
  for(const name of ['sumVehicle','sumMiles','sumMinutes','sumTotal','sumMilesLabel','sumMinutesLabel','sumTotalLabel'])ctx[name]=element();

@@ -101,6 +101,10 @@ function installCustomerAuth(app,{store,route,rateLimit,validOrigin,secure,now=D
   const old=token(req);if(old)await store.revokeCustomerSession(hashToken(old));
   issue(res,s);res.json({customer:profile(c)});
  }));
+ // Suppress device autofill when a customer session cookie may be in use.
+ app.get('/api/customer/booking-contact', (req,res) => {
+  res.vary('Cookie').json({allowRememberedContact: !token(req)});
+ });
  app.get('/api/customer/profile',route(auth),route(async(req,res)=>res.json({customer:profile(req.customer)})));
  app.post('/api/customer/profile',route(auth),mutation,rateLimit('customer-profile',20,15*60*1000),route(async(req,res)=>{
   res.set('Referrer-Policy','no-referrer');

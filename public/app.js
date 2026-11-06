@@ -71,6 +71,110 @@ let activeBookingStep = 1;
 let quoteRequestGeneration = 0;
 let quoteController = null;
 let quotedFormKey = null;
+
+const bookingContactMemory = (() => {
+  const key = "er_booking_contact_v1";
+  const optIn = document.getElementById("rememberBookingContact");
+  const forget = document.getElementById("forgetBookingContact");
+  const status = document.getElementById("rememberBookingStatus");
+  const fields = [["firstName", 80], ["lastName", 80], ["email", 160], ["phone", 60]]
+    .map(([id, limit]) => ({id, limit, input: document.getElementById(id)}));
+  if (!optIn || !forget || !status || fields.some(({input}) => !input)) return null;
+
+  const restored = new Map();
+  let edited = false;
+  let checkedByCustomer = false;
+  let restoreAttempted = false;
+
+  for (const {input} of fields) {
+    const recordEdit = () => {
+      edited = true;
+      restored.delete(input);
+    };
+    input.addEventListener("input", recordEdit);
+    input.addEventListener("change", recordEdit);
+  }
+
+  optIn.checked = false;
+  optIn.addEventListener("change", event => {
+    checkedByCustomer = event.isTrusted && optIn.checked;
+    status.textContent = "";
+  });
+  const isOptedIn = () => checkedByCustomer && optIn.checked;
+
+  forget.addEventListener("click", () => {
+    edited = true;
+    optIn.checked = false;
+    checkedByCustomer = false;
+    try {
+      window.localStorage.removeItem(key);
+    } catch (_) {
+      status.textContent = "Your browser could not remove the saved details. Clear this site’s data to remove them.";
+      return;
+    }
+    let cleared = false;
+    for (const [input, value] of restored) {
+      if (input.value !== value) continue;
+      input.value = "";
+      cleared = true;
+    }
+    if (cleared) resetQuote();
+    restored.clear();
+    forget.hidden = true;
+    status.textContent = "Saved details removed from this browser.";
+    optIn.focus();
+  });
+
+  const canRestore = () => activeBookingStep === 2 && !edited && fields.every(({input}) => input.value === "");
+
+  async function restore() {
+    if (restoreAttempted) return;
+    restoreAttempted = true;
+    let raw;
+    try {
+      raw = window.localStorage.getItem(key);
+    } catch (_) {
+      optIn.disabled = true;
+      status.textContent = "This browser does not allow saving details. You can still continue booking.";
+      return;
+    }
+    forget.hidden = raw === null;
+    if (!raw || raw.length > 4096 || !canRestore()) return;
+    try {
+      const details = JSON.parse(raw);
+      if (!details || typeof details !== "object" || Object.keys(details).length !== fields.length ||
+          fields.some(({id, limit}) => !Object.hasOwn(details, id) || typeof details[id] !== "string" ||
+            !details[id].trim() || details[id].length > limit || /[<>\x00-\x1f\x7f]/.test(details[id]))) return;
+      const response = await fetch("/api/customer/booking-contact", {
+        cache: "no-store", credentials: "same-origin", redirect: "error"
+      });
+      if (!response.ok || (await response.json())?.allowRememberedContact !== true ||
+          !canRestore() || window.localStorage.getItem(key) !== raw) return;
+      // Restore the full contact together, never mix saved details with a different contact.
+      for (const {id, input} of fields) {
+        input.value = details[id];
+        restored.set(input, input.value);
+      }
+    } catch (_) {
+      // An unreadable record or unavailable session check leaves manual entry available.
+    }
+  }
+
+  function save(bookingData) {
+    if (!isOptedIn()) return;
+    try {
+      const details = Object.fromEntries(fields.map(({id}) => [id, bookingData[id].trim()]));
+      window.localStorage.setItem(key, JSON.stringify(details));
+      forget.hidden = false;
+      status.textContent = "";
+    } catch (_) {
+      status.textContent = "Your browser could not save these details on this device.";
+    }
+  }
+
+  return {restore, isOptedIn, save};
+})();
+
 const mobileSpecial = document.querySelector(".airport-special");
 const headerActions = document.querySelector(".top-bar-actions");
 const specialPosition = document.createComment("Original desktop special position");
@@ -163,6 +267,7 @@ function continueBooking() {
   // Leaving Trip Details accepts the address currently shown, not a later GPS result.
   if (typeof pickupLocation !== 'undefined' && pickupLocation) pickupLocation.cancel();
   showBookingStep(2, true);
+  void bookingContactMemory?.restore();
 }
 
 document.getElementById("bookingContinue").addEventListener("click", continueBooking);
@@ -183,7 +288,7 @@ form.addEventListener("invalid", event => {
   showBookingStep(tripStep.contains(event.target) ? 1 : 2);
 }, true);
 form.addEventListener("keydown", event => {
-  if (event.key === "Enter" && event.target.matches("input")) {
+  if (event.key === "Enter" && event.target.id !== "rememberBookingContact" && event.target.matches("input")) {
     event.preventDefault();
     if (activeBookingStep === 1) continueBooking();
     else if (activeBookingStep === 2) void requestQuote({currentTarget: quoteBtn});
@@ -462,7 +567,9 @@ function resetQuote() {
 
   updatePaymentControls();
   quoteBtn.disabled = reservationBusy;
-  quoteBtn.textContent = "CONTINUE TO TRIP SUMMARY →";
+  // Keep the button text node in place when blur runs during a WebKit click.
+  const continueLabel = "CONTINUE TO TRIP SUMMARY →";
+  if (quoteBtn.textContent !== continueLabel) quoteBtn.textContent = continueLabel;
 
   sumMiles.textContent = "—";
   sumMinutes.textContent = "—";
@@ -1023,6 +1130,7 @@ function renderFareBreakdown(data, review = false) {
 async function requestQuote(event) {
   if (reservationBusy || quoteController) return null;
   const goToSummary = event?.currentTarget === quoteBtn;
+  const saveContact = goToSummary && bookingContactMemory?.isOptedIn();
   resetQuote();
   const generation = quoteRequestGeneration;
   clearNotice();
@@ -1152,7 +1260,10 @@ async function requestQuote(event) {
     if(typeof renderFareBreakdown==='function')renderFareBreakdown(data);
     if(promoSummary)promoSummary.hidden=true;
     quoteArea.classList.add("has-completed-quote");
-    if (goToSummary) showBookingStep(3, true);
+    if (goToSummary) {
+      if (saveContact) bookingContactMemory.save(bookingData);
+      showBookingStep(3, true);
+    }
     updatePaymentControls();
 
     if (data.fixedOffer) {
@@ -1292,6 +1403,7 @@ if (applyPromoBtn) {
 form.addEventListener(
   "input",
   (event) => {
+    if (event.target.id === "rememberBookingContact") return;
 
     if (
       event.target === promoCode
@@ -1313,7 +1425,9 @@ form.addEventListener(
     resetQuote();
   }
 );
-form.addEventListener("change", () => resetQuote());
+form.addEventListener("change", event => {
+  if (event.target.id !== "rememberBookingContact") resetQuote();
+});
 
 
 /* =========================================
