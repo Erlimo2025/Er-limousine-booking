@@ -153,12 +153,12 @@ function tripCard(trip){
   add('Tolls',p.tollsIncluded||p.tollStatus==='absorbed'?'Included':price(p.tollsCents||0));
   add('Total',price(p.totalCents));
  }
- const acceptance=trip.cancellationPolicy;
- if(acceptance){
-  add('Accepted cancellation policy',acceptance.policy.version);
-  add('Policy accepted',TripDateFormat.instant(acceptance.acceptedAt));
-  add('Refund terms',acceptance.policy.summary);
-  for(const tier of acceptance.policy.tiers)add('Cancellation window',tier.text);
+ const cancellation=trip.cancellationPolicy;
+ if(cancellation){
+  add(cancellation.acceptedAt?'Accepted cancellation policy':'Cancellation policy at booking',cancellation.policy.version);
+  if(cancellation.acceptedAt)add('Policy accepted',TripDateFormat.instant(cancellation.acceptedAt));
+  add('Refund terms',cancellation.policy.summary);
+  for(const tier of cancellation.policy.tiers)add('Cancellation window',tier.text);
  }
  add('Booked on',TripDateFormat.instant(trip.createdAt,false));
  details.append(summary,list);card.append(details);

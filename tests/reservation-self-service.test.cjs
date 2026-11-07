@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const {setup, harness, base, queue, account, guestBooking, initialClock} = require('./helpers/reservation-management.cjs');
-const {currentPolicy, acceptedPolicy} = require('../services/cancellation-policy');
+const {currentPolicy, acceptedPolicy, policyAtBooking} = require('../services/cancellation-policy');
 const {cancellationTerms, amendmentInput, amendmentTerms} = require('../services/reservation-self-service');
 const {DAY} = require('../services/trip-management');
 const HOUR = 3600000;
@@ -360,51 +360,44 @@ test('PostgreSQL a restarted worker reconciles committed refunds with new custom
   assert.ok(!Object.hasOwn(after, 'selfService'));
 });
 
-test('PostgreSQL new guest and account bookings require current consent and retain the exact server terms', pg, async t => {
+test('PostgreSQL checkout records server policy for guest and account bookings without recording explicit acceptance', pg, async t => {
   const f = await setup(t);
-  const consent = {version: currentPolicy.version, accepted: true};
   const input = {...guestBooking, paymentChoice: 'later'};
   const quote = await f.post('/api/quote', input);
   assert.equal(quote.status, 200);
   assert.deepEqual(quote.body.cancellationPolicy, currentPolicy);
-  const calls = f.h.state.googleCalls;
-  for (const invalid of [undefined, false, {...consent, accepted: false}, {...consent, version: 'forged-version'},
-    {...consent, acceptedAt: '2026-09-01T00:00:00Z'}, {...consent, tiers: []}]) {
-    const result = await f.post('/api/checkout', JSON.stringify({...input, cancellationPolicyAcceptance: invalid}));
-    assert.equal(result.status, 400);
-    assert.match(result.body.error, /accept the current cancellation and refund policy/);
-  }
-  assert.equal(f.h.state.googleCalls, calls);
-  assert.equal((await f.store.list()).length, 0);
-  assert.equal(f.h.state.creates.length, 0);
 
-  const guest = await f.post('/api/checkout', JSON.stringify({...input, cancellationPolicyAcceptance: consent}));
+  const guest = await f.post('/api/checkout', input);
   assert.equal(guest.status, 200);
   const reference = guest.body.bookingId;
   const saved = await f.store.get(reference);
-  const expected = {policy: currentPolicy, acceptedAt: new Date(initialClock).toISOString()};
-  assert.deepEqual(saved.cancellationPolicyAcceptance, expected);
+  const expected = {policy: currentPolicy, recordedAt: new Date(initialClock).toISOString()};
+  assert.deepEqual(saved.cancellationPolicyAtBooking, expected);
+  assert.equal(Object.hasOwn(saved, 'cancellationPolicyAcceptance'), false);
+  assert.equal(acceptedPolicy(saved), null);
+  assert.equal(f.h.state.creates.length, 0);
   const guestStatus = '/api/booking/' + reference;
   assert.equal((await f.get(guestStatus)).status, 401);
   const guestStatusCookie = guest.headers.getSetCookie().find(value => value.includes('er_booking_access_')).split(';')[0];
   const guestDetails = await f.get(guestStatus, guestStatusCookie);
   assert.equal(guestDetails.status, 200);
   assert.deepEqual(guestDetails.body.cancellationPolicy, expected);
-  await assert.rejects(f.pool.query("UPDATE er_reservations SET record=record - 'cancellationPolicyAcceptance' WHERE id=$1",
+  await assert.rejects(f.pool.query("UPDATE er_reservations SET record=record - 'cancellationPolicyAtBooking' WHERE id=$1",
     [reference]), /immutable/);
   const forged = {...expected, policy: {...currentPolicy, tiers: currentPolicy.tiers.slice(1)}};
-  await assert.rejects(f.pool.query("UPDATE er_reservations SET record=jsonb_set(record,'{cancellationPolicyAcceptance}',$2) WHERE id=$1",
+  await assert.rejects(f.pool.query("UPDATE er_reservations SET record=jsonb_set(record,'{cancellationPolicyAtBooking}',$2) WHERE id=$1",
     [reference, JSON.stringify(forged)]), /immutable/);
 
   const owner = await f.register();
   const accountInput = {...input, email: account.email, time: '14:00', paymentChoice: 'now'};
-  assert.equal((await f.post('/api/checkout', JSON.stringify(accountInput), owner)).status, 400);
-  assert.equal(f.h.state.creates.length, 0);
-  const result = await f.post('/api/checkout', JSON.stringify({...accountInput, cancellationPolicyAcceptance: consent}), owner);
+  const result = await f.post('/api/checkout', {...accountInput, cancellationPolicyAtBooking: forged,
+    cancellationPolicyAcceptance: {version: currentPolicy.version, accepted: true}}, owner);
   assert.equal(result.status, 200);
   assert.equal(f.h.state.creates.length, 1);
   const ownedReference = result.body.bookingId;
   const owned = await f.store.get(ownedReference);
+  assert.deepEqual(owned.cancellationPolicyAtBooking, expected);
+  assert.equal(Object.hasOwn(owned, 'cancellationPolicyAcceptance'), false);
   assert.equal(f.h.state.creates[0].params.line_items[0].price_data.unit_amount, Math.round(owned.quote.total * 100));
   const detail = await f.get('/api/customer/trips/' + ownedReference, owner);
   assert.equal(detail.status, 200);
@@ -416,6 +409,8 @@ test('PostgreSQL new guest and account bookings require current consent and reta
     message.subject.includes('Reservation Confirmed'));
   assert.ok(notice);
   assert.ok(notice.text.includes(currentPolicy.version));
+  assert.match(notice.text, /Cancellation policy at booking/);
+  assert.doesNotMatch(notice.text, /Accepted cancellation policy|Policy accepted/);
   for (const tier of currentPolicy.tiers) assert.ok(notice.text.includes(tier.text));
 });
 
@@ -423,15 +418,16 @@ test('PostgreSQL legacy bookings cannot acquire new terms or be automatically ch
   const f = await setup(t, enabled);
   const example = await f.reserve(null, {time: '14:00'});
   const legacy = await f.store.get(example);
-  const evidence = legacy.cancellationPolicyAcceptance;
-  delete legacy.cancellationPolicyAcceptance;
+  const snapshot = legacy.cancellationPolicyAtBooking;
+  delete legacy.cancellationPolicyAtBooking;
   delete legacy.customerAccess;
   delete legacy.checkoutFingerprint;
   delete legacy.checkoutClientHash;
   legacy.id = crypto.randomUUID();
   assert.deepEqual(await f.store.importLegacy([legacy]), {inserted: 1, skipped: 0});
-  await assert.rejects(f.pool.query("UPDATE er_reservations SET record=jsonb_set(record,'{cancellationPolicyAcceptance}',$2) WHERE id=$1",
-    [legacy.id, JSON.stringify(evidence)]), /immutable/);
+  await assert.rejects(f.pool.query("UPDATE er_reservations SET record=jsonb_set(record,'{cancellationPolicyAtBooking}',$2) WHERE id=$1",
+    [legacy.id, JSON.stringify(snapshot)]), /immutable/);
+  await assert.rejects(f.store.importLegacy([{...legacy, id: crypto.randomUUID(), cancellationPolicyAtBooking: snapshot}]));
 
   const guest = await f.verify(legacy.id);
   const payment = '/api/booking/' + legacy.id + '/checkout';
@@ -759,17 +755,18 @@ test('the retired proposal remains historical evidence only and cannot authorize
   assert.equal(result.refundCents, null);
   assert.equal(result.automaticEligible, false);
   assert.equal(Object.hasOwn(result, 'feePercent'), false);
-  assert.throws(() => require('../services/cancellation-policy').requireConsent({version: historical.version, accepted: true}), {status: 400});
+  assert.deepEqual(policyAtBooking(record), record.cancellationPolicyAcceptance);
 });
 
-test('PostgreSQL migration 016 preserves historical settlements and reconciles their original obligations', pg, async t => {
+test('PostgreSQL migrations preserve historical consent and reconcile settlements at their original amounts', pg, async t => {
   const fs = require('node:fs'), path = require('node:path');
   const {Pool} = require('pg');
   const {createStore} = require('../storage/postgres');
   const f = await trip(t);
   const before = await f.store.get(f.id);
   const record = structuredClone(before);
-  delete record.cancellationPolicyAcceptance;
+  delete record.cancellationPolicyAtBooking;
+  record.cancellationPolicyAcceptance = {policy: currentPolicy, acceptedAt: record.createdAt};
   record.status = 'cancelled';
   const schema = 'prior_policy_' + crypto.randomBytes(8).toString('hex');
   const control = new Pool({connectionString: process.env.ER_TEST_DATABASE_URL});
@@ -800,6 +797,8 @@ test('PostgreSQL migration 016 preserves historical settlements and reconciles t
   assert.equal(Number(refunded_before_cents), 0);
   assert.deepEqual(unchanged, old);
   assert.deepEqual(await store.get(record.id), record);
+  await assert.rejects(pool.query("UPDATE er_reservations SET record=record - 'cancellationPolicyAcceptance' WHERE id=$1",
+    [record.id]), /immutable/);
   assert.deepEqual((await pool.query('SELECT * FROM er_payment_ledger')).rows[0], paid);
   await assert.rejects(pool.query('INSERT INTO er_managed_cancellations SELECT * FROM jsonb_populate_record(NULL::er_managed_cancellations,$1)',
     [{...upgraded, id: crypto.randomUUID(), idempotency_key: 'er-managed-cancel-' + crypto.randomUUID()}]),

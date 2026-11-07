@@ -1,5 +1,5 @@
 const TripDateFormat=require('../public/trip-date-format');
-const {acceptedPolicy}=require('./cancellation-policy');
+const {policyAtBooking}=require('./cancellation-policy');
 const escape=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 // Remove only adjacent repeated terminal labels in the rendered customer address.
 // The stored address and distinct terminal information remain untouched.
@@ -84,11 +84,12 @@ function bookingMessage(record,kind,contact,myTripsUrl=null,event=null){
   rows.push([reservation?(admin?'Authoritative total':'Total'):'Amount paid',amount],['Payment status',record.paymentStatus==='paid'?'Paid':'Unpaid']);
   if(reservation && (record.deferredPayment===true || record.checkoutFingerprint))rows.push(['Payment choice',record.deferredPayment===true?'Pay Later':'Pay Now']);
  }else rows.push(['Amount paid',amount],['Payment status','Payment confirmed']);
- const acceptance=acceptedPolicy(record);
- if(!admin&&acceptance){
-  rows.push(['Accepted cancellation policy',acceptance.policy.version],
-   ['Policy accepted',TripDateFormat.instant(acceptance.acceptedAt)],['Refund terms',acceptance.policy.summary]);
-  for(const tier of acceptance.policy.tiers)rows.push(['Cancellation window',tier.text]);
+ const cancellation=policyAtBooking(record);
+ if(!admin&&cancellation){
+  rows.push([cancellation.acceptedAt?'Accepted cancellation policy':'Cancellation policy at booking',cancellation.policy.version]);
+  if(cancellation.acceptedAt)rows.push(['Policy accepted',TripDateFormat.instant(cancellation.acceptedAt)]);
+  rows.push(['Refund terms',cancellation.policy.summary]);
+  for(const tier of cancellation.policy.tiers)rows.push(['Cancellation window',tier.text]);
  }
  const cancelled=record.status==='cancelled',paid=record.paymentStatus==='paid';
  const intro=cancelled?'This reservation is cancelled.'+(!reservation?' Payment received. Please contact ER Limousine Service for payment review.':' Please contact ER Limousine Service with any questions.'):

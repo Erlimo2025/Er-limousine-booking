@@ -91,7 +91,6 @@ customerErrorMessages.set('Authentication required.',{message:'Please log in to 
 customerErrorMessages.set('Customer trip unavailable.',{message:'Reservation unavailable.',status:404});
 customerErrorMessages.set('Too many requests. Please try again later.',{message:'Too many requests. Please try again later.',status:429});
 customerErrorMessages.set(routeTollPricing.REVIEW_MESSAGE,{message:routeTollPricing.REVIEW_MESSAGE,status:422});
-customerErrorMessages.set(cancellationPolicy.CONSENT_REQUIRED,{message:cancellationPolicy.CONSENT_REQUIRED,status:400});
 customerErrorMessages.set('Your quote changed. Please get a new quote before reserving.',{message:'Your quote changed. Please get a new quote before reserving.',status:409});
 function sendSafeError(req,res,error,fallbackStatus=500) {
   if(res.headersSent) {
@@ -152,7 +151,7 @@ app.set("trust proxy", process.env.TRUSTED_PROXY_CIDRS
 const productionHttps = process.env.NODE_ENV === "production" || process.env.RENDER === "true";
 const contentSecurityPolicy = [
   "default-src 'self'",
-  "script-src 'self' 'sha256-GQlDKZw6KCXVEKm9YNV/SX9ur/D8thBFhrqPLXjkP3E='",
+  "script-src 'self' 'sha256-R/d/PcD3d+Cnw0KcqJHnPcV7bls88/t1r6v2RPbttEE='",
   "script-src-attr 'none'",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data:",
@@ -2379,7 +2378,6 @@ async function createCheckout(body, ip, fingerprint, req, res) {
   */
 
   // Accepted reservations retain their frozen fare and original cancellation terms.
-  if(!booking)cancellationPolicy.requireConsent(body.cancellationPolicyAcceptance);
   let quote = booking ? booking.quote : await calculateQuote(body,req);
   if(!booking && tollPricingEnabled && body.tripType!=='hourly' && !quote.fixedOffer && body.quoteRevision===undefined){
     throw Object.assign(new Error('Your quote changed. Please get a new quote before reserving.'),{status:409});
@@ -2402,7 +2400,7 @@ async function createCheckout(body, ip, fingerprint, req, res) {
   if(booking?.paymentStatus==='paid')throw Object.assign(new Error('This reservation has already been paid.'),{status:409});
   if (!booking) {
     booking = createBookingRecord(body, quote);
-    booking.cancellationPolicyAcceptance={policy:cancellationPolicy.currentPolicy,acceptedAt:booking.createdAt};
+    booking.cancellationPolicyAtBooking={policy:cancellationPolicy.currentPolicy,recordedAt:booking.createdAt};
     if(payLater)booking.deferredPayment=true;
     const token=crypto.randomBytes(32).toString("base64url");
     booking.customerAccess = newCustomerAccess(body,token);
@@ -2889,10 +2887,10 @@ app.get(
       return res.status(401).json({error: "Reservation access unavailable."});
     }
     const driverVisible = ["assigned", "driver_en_route", "passenger_on_board", "completed"].includes(booking.status);
-    const acceptedCancellationPolicy = cancellationPolicy.acceptedPolicy(booking);
+    const bookedCancellationPolicy = cancellationPolicy.policyAtBooking(booking);
     res.json({
       id: booking.id,
-      ...(acceptedCancellationPolicy ? {cancellationPolicy: acceptedCancellationPolicy} : {}),
+      ...(bookedCancellationPolicy ? {cancellationPolicy: bookedCancellationPolicy} : {}),
       status: booking.status,
       paymentStatus: booking.paymentStatus,
       ...(['processing','review_required','confirmed','failed'].includes(booking.refundStatus)?{refundStatus:booking.refundStatus}:{}),

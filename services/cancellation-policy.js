@@ -26,16 +26,6 @@ const currentPolicy = Object.freeze({
 // The retired proposal remains readable only as historical acceptance evidence.
 // Its fees never participate in the current cancellation calculation.
 const versions = new Map([[currentPolicy.version, currentPolicy], [legacyPolicy.version, legacyPolicy]]);
-const CONSENT_REQUIRED = 'Review and accept the current cancellation and refund policy before reserving.';
-
-function requireConsent(input) {
-  if (!input || typeof input !== 'object' || Array.isArray(input) ||
-      Object.keys(input).length !== 2 || !Object.hasOwn(input, 'version') || !Object.hasOwn(input, 'accepted') ||
-      input.version !== currentPolicy.version || input.accepted !== true) {
-    throw Object.assign(new Error(CONSENT_REQUIRED), {status: 400});
-  }
-}
-
 function acceptedPolicy(record) {
   const evidence = record.cancellationPolicyAcceptance;
   const approved = versions.get(evidence?.policy?.version);
@@ -45,4 +35,17 @@ function acceptedPolicy(record) {
   return evidence;
 }
 
-module.exports = {currentPolicy, CONSENT_REQUIRED, requireConsent, acceptedPolicy};
+function policyAtBooking(record) {
+  if (Object.hasOwn(record, 'cancellationPolicyAcceptance')) {
+    return Object.hasOwn(record, 'cancellationPolicyAtBooking') ? null : acceptedPolicy(record);
+  }
+  if (!Object.hasOwn(record, 'cancellationPolicyAtBooking')) return null;
+  const snapshot = record.cancellationPolicyAtBooking;
+  const approved = versions.get(snapshot?.policy?.version);
+  if (!approved || !Object.hasOwn(snapshot, 'policy') || !isDeepStrictEqual(snapshot.policy, approved) ||
+      !Object.hasOwn(snapshot, 'recordedAt') || Object.keys(snapshot).length !== 2 ||
+      snapshot.recordedAt !== record.createdAt) return null;
+  return snapshot;
+}
+
+module.exports = {currentPolicy, acceptedPolicy, policyAtBooking};

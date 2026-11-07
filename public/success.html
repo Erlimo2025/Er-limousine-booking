@@ -64,11 +64,12 @@
             row('Tolls',p.tollsIncluded||p.tollStatus==='absorbed'?'Included':money((p.tollsCents||0)/100));
           }
           row('Total',money(q.total));
-          if(b.cancellationPolicy){
-            row('Accepted cancellation policy',b.cancellationPolicy.policy.version);
-            row('Policy accepted',TripDateFormat.instant(b.cancellationPolicy.acceptedAt));
-            row('Refund terms',b.cancellationPolicy.policy.summary);
-            for(const tier of b.cancellationPolicy.policy.tiers)row('Cancellation window',tier.text);
+          const cancellation=b.cancellationPolicy;
+          if(cancellation){
+            row(cancellation.acceptedAt?'Accepted cancellation policy':'Cancellation policy at booking',cancellation.policy.version);
+            if(cancellation.acceptedAt)row('Policy accepted',TripDateFormat.instant(cancellation.acceptedAt));
+            row('Refund terms',cancellation.policy.summary);
+            for(const tier of cancellation.policy.tiers)row('Cancellation window',tier.text);
           }
           row('Payment',refund?{processing:'Refund processing',confirmed:'Refund confirmed',review_required:'Refund review required',failed:'Refund review required'}[refund]:paid?'Paid':processing?'Payment verification in progress':'Payment Pending / Unpaid');
           if(b.paymentHoldExpiresAt&&!paid&&!cancelled)row('Start payment before',TripDateFormat.instant(b.paymentHoldExpiresAt));

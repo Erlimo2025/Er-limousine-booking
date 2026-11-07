@@ -5,7 +5,7 @@ const {DAY, paymentActionPending} = require('./trip-management');
 const {ManagementError, tripFingerprint, UUID, exactKeys} = require('./reservation-management');
 const ewr = require('../ewr-pickups');
 const pricing = require('../pricing');
-const {currentPolicy, acceptedPolicy} = require('./cancellation-policy');
+const {currentPolicy, policyAtBooking} = require('./cancellation-policy');
 
 const ACTIVE = ['awaiting_payment', 'confirmed', 'assigned', 'driver_en_route'];
 const HEX = /^[a-f0-9]{64}$/;
@@ -31,9 +31,8 @@ function revision(record, subject) {
 function cancellationTerms(record, now, parseDateTime, source = null) {
   if (record.status === 'cancelled') throw new ManagementError(409, 'This trip is already cancelled.');
   const fareCents = cents(record.quote);
-  const acceptance = acceptedPolicy(record);
   const pickup = parseDateTime(record.trip.date, record.trip.time, 'pickup');
-  const policyVersion = acceptance?.policy.version || null;
+  const policyVersion = policyAtBooking(record)?.policy.version || null;
   let review = null;
   if (policyVersion !== currentPolicy.version) review = 'legacy_policy';
   else if (!ACTIVE.includes(record.status)) review = 'service_started';
