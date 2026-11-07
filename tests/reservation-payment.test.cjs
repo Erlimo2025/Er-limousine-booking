@@ -116,11 +116,11 @@ test('booking choice double submit is blocked and browser sends only intent, nev
  const src=fs.readFileSync(path.join(__dirname,'../public/app.js'),'utf8').replace(/\r\n/g,'\n'),start=src.indexOf('form.addEventListener(\n  "submit"'),end=src.indexOf('/* =========================================',start+20);
  assert.ok(start>=0&&end>start,'Booking-submit test source boundaries must exist.');
  let handler,release,calls=0,sent;
- const ctx={form:{addEventListener:(e,f)=>handler=f},payBtn:{disabled:false},payLaterBtn:{disabled:false},reservationBusy:false,currentQuote:{total:80,quoteRevision:'d'.repeat(64)},activeBookingStep:3,hasCurrentQuote:()=>true,validateBookingStep:()=>true,tripStep:{},customerStep:{},updatePaymentControls(){},vehicle:{disabled:false},clearNotice(){},getFormData:()=>({...booking,vehicle:'suv'}),showNotice(){},window:{location:{}},
+ const ctx={form:{addEventListener:(e,f)=>handler=f},payBtn:{disabled:false},payLaterBtn:{disabled:false},reservationBusy:false,currentQuote:{total:80,quoteRevision:'d'.repeat(64),cancellationPolicy:require('../services/cancellation-policy').currentPolicy},activeBookingStep:3,hasCurrentQuote:()=>true,hasPolicyConsent:()=>true,validateBookingStep:()=>true,tripStep:{},customerStep:{},updatePaymentControls(){},vehicle:{disabled:false},clearNotice(){},getFormData:()=>({...booking,vehicle:'suv'}),showNotice(){},window:{location:{}},
  fetch:async(url,options)=>{calls++;sent=JSON.parse(options.body);await new Promise(r=>release=r);return {ok:true,json:async()=>({url:'http://localhost:3000/success.html?booking=fixture'})};}};
  vm.createContext(ctx);vm.runInContext(src.slice(start,end),ctx);
  const first=handler({preventDefault(){},submitter:{id:'payLaterBtn'}});await Promise.resolve();await handler({preventDefault(){},submitter:{id:'payLaterBtn'}});
- assert.equal(calls,1);assert.equal(sent.paymentChoice,'later');assert.equal(sent.vehicle,'suv');assert.equal(sent.quoteRevision,'d'.repeat(64));assert.ok(!Object.hasOwn(sent,'total'));assert.ok(!Object.hasOwn(sent,'amount'));release();await first;
+ assert.equal(calls,1);assert.equal(sent.paymentChoice,'later');assert.equal(sent.vehicle,'suv');assert.equal(sent.quoteRevision,'d'.repeat(64));assert.deepEqual(sent.cancellationPolicyAcceptance,{version:ctx.currentQuote.cancellationPolicy.version,accepted:true});assert.ok(!Object.hasOwn(sent,'total'));assert.ok(!Object.hasOwn(sent,'amount'));release();await first;
 });
 test('confirmation page re-fetches status and never treats Stripe return parameters as Paid',async()=>{
  const html=fs.readFileSync(path.join(__dirname,'../public/success.html'),'utf8'),script=html.match(/<script>([\s\S]*?)<\/script>/)[1],events={},elements={};

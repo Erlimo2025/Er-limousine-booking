@@ -288,10 +288,12 @@ test('normal airport pricing retains surcharges/discount/gratuity order, credits
 test('hourly route unknown preserves the exact existing quote, discounts and both payment choices without invented tolls or route calls',async t=>{
  for(const promoCode of ['', 'FIRST15']){
   const trip={...normal,tripType:'hourly',hours:3,promoCode},legacy=await fixture(t,1375,{}),expected=await legacy.request('/api/quote',trip);assert.equal(expected.status,200);assert.equal(expected.body.total,promoCode?331.50:390);
+  const {cancellationPolicy,...acceptedFare}=expected.body;
+  assert.equal(cancellationPolicy.version,require('../services/cancellation-policy').currentPolicy.version);
   for(const paymentChoice of ['now','later']){
    const h=await fixture(t,null,{ROUTE_TOLLS_ENABLED:'true'}),q=await h.request('/api/quote',trip);assert.equal(q.status,200);assert.deepEqual(q.body,expected.body);assert.equal(q.body.tolls,undefined);assert.equal(q.body.pricingBreakdown,undefined);
-   const reserved=await h.request('/api/checkout',{...trip,paymentChoice,total:1,tollAmount:99999});assert.equal(reserved.status,200);assert.deepEqual(h.records()[0].quote,expected.body);assert.equal(h.state.creates.length,paymentChoice==='later'?0:1);
-   const paid=await h.request('/api/booking/'+reserved.body.bookingId+'/checkout',{}, {...origin,cookie:access(reserved)});assert.equal(paid.status,200);assert.equal(h.state.creates.length,1);assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount,Math.round(expected.body.total*100));assert.equal(h.state.routes.length,0);assert.equal(h.state.googleCalls,0);assert.deepEqual(h.records()[0].quote,expected.body);
+   const reserved=await h.request('/api/checkout',{...trip,paymentChoice,total:1,tollAmount:99999});assert.equal(reserved.status,200);assert.deepEqual(h.records()[0].quote,acceptedFare);assert.equal(h.state.creates.length,paymentChoice==='later'?0:1);
+   const paid=await h.request('/api/booking/'+reserved.body.bookingId+'/checkout',{}, {...origin,cookie:access(reserved)});assert.equal(paid.status,200);assert.equal(h.state.creates.length,1);assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount,Math.round(expected.body.total*100));assert.equal(h.state.routes.length,0);assert.equal(h.state.googleCalls,0);assert.deepEqual(h.records()[0].quote,acceptedFare);
   }
  }
 });

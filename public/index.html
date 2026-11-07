@@ -795,6 +795,15 @@
         Your fare is calculated securely before payment.
       </p>
 
+        <section class="booking-policy" id="cancelPolicyPanel" aria-labelledby="cancelPolicyHeading" hidden>
+          <h3 id="cancelPolicyHeading">Cancellation and refund policy</h3>
+          <p id="cancelPolicySummary"></p>
+          <ul id="cancelPolicyTiers"></ul>
+          <label class="booking-policy-accept">
+            <input type="checkbox" id="cancelPolicyAccepted" autocomplete="off" aria-describedby="cancelPolicyHeading">
+            <span>I accept the cancellation and refund policy.</span>
+          </label>
+        </section>
         <button class="btn btn-pay" type="submit" id="payBtn" disabled>RESERVE & PAY NOW</button>
         <p class="payment-choice-description">Reserve your trip and continue to secure payment.</p>
         <button class="btn btn-pay-later" type="submit" id="payLaterBtn" disabled>RESERVE & PAY LATER</button>
@@ -1229,6 +1238,11 @@
 
         <a href="#fleet">
           Our Fleet
+        </a>
+        <br>
+
+        <a href="/manage-reservation.html">
+          Manage My Reservation
         </a>
         <br>
 

@@ -28,6 +28,7 @@ function setLoggedIn(value) {
   filters.hidden=!value;
   window.erTollValidation?.setAuthenticated(value,adminFetch);
   window.erCustomerReviews?.setAuthenticated(value,adminFetch);
+  window.erReservationRequests?.setAuthenticated(value,adminFetch);
   if (!value) {
     archiveRequests.clear();
     paymentLinkActions.clear();
@@ -136,6 +137,7 @@ async function restoreSession() {
 async function logout() {
   window.erTollValidation?.setAuthenticated(false);
   window.erCustomerReviews?.setAuthenticated(false);
+  window.erReservationRequests?.setAuthenticated(false);
   loadBtn.disabled = true;
   logoutBtn.disabled = true;
   authGeneration++;

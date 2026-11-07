@@ -144,7 +144,7 @@ test('CSP and private headers cover the admin panel without new external scripts
   const js=fs.readFileSync(path.join(__dirname,'../public/admin-toll-validation.js'),'utf8');assert.doesNotMatch(js,/localStorage|sessionStorage|indexedDB|document\.cookie|innerHTML|GOOGLE_MAPS_API_KEY|api\/checkout|api\/booking\//);
 });
 
-test('PostgreSQL validation mode performs no reservation/ownership/payment/audit writes or reads and adds no schema changes',{skip:!process.env.ER_TEST_DATABASE_URL},async t=>{
+test('PostgreSQL validation mode performs no reservation/ownership/payment/audit writes or reads and adds no schema changes',{skip:!process.env.ER_TEST_DATABASE_URL,timeout:10000},async t=>{
   const url=new URL(process.env.ER_TEST_DATABASE_URL);if(!['localhost','127.0.0.1'].includes(url.hostname)||!/^er_test_[a-z0-9_]+$/.test(url.pathname.slice(1)))throw Error('Requires an isolated local test database.');
   const {Pool}=require('pg'),schema='er_validation_'+crypto.randomBytes(8).toString('hex'),admin=new Pool({connectionString:url.toString()}),pool=new Pool({connectionString:url.toString(),options:'-c search_path='+schema});
   let created=false; t.after(async()=>{await pool.end();if(created)await admin.query('DROP SCHEMA '+schema+' CASCADE');await admin.end();});await admin.query('CREATE SCHEMA '+schema);created=true;
@@ -156,8 +156,22 @@ test('PostgreSQL validation mode performs no reservation/ownership/payment/audit
     trip:{pickup:'Newark',dropoff:'Manhattan',date:'2026-11-10',time:'12:00',tripType:'oneway',vehicle:'suv',passengers:2},quote:{total:150,currency:'usd',vehicle:'Luxury SUV',vehicleKey:'suv'},dispatch:{driver:'Existing chauffeur',driverPhone:'',vehicle:'',plate:''}};
   await store.createWithBudget(record,()=>{},{customerId,sessionHash:hash,now,start:new Date('2026-11-10T17:00:00Z'),end:new Date('2026-11-10T17:00:00Z')});
   const before=(await pool.query('SELECT * FROM er_reservations ORDER BY id')).rows,ledger=(await pool.query('SELECT * FROM er_payment_ledger')).rows;
-  let watching=false;const calls=[],monitored=new Proxy(store,{get(target,name){const value=target[name];return typeof value!=='function'?value:(...args)=>{if(watching)calls.push(name);return value.apply(target,args);};}});
-  const h=await fixture(t,{},monitored),c=await login(h);await new Promise(resolve=>setImmediate(resolve));watching=true;
+  let watching=false, finishStartup;
+  const calls=[], startup=new Promise(resolve=>{finishStartup=resolve;});
+  const monitored=new Proxy(store,{get(target,name){
+    const value=target[name];
+    if(typeof value!=='function')return value;
+    return (...args)=>{
+      if(watching)calls.push(name);
+      const result=value.apply(target,args);
+      // The last store call of the startup reconciliation worker. Isolate
+      // endpoint activity from this separately scheduled maintenance.
+      return name==='purgeExpiredReservationChangePreviews'?result.finally(finishStartup):result;
+    };
+  }});
+  const h=await fixture(t,{},monitored),c=await login(h);
+  await startup;
+  watching=true;
   assert.equal((await h.request('/api/admin/toll-validation/config',undefined,{cookie:c})).status,200);
   assert.equal((await estimate(h,c,input({directions:'both',returnDate:'2026-11-12',returnTime:'12:00'}))).status,200);watching=false;
   assert.deepEqual(calls,[]);assert.deepEqual((await pool.query('SELECT * FROM er_reservations ORDER BY id')).rows,before);assert.deepEqual((await pool.query('SELECT * FROM er_payment_ledger')).rows,ledger);

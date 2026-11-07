@@ -2274,3 +2274,36 @@ textarea:focus {
 }
 
 .btn-pay-later{width:100%;min-height:48px;border:1px solid #c9a44c;background:#102633;color:#f0d78a;font-weight:700;white-space:normal}.payment-choice-description{font-size:13px;line-height:1.5;color:#c7d1da;text-align:center;margin:8px 0 18px}.btn-pay-later:focus-visible{outline:3px solid #d9b75a;outline-offset:3px}
+
+.booking-policy {
+  border-top: 1px solid #e6e1d6;
+  margin: 18px 0;
+  padding-top: 14px;
+  overflow-wrap: anywhere;
+}
+.booking-policy h3 {
+  margin: 0 0 8px;
+}
+.booking-policy p, .booking-policy li {
+  font-size: .875rem;
+  line-height: 1.45;
+}
+.booking-policy ul {
+  padding-inline-start: 1.2rem;
+}
+.booking-policy-accept {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  cursor: pointer;
+}
+.booking-policy-accept input {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  min-height: 18px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--gold);
+}

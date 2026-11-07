@@ -1,7 +1,7 @@
 // Isolated provider simulation: no Stripe network calls or genuine credentials.
 function stripeRefundMock(state) {
  state.refunds ||= new Map();state.refundRequests ||= [];state.refundRetrievals ||= [];
- state.paymentIntentRequests ||= [];state.chargeRequests ||= [];
+ state.paymentIntentRequests ||= [];state.chargeRequests ||= [];state.refundLists ||= [];
  const clone=x=>structuredClone(x);
  const missing=()=>{throw Object.assign(new Error('synthetic private missing payment'),{type:'StripeInvalidRequestError',code:'resource_missing'});};
  const sessionFor=id=>[...state.sessions.values()].find(s=>s.payment_intent===id);
@@ -9,7 +9,7 @@ function stripeRefundMock(state) {
  const charge=s=>({id:'ch_mock_'+s.payment_intent,object:'charge',payment_intent:s.payment_intent,
   paid:s.payment_status==='paid',captured:s.payment_status==='paid',status:'succeeded',disputed:false,amount:s.amount_total,amount_captured:s.amount_total,
   amount_refunded:[...state.refunds.values()].filter(r=>r.charge==='ch_mock_'+s.payment_intent && r.status==='succeeded').reduce((sum,r)=>sum+r.amount,0),
-  currency:s.currency,customer:s.customer,metadata:s.metadata,livemode:false,refunded:false});
+  currency:s.currency,customer:s.customer,metadata:s.metadata,livemode:false,refunded:[...state.refunds.values()].filter(r=>r.charge==='ch_mock_'+s.payment_intent && r.status==='succeeded').reduce((sum,r)=>sum+r.amount,0)===s.amount_total});
  return {
   paymentIntents:{retrieve:async(id,params,options)=>{
    state.paymentIntentRequests.push({id,params:clone(params),options:clone(options)});
@@ -22,10 +22,17 @@ function stripeRefundMock(state) {
   }},
   charges:{retrieve:async(id,params,options)=>{
    state.chargeRequests.push({id,params:clone(params),options:clone(options)});
-   if(state.chargeError)throw new Error('synthetic private charge retrieval failure');
+   if(state.chargeError || state.chargeErrors?.has(id))throw new Error('synthetic private charge retrieval failure');
    const s=chargeFor(id);if(!s)missing();return clone({...charge(s),...state.chargeOverride});
   }},
   refunds:{
+   list:async(params,options)=>{
+    state.refundLists.push({params:clone(params),options:clone(options)});
+    if(state.refundListError)throw new Error('synthetic private refund list failure');
+    if(state.refundListOverride)return clone(state.refundListOverride);
+    const matches=[...state.refunds.values()].filter(refund=>refund.charge===params.charge);
+    return {object:'list',data:clone(matches.slice(0,params.limit)),has_more:matches.length>params.limit};
+   },
    create:async(params,options)=>{
     state.refundRequests.push({params:clone(params),options:clone(options)});
     if(state.refundOnCall)await state.refundOnCall('create',params,options);

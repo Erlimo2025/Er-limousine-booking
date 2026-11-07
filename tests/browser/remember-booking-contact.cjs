@@ -324,6 +324,18 @@ test(engine + ' Pay Later keeps the remembered record limited to contact fields'
   await fill(page, contact);
   await optIn(page).check();
   await continueToSummary(page);
+  const acceptance = page.locator('#cancelPolicyAccepted');
+  const acceptanceLabel = page.locator('.booking-policy-accept');
+  assert.equal(await acceptance.isChecked(), false);
+  assert.equal(await page.locator('#payLaterBtn').isEnabled(), false);
+  await acceptanceLabel.tap();
+  assert.equal(await acceptance.isChecked(), true);
+  assert.equal(await page.locator('#payLaterBtn').isEnabled(), true);
+  await acceptanceLabel.tap();
+  assert.equal(await acceptance.isChecked(), false);
+  assert.equal(await page.locator('#payLaterBtn').isEnabled(), false);
+  assert.equal(await step(page), '3');
+  await acceptanceLabel.tap();
   const pending = page.waitForResponse(response => requestTo(response, '/api/checkout'));
   await page.locator('#payLaterBtn').tap();
   const reservation = await pending;

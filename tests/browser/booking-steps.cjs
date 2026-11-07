@@ -27,7 +27,25 @@ async function details(s){const {page,input,c}=s;
  await page.locator('#bookingContinue').click();assert.equal(await s.state(),'2');
 }
 async function customer(s){for(const id of ['firstName','lastName','email','phone','notes'])await s.page.locator('#'+id).fill(s.input[id]);if(s.input.promoCode)await s.page.locator('#promoCode').fill(s.input.promoCode);}
-async function quote(s){const response=s.page.waitForResponse(r=>r.url()===s.h.url+'/api/quote'&&r.request().method()==='POST');await s.page.locator('#quoteBtn').click();const r=await response;assert.equal(r.status(),200);const q=await r.json();await s.page.waitForFunction(()=>document.getElementById('book').dataset.bookingStep==='3');return q;}
+async function quote(s){
+ const {page,h}=s;
+ const response=page.waitForResponse(r=>r.url()===h.url+'/api/quote'&&r.request().method()==='POST');
+ await page.locator('#quoteBtn').click();
+ const r=await response;assert.equal(r.status(),200);const q=await r.json();
+ await page.waitForFunction(()=>document.getElementById('book').dataset.bookingStep==='3');
+ const consent=page.locator('#cancelPolicyAccepted');
+ assert.equal(await consent.isChecked(),false);
+ assert.equal(await page.locator('#payBtn').isEnabled(),false);
+ assert.equal(await page.locator('#payLaterBtn').isEnabled(),false);
+ assert.deepEqual(await page.locator('#cancelPolicyTiers li').allTextContents(),q.cancellationPolicy.tiers.map(tier=>tier.text));
+ await page.evaluate(()=>document.getElementById('bookingForm').dispatchEvent(new SubmitEvent('submit',{
+   bubbles:true,cancelable:true,submitter:document.getElementById('payLaterBtn')
+ })));
+ assert.equal(h.records().length,0);
+ assert.equal(h.state.creates.length,0);
+ await consent.check();
+ return q;
+}
 async function layout(s){const {page}=s;assert.equal(await page.locator('.summary-card').count(),1);assert.equal(await page.locator('#bookingForm .summary-card').count(),1);assert.equal(await page.locator('#bookingTripStep').isVisible(),false);assert.equal(await page.locator('#bookingCustomerStep').isVisible(),false);assert.equal(await page.locator('#bookingSummaryStep').isVisible(),true);
  const display=await page.evaluate(()=>({rows:[...document.querySelectorAll('#fareBreakdown .fare-breakdown-row')].map(r=>[...r.children].map(e=>e.textContent)),totalLabel:document.getElementById('sumTotalLabel').textContent,overflow:Math.max(0,document.documentElement.scrollWidth-innerWidth),csp:window.cspFailures,buttonsAfterTotal:document.getElementById('sumTotal').compareDocumentPosition(document.getElementById('payBtn'))&Node.DOCUMENT_POSITION_FOLLOWING}));assert.deepEqual(display.rows.map(r=>r[0]),['Trip Fare','Tolls']);assert.equal(display.totalLabel,'Total');assert.equal(display.overflow,0);assert.deepEqual(display.csp,[]);assert.ok(display.buttonsAfterTotal);assert.equal(await page.locator('#promoSummary').isVisible(),false);return display;}
 async function capture(s,width,choice,step){const dir=process.env.ER_TEST_BOOKING_SCREENSHOTS_DIR;if(!dir||!['interstate_estimate','missing_category'].includes(s.c.id)||choice!=='now')return;fs.mkdirSync(dir,{recursive:true});await s.page.locator('#book').screenshot({path:path.join(dir,'booking-'+(s.c.id==='missing_category'?'review-':'')+width+'-step-'+step+'.png')});}
@@ -50,9 +68,9 @@ for(const width of [320,390,1440])for(const c of cases)for(const choice of ['now
  if(c.promoCode){assert.equal(q.promotion.code,'FIRST15');assert.equal(q.promotion.percentOff,15);assert.ok(q.discount>0);}
  if(c.tripType==='roundtrip'){assert.equal(await page.locator('#summaryReturnRow').isVisible(),true);assert.match(await page.locator('#sumMiles').innerText(),/mi/);assert.doesNotMatch(await page.locator('#sumMiles').innerText(),/\$/);assert.equal(h.state.routes.length,2);}
  if(c.tripType==='hourly'){assert.equal(h.state.routes.length,0);assert.equal(await page.locator('#sumMinutes').innerText(),'3.5 hours reserved');}
- const response=page.waitForResponse(r=>r.url()===h.url+'/api/checkout'&&r.request().method()==='POST');await page.locator(choice==='later'?'#payLaterBtn':'#payBtn').dblclick();const reserved=await response;assert.equal(reserved.status(),200);assert.equal(h.records().length,1);const record=h.records()[0];assert.equal(record.quote.total,q.total);assert.equal(record.trip.notes,s.input.notes);if(q.quoteRevision)assert.equal(record.quote.quoteRevision,q.quoteRevision);if(c.account)assert.ok(await h.testStore.reservationOwner(record.id));
+ const response=page.waitForResponse(r=>r.url()===h.url+'/api/checkout'&&r.request().method()==='POST');await page.locator(choice==='later'?'#payLaterBtn':'#payBtn').dblclick();const reserved=await response;assert.equal(reserved.status(),200);assert.equal(h.records().length,1);const record=h.records()[0];assert.equal(record.quote.total,q.total);assert.equal(record.trip.notes,s.input.notes);assert.deepEqual(reserved.request().postDataJSON().cancellationPolicyAcceptance,{version:q.cancellationPolicy.version,accepted:true});assert.deepEqual(record.cancellationPolicyAcceptance,{policy:q.cancellationPolicy,acceptedAt:record.createdAt});if(q.quoteRevision)assert.equal(record.quote.quoteRevision,q.quoteRevision);if(c.account)assert.ok(await h.testStore.reservationOwner(record.id));
  if(c.expectedSource)assert.equal(record.quote.tolls.format,c.expectedSource);
- if(choice==='later'){await page.waitForURL(url=>url.pathname==='/success.html');await page.waitForFunction(()=>document.getElementById('message').textContent.includes('Payment is still required'));assert.equal(h.state.creates.length,0);assert.equal(await page.locator('#completePayment').isVisible(),true);if(c.expected==='included')assert.match(await page.locator('#details').innerText(),/Tolls\s+Included/);await page.locator('#completePayment').click();}
+ if(choice==='later'){await page.waitForURL(url=>url.pathname==='/success.html');await page.waitForFunction(()=>document.getElementById('message').textContent.includes('Payment is still required'));assert.equal(h.state.creates.length,0);assert.equal(await page.locator('#completePayment').isVisible(),true);assert.match(await page.locator('#details').innerText(),/Accepted cancellation policy/);if(c.expected==='included')assert.match(await page.locator('#details').innerText(),/Tolls\s+Included/);await page.locator('#completePayment').click();}
  await page.waitForURL('https://checkout.example.test/mock');assert.equal(h.state.creates.length,1);assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount,Math.round(q.total*100));
  const session=[...h.state.sessions.values()][0];session.status='complete';session.payment_status='paid';assert.equal((await h.webhook(session)).status,200);await page.goto(h.url+'/success.html?booking='+record.id+'&paid=true');await page.waitForFunction(()=>document.getElementById('message').textContent.includes('Payment received'));assert.equal(await page.locator('#completePayment').isVisible(),false);assert.equal(h.state.creates.length,1);
  results.push({scenario:c.id,width,choice,passed:true});

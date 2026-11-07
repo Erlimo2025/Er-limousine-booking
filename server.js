@@ -9,6 +9,7 @@ const { isIP } = require("net");
 const pricing = require("./pricing");
 const ewrPickups = require("./ewr-pickups");
 const routeTollPricing = require('./services/route-tolls');
+const cancellationPolicy=require('./services/cancellation-policy');
 const tollPricingEnabled = process.env.ROUTE_TOLLS_ENABLED === 'true';
 const tollEstimateMode = process.env.ROUTE_TOLLS_MODE !== 'verified';
 const {createTollValidation,TollValidationError}=require('./services/admin-toll-validation');
@@ -90,6 +91,7 @@ customerErrorMessages.set('Authentication required.',{message:'Please log in to 
 customerErrorMessages.set('Customer trip unavailable.',{message:'Reservation unavailable.',status:404});
 customerErrorMessages.set('Too many requests. Please try again later.',{message:'Too many requests. Please try again later.',status:429});
 customerErrorMessages.set(routeTollPricing.REVIEW_MESSAGE,{message:routeTollPricing.REVIEW_MESSAGE,status:422});
+customerErrorMessages.set(cancellationPolicy.CONSENT_REQUIRED,{message:cancellationPolicy.CONSENT_REQUIRED,status:400});
 customerErrorMessages.set('Your quote changed. Please get a new quote before reserving.',{message:'Your quote changed. Please get a new quote before reserving.',status:409});
 function sendSafeError(req,res,error,fallbackStatus=500) {
   if(res.headersSent) {
@@ -150,7 +152,7 @@ app.set("trust proxy", process.env.TRUSTED_PROXY_CIDRS
 const productionHttps = process.env.NODE_ENV === "production" || process.env.RENDER === "true";
 const contentSecurityPolicy = [
   "default-src 'self'",
-  "script-src 'self' 'sha256-/LugorlSI9hC97/QZQ5hZDU3cX3kcROxwLAeplEDzAA='",
+  "script-src 'self' 'sha256-GQlDKZw6KCXVEKm9YNV/SX9ur/D8thBFhrqPLXjkP3E='",
   "script-src-attr 'none'",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data:",
@@ -1758,9 +1760,11 @@ app.post(
       if (!changed) return res.status(400).json({error:`Webhook request rejected. Reference: ${req.referenceId}`});
     }
 
-    const refundEvent=reservationRefundService.webhook(event);
+    const managedRefund=managedCancellationRefundService.webhook(event);
+    const refundService=managedRefund?.attemptId ? managedCancellationRefundService : reservationRefundService;
+    const refundEvent=managedRefund?.attemptId ? managedRefund : reservationRefundService.webhook(event);
     if(refundEvent && typeof refundEvent.attemptId==='string' && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(refundEvent.attemptId)){
-      if(!await reservationRefundService.receive(refundEvent))return res.status(400).json({error:'Webhook request rejected.'});
+      if(!await refundService.receive(refundEvent))return res.status(400).json({error:'Webhook request rejected.'});
     }
     res.json({
       received: true
@@ -1834,6 +1838,17 @@ app.use(['/reset-password.html','/reset-password.js'],(req,res,next)=>{res.set({
 require('./services/public-seo').installPublicSeo(app, {
   publicDirectory: path.join(__dirname, 'public'), contentSecurityPolicy,
   companyPhone: process.env.COMPANY_PHONE
+});
+const reservationManagement=require('./routes/reservation-management').installReservationManagement(app,{
+  store:reservationStore,route,rateLimit,customerAuth,requireAdmin,siteUrl:SITE_URL,secure:adminCookieSecure,
+  emailProvider:bookingEmailProvider,parseDateTime:parseServiceDateTime,now:()=>Date.now(),reportFailure:reportBookingEmailFailure,
+  selfService:{
+    changePreviewsEnabled:process.env.RESERVATION_SELF_SERVICE_ENABLED==='true',
+    autoCancellationsEnabled:process.env.RESERVATION_AUTO_CANCELLATIONS_ENABLED==='true',
+    quote:calculateQuote,cancellationProof:cancellationPaymentProof,
+    capture:record=>managedCancellationRefundService.capture(record),submitRefund:id=>managedCancellationRefundService.submit(id),
+    recheckRefund:(id,authority)=>managedCancellationRefundService.recheck(id,authority)
+  }
 });
 app.use(
   express.static(
@@ -2097,7 +2112,7 @@ app.post(
           req.body,req
         );
 
-      res.json(routeTollPricing.customerQuote(quote));
+      res.json({...routeTollPricing.customerQuote(quote),cancellationPolicy:cancellationPolicy.currentPolicy});
 
     } catch (error) {
       sendSafeError(req,res,error,400);
@@ -2267,7 +2282,31 @@ async function pickupTimePaymentProof(booking){
  return {safe,sessionId:null,invalidateCheckout:safe && !!attempt};
 }
 const reservationRefundService=require('./services/reservation-refunds').reservationRefunds({store:reservationStore,stripe,now:()=>Date.now(),reportFailure:()=>logDiagnostic({referenceId:crypto.randomUUID()},503,'provider_error','stripe')});
-async function runReservationRefunds(){await storageReady;await reservationRefundService.run();await runBookingEmails();}
+const managedCancellationRefundService=require('./services/reservation-refunds').reservationRefunds({
+  stripe,now:()=>Date.now(),metadataKey:'managedCancellationId',managedRecovery:true,
+  reportFailure:()=>logDiagnostic({referenceId:crypto.randomUUID()},503,'provider_error','stripe'),
+  store:{
+    refundForBooking:id=>reservationStore.managedCancellation(id),
+    capturedPayment:id=>reservationStore.capturedPayment(id),
+    startRefundReconciliation:(...args)=>reservationStore.startManagedRefundReconciliation(...args),
+    startRefundSubmission:(...args)=>reservationStore.startManagedCancellationRefund(...args),
+    recordRefundProblem:(...args)=>reservationStore.recordManagedRefundProblem(...args),
+    observeRefund:(...args)=>reservationStore.observeManagedRefund(...args),
+    confirmRefundWebhook:(...args)=>reservationStore.confirmManagedCancellationRefund(...args),
+    refundCandidates:(at,limit)=>reservationStore.managedCancellationRefundCandidates(at,limit),
+    get:id=>reservationStore.get(id),
+    withActionLock:(...args)=>reservationStore.withActionLock(...args)
+  }
+});
+async function runReservationRefunds(){
+  await storageReady;
+  await reservationRefundService.run();
+  if(reservationStore.managedCancellation){
+    await managedCancellationRefundService.run();
+    await reservationStore.purgeExpiredReservationChangePreviews(Date.now());
+  }
+  await runBookingEmails();
+}
 const refundTimer=setInterval(()=>{void runReservationRefunds().catch(()=>logDiagnostic({referenceId:crypto.randomUUID()},503,'provider_error','stripe'));},60000);refundTimer.unref();
 async function cancelUnderLock(booking,abandoned=false){
  if(booking.status==='cancelled')return true;
@@ -2339,7 +2378,8 @@ async function createCheckout(body, ip, fingerprint, req, res) {
     Stripe payment amount.
   */
 
-  // Accepted reservations retain their frozen fare, including legacy toll policy.
+  // Accepted reservations retain their frozen fare and original cancellation terms.
+  if(!booking)cancellationPolicy.requireConsent(body.cancellationPolicyAcceptance);
   let quote = booking ? booking.quote : await calculateQuote(body,req);
   if(!booking && tollPricingEnabled && body.tripType!=='hourly' && !quote.fixedOffer && body.quoteRevision===undefined){
     throw Object.assign(new Error('Your quote changed. Please get a new quote before reserving.'),{status:409});
@@ -2362,6 +2402,7 @@ async function createCheckout(body, ip, fingerprint, req, res) {
   if(booking?.paymentStatus==='paid')throw Object.assign(new Error('This reservation has already been paid.'),{status:409});
   if (!booking) {
     booking = createBookingRecord(body, quote);
+    booking.cancellationPolicyAcceptance={policy:cancellationPolicy.currentPolicy,acceptedAt:booking.createdAt};
     if(payLater)booking.deferredPayment=true;
     const token=crypto.randomBytes(32).toString("base64url");
     booking.customerAccess = newCustomerAccess(body,token);
@@ -2386,7 +2427,8 @@ async function createCheckout(body, ip, fingerprint, req, res) {
 }
 async function verifyPaymentAuthority(req,booking){
   if(req.customer){const active=await reservationStore.resolveCustomerSession(req.customerSessionHash,Date.now());if(!active || active.id!==req.customer.id)throw Object.assign(new Error('Please log in to continue.'),{status:401});}
-  if(req.paymentCredentialRequired && !hasCustomerAccess(req,booking,true) && !hasCustomerAccess(req,booking))throw Object.assign(new Error('Reservation access unavailable.'),{status:401});
+  if(req.paymentCredentialRequired && !hasCustomerAccess(req,booking,true) && !hasCustomerAccess(req,booking) &&
+     !await req.verifiedGuestPaymentAccess?.(booking.id))throw Object.assign(new Error('Reservation access unavailable.'),{status:401});
   const customer=booking.checkoutAttempt?.parameters?.customer;
   if(customer){
     if(!req.customer || await reservationStore.reservationOwner(booking.id)!==req.customer.id)throw Object.assign(new Error('Please log in to continue.'),{status:401});
@@ -2677,11 +2719,12 @@ function paymentMutation(req,res,next){
 async function completeReservationPayment(req,res,account){
   if(!account)req.paymentCredentialRequired=true;
   const lookup=()=>account?reservationStore.customerReservation(req.customer.id,req.params.id):reservationStore.get(req.params.id);
+  const allowed=async booking=>account || hasCustomerAccess(req,booking) || await req.verifiedGuestPaymentAccess?.(booking.id);
   const initial=await lookup();
-  if(!initial || (!account && !hasCustomerAccess(req,initial)))return res.status(404).json({error:'Reservation unavailable.'});
+  if(!initial || !await allowed(initial))return res.status(404).json({error:'Reservation unavailable.'});
   const result=await reservationStore.withActionLock(paymentActionKey(initial),async()=>{
     const booking=await lookup();
-    if(!booking || (!account && !hasCustomerAccess(req,booking)))throw Object.assign(new Error('Reservation unavailable.'),{status:404});
+    if(!booking || !await allowed(booking))throw Object.assign(new Error('Reservation unavailable.'),{status:404});
     return checkoutStoredBooking(booking.trip,booking,req);
   });
   res.json(result);
@@ -2691,6 +2734,8 @@ app.post('/api/booking/:id/checkout',rateLimit('booking-payment',15),paymentMuta
   await customerAuth.resolve(req,res);
   const booking=await reservationStore.get(req.params.id);
   if(booking && req.customer){const owner=await reservationStore.reservationOwner(booking.id);if(owner && owner!==req.customer.id)return res.status(404).json({error:'Reservation unavailable.'});}
+  // Only this existing payment-completion endpoint accepts the email-verified guest grant.
+  req.verifiedGuestPaymentAccess=id=>reservationManagement.verifiedGuest(req,id);
   return completeReservationPayment(req,res,false);
 }));
 require('./routes/customer-trip-management').installCustomerTripManagement(app,{store:reservationStore,customerAuth,route,rateLimit,siteUrl:SITE_URL,contact:tripCompanyContact,parseServiceDateTime,cancellationProof:cancellationPaymentProof,timeChangeProof:pickupTimePaymentProof,refundService:reservationRefundService,runEmails:runBookingEmails,now:()=>Date.now()});
@@ -2760,6 +2805,8 @@ app.patch(
     if(!initial)return res.status(404).json({error:'Booking not found.'});
     const mutate=async()=>{
     if(req.body.status && !['cancelled','completed'].includes(req.body.status) && (await reservationStore.adminArchiveState(req.params.id))?.archived_at)throw Object.assign(new Error('Restore this trip before reactivating dispatch.'),{status:409});
+    if(req.body.status && req.body.status!=='cancelled' && initial.status==='cancelled' &&
+      await reservationStore.managedCancellation?.(initial.id))throw Object.assign(new Error('Trip update unavailable. Please refresh and try again.'),{status:409});
     if(req.body.status==='cancelled')await cancelUnderLock(await reservationStore.get(req.params.id));
     return reservationStore.update(req.params.id, async booking => {
     if (req.body.status) {
@@ -2838,12 +2885,14 @@ app.get(
   route(async (req, res) => {
     const booking=await reservationStore.get(req.params.id);
 
-    if (!hasCustomerAccess(req, booking)) {
+    if (!hasCustomerAccess(req, booking) && !(booking && await reservationManagement.verifiedGuest(req,booking.id))) {
       return res.status(401).json({error: "Reservation access unavailable."});
     }
     const driverVisible = ["assigned", "driver_en_route", "passenger_on_board", "completed"].includes(booking.status);
+    const acceptedCancellationPolicy = cancellationPolicy.acceptedPolicy(booking);
     res.json({
       id: booking.id,
+      ...(acceptedCancellationPolicy ? {cancellationPolicy: acceptedCancellationPolicy} : {}),
       status: booking.status,
       paymentStatus: booking.paymentStatus,
       ...(['processing','review_required','confirmed','failed'].includes(booking.refundStatus)?{refundStatus:booking.refundStatus}:{}),

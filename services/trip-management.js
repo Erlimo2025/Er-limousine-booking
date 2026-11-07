@@ -17,7 +17,7 @@ function managementDto(record,startAt,endAt,now){
  const scheduleValid=Number.isFinite(start) && Number.isFinite(end) && end>=start;
  const active=scheduleValid && Number.isFinite(at) && end>at && !['completed','cancelled'].includes(record.status);
  let cancelReason=null;
- if(!active)cancelReason='inactive';
+ if(!active || record.status==='passenger_on_board')cancelReason='inactive';
  else if(start-at<DAY)cancelReason='within_24_hours';
  else if(record.paymentStatus!=='paid' && paymentActionPending(record))cancelReason='payment_processing';
  return {pickupAt:Number.isFinite(start)?new Date(start).toISOString():null,
