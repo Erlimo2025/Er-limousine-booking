@@ -24,7 +24,7 @@ const description = 'Private car and limousine transportation from New Jersey to
 const read = file => fs.readFileSync(path.join(publicDirectory, file), 'utf8');
 const schemaText = html => html.match(/<script type="application\/ld\+json" id="business-schema">([\s\S]*?)<\/script>/)[1];
 const graph = html => JSON.parse(schemaText(html))['@graph'];
-const privatePages = ['account.html', 'admin.html', 'payment-methods.html', 'payment-link-result.html', 'review.html', 'success.html', 'reset-password.html'];
+const privatePages = ['account.html', 'admin.html', 'manage-reservation.html', 'payment-methods.html', 'payment-link-result.html', 'review.html', 'success.html', 'reset-password.html'];
 
 test('homepage has a concise NJ-origin title/description, root canonical and matching social metadata', async t => {
   const h = await harness(t, {SITE_URL: 'https://unrelated.example.test'});
@@ -146,7 +146,7 @@ test('all private HTML pages and their API/auth surfaces carry noindex without r
   assert.equal(dashboard.status, 302);
   assert.equal(dashboard.headers.get('location'), '/account.html');
   assert.equal(dashboard.headers.get('x-robots-tag'), 'noindex, nofollow');
-  for (const url of ['/api/customer/profile', '/api/customer/trips', '/api/bookings/search', '/api/customer/payment-methods', '/api/customer/recovery/request', '/internal/booking-emails']) {
+  for (const url of ['/api/customer/profile', '/api/customer/trips', '/api/bookings/search', '/api/customer/payment-methods', '/api/customer/recovery/request', '/api/booking/manage/guest', '/api/admin/reservation-requests', '/internal/booking-emails']) {
     const r = await h.request(url);
     assert.equal(r.headers.get('x-robots-tag'), 'noindex, nofollow');
     assert.ok(r.status >= 400, url);

@@ -153,12 +153,23 @@ function tripCard(trip){
   add('Tolls',p.tollsIncluded||p.tollStatus==='absorbed'?'Included':price(p.tollsCents||0));
   add('Total',price(p.totalCents));
  }
+ const acceptance=trip.cancellationPolicy;
+ if(acceptance){
+  add('Accepted cancellation policy',acceptance.policy.version);
+  add('Policy accepted',TripDateFormat.instant(acceptance.acceptedAt));
+  add('Refund terms',acceptance.policy.summary);
+  for(const tier of acceptance.policy.tiers)add('Cancellation window',tier.text);
+ }
  add('Booked on',TripDateFormat.instant(trip.createdAt,false));
  details.append(summary,list);card.append(details);
  const primaryActions=node('div','trip-primary-actions');
+ const reservationLink=node('a','text-button','Manage My Reservation');
+ reservationLink.href='/manage-reservation.html?reservation='+encodeURIComponent(trip.reference);
+ primaryActions.append(reservationLink);
  if(trip.canBookAgain===true){
-  const again=node('a','text-button trip-book-again','Book Again');again.href='/?bookAgain='+encodeURIComponent(trip.reference)+'#book';primaryActions.append(again);card.append(primaryActions);
+  const again=node('a','text-button trip-book-again','Book Again');again.href='/?bookAgain='+encodeURIComponent(trip.reference)+'#book';primaryActions.append(again);
  }
+ card.append(primaryActions);
  if(refund)card.append(node('p','trip-payment-review',refund==='confirmed'?'This trip is cancelled. Your full refund has been confirmed.':refund==='processing'?'This trip is cancelled. Your full refund is processing; it has not been confirmed yet. You do not need to pay again.':'This trip is cancelled. Your refund requires review. Please contact ER Limousine Service; no refund has been confirmed.'));
  else if(trip.status==='cancelled'&&trip.paymentStatus==='paid')card.append(node('p','trip-payment-review','Payment received for this cancelled trip. Please contact ER Limousine Service for payment review.'));
  if(processing&&trip.status!=='cancelled')card.append(node('p','trip-payment-review','We’re confirming your payment. You do not need to pay again.'));

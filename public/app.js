@@ -2,6 +2,9 @@ const form = document.getElementById("bookingForm");
 const quoteBtn = document.getElementById("quoteBtn");
 const payBtn = document.getElementById("payBtn");
 const payLaterBtn=document.getElementById("payLaterBtn");
+const cancelPolicyPanel = document.getElementById("cancelPolicyPanel");
+const cancelPolicyAccepted = document.getElementById("cancelPolicyAccepted");
+cancelPolicyAccepted?.addEventListener("change", updatePaymentControls);
 let reservationBusy=false;
 const notice = document.getElementById("notice");
 
@@ -557,12 +560,33 @@ function showPromoResult(data) {
    RESET QUOTE
 ========================================= */
 
+function renderBookingPolicy(policy) {
+  if (!cancelPolicyPanel || !cancelPolicyAccepted) return;
+  const visible = typeof policy?.version === "string" && typeof policy.summary === "string" &&
+    Array.isArray(policy.tiers) && policy.tiers.length > 0 && policy.tiers.every(tier => typeof tier?.text === "string");
+  cancelPolicyPanel.hidden = !visible;
+  cancelPolicyAccepted.checked = false;
+  document.getElementById("cancelPolicySummary").textContent = visible ? policy.summary : "";
+  const tiers = visible ? policy.tiers.map(tier => {
+    const item = document.createElement("li");
+    item.textContent = tier.text;
+    return item;
+  }) : [];
+  document.getElementById("cancelPolicyTiers").replaceChildren(...tiers);
+}
+
+function hasPolicyConsent() {
+  return cancelPolicyPanel?.hidden === false && cancelPolicyAccepted?.checked === true &&
+    typeof currentQuote?.cancellationPolicy?.version === "string";
+}
+
 function resetQuote() {
   quoteRequestGeneration++;
   if (quoteController) quoteController.abort();
   quoteController = null;
   quotedFormKey = null;
   currentQuote = null;
+  renderBookingPolicy(null);
   quoteArea.classList.remove("has-completed-quote");
 
   updatePaymentControls();
@@ -603,7 +627,7 @@ function hasCurrentQuote() {
 }
 
 function updatePaymentControls() {
-  const disabled = reservationBusy || activeBookingStep !== 3 || !hasCurrentQuote();
+  const disabled = reservationBusy || activeBookingStep !== 3 || !hasCurrentQuote() || !hasPolicyConsent();
   quoteBtn.disabled = reservationBusy || !!quoteController;
   payBtn.disabled = disabled;
   if (payLaterBtn) payLaterBtn.disabled = disabled;
@@ -1210,6 +1234,7 @@ async function requestQuote(event) {
     currentQuote =
       data;
     quotedFormKey = requestKey;
+    renderBookingPolicy(data.cancellationPolicy);
 
     sumVehicle.textContent =
       data.vehicleKey === "suv" ? "Luxury SUV" : data.vehicle;
@@ -1403,7 +1428,7 @@ if (applyPromoBtn) {
 form.addEventListener(
   "input",
   (event) => {
-    if (event.target.id === "rememberBookingContact") return;
+    if (event.target === cancelPolicyAccepted || event.target.id === "rememberBookingContact") return;
 
     if (
       event.target === promoCode
@@ -1426,7 +1451,7 @@ form.addEventListener(
   }
 );
 form.addEventListener("change", event => {
-  if (event.target.id !== "rememberBookingContact") resetQuote();
+  if (event.target !== cancelPolicyAccepted && event.target.id !== "rememberBookingContact") resetQuote();
 });
 
 
@@ -1448,6 +1473,11 @@ form.addEventListener(
       resetQuote();
       showBookingStep(activeBookingStep === 1 ? 1 : 2, true);
       showNotice("Continue to Trip Summary and review an updated quote before reserving.");
+      return;
+    }
+    if (!hasPolicyConsent()) {
+      showNotice("Review and accept the cancellation and refund policy before reserving.");
+      if (!cancelPolicyPanel?.hidden) cancelPolicyAccepted?.focus();
       return;
     }
     if (!validateBookingStep(tripStep, 1) || !validateBookingStep(customerStep, 2)) return;
@@ -1488,7 +1518,9 @@ form.addEventListener(
 
             body:
               JSON.stringify(
-                {...bookingData,paymentChoice,...(paymentQuote.quoteRevision?{quoteRevision:paymentQuote.quoteRevision}:{})}
+                {...bookingData,paymentChoice,
+                  cancellationPolicyAcceptance:{version:paymentQuote.cancellationPolicy.version,accepted:true},
+                  ...(paymentQuote.quoteRevision?{quoteRevision:paymentQuote.quoteRevision}:{})}
               )
           }
         );
@@ -1497,7 +1529,8 @@ form.addEventListener(
         await response.json();
 
       if (!response.ok) {
-        if(response.status===409 && data.error==='Your quote changed. Please get a new quote before reserving.')resetQuote();
+        if(response.status===409 && data.error==='Your quote changed. Please get a new quote before reserving.' ||
+          response.status===400 && data.error==='Review and accept the current cancellation and refund policy before reserving.')resetQuote();
         if(data.code==='TOLL_ESTIMATE_UNAVAILABLE'){
           resetQuote();sumTotal.textContent='Contact us';sumTotalLabel.textContent='Final quote required';
           if(typeof renderFareBreakdown==='function')renderFareBreakdown(null,true);

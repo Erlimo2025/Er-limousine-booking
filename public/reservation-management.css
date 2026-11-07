@@ -1,0 +1,139 @@
+/* Scoped to the customer management page and the Dispatch request queue. */
+.reservation-management {
+  max-width: 760px;
+  overflow-wrap: anywhere;
+}
+
+.reservation-management [hidden],
+.reservation-request-queue [hidden] {
+  display: none !important;
+}
+
+.reservation-management .booking-card + .booking-card {
+  margin-top: 18px;
+}
+
+.reservation-management h2,
+.reservation-request-queue h3 {
+  margin-top: 0;
+}
+
+.reservation-management .manage-link {
+  text-decoration: underline;
+  text-underline-offset: .16em;
+}
+
+.manage-details {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 20px;
+  margin: 16px 0;
+}
+
+.manage-details dt {
+  font-weight: 700;
+}
+
+.manage-details dd {
+  margin: 0;
+}
+
+.manage-confirm,
+.manage-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.manage-confirm {
+  flex-wrap: nowrap;
+  min-height: 44px;
+  cursor: pointer;
+}
+
+.manage-confirm input {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--navy);
+}
+
+.manage-actions .btn,
+.reservation-management form .btn {
+  min-height: 44px;
+  white-space: normal;
+}
+
+.manage-history {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.manage-history li,
+.reservation-request-queue .manage-queue-card {
+  border-top: 1px solid var(--line);
+  padding: 12px 0;
+  overflow-wrap: anywhere;
+}
+
+.manage-history li p,
+.reservation-request-queue .manage-queue-card p {
+  margin: 4px 0;
+}
+
+.reservation-request-queue {
+  margin-bottom: 18px;
+}
+
+.reservation-request-queue summary {
+  min-height: 44px;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.reservation-management :is(button, a, input, select):focus-visible,
+.reservation-request-queue :is(button, summary, select):focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
+
+@media (max-width: 480px) {
+  .manage-details,
+  .reservation-management .two-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .reservation-management .manage-actions .btn,
+  .reservation-management form .btn {
+    width: 100%;
+  }
+
+  .reservation-management input,
+  .reservation-management select {
+    font-size: 16px;
+  }
+}
+
+.reservation-management .managed-quote {
+  border-left: 2px solid var(--gold);
+  margin: 14px 0;
+  padding: 4px 12px;
+}
+
+.reservation-management .managed-quote p {
+  margin: 6px 0;
+}
+
+#managedCancelControls {
+  margin-top: 18px;
+}
+
+@media (max-width: 480px) {
+  .reservation-management #managedChangeForm .form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

@@ -87,9 +87,16 @@ test('isolated PostgreSQL integration: transactions, concurrent workers, import 
  const parsed=new URL(url);if(!parsed.pathname.slice(1).startsWith('er_test_'))throw new Error('Integration requires an isolated test database.');
  const pool=new Pool({connectionString:url,max:10});const secondPool=new Pool({connectionString:url,max:10});
  const store=createStore({},pool),second=createStore({},secondPool);
+ const truncateFixtures=()=>pool.query(
+  'TRUNCATE er_managed_cancellation_events, er_managed_cancellations, er_reservation_change_previews, ' +
+  'er_reservation_management_requests, er_reservation_management_access, ' +
+  'er_review_moderation_events, er_customer_reviews, er_review_invitations, er_admin_payment_links, ' +
+  'er_admin_trip_archive_events, er_booking_email_outbox, er_reservation_refund_events, er_reservation_refunds, ' +
+  'er_customer_trip_events, er_first_ride_claims, er_reservations, er_storage_audit, er_payment_ledger, er_paid_ride_eligibility'
+ );
  t.after(async()=>{await store.close();await second.close();});
  await Promise.all([store.migrate(),second.migrate()]);
- await pool.query('TRUNCATE er_review_moderation_events, er_customer_reviews, er_review_invitations, er_admin_payment_links, er_admin_trip_archive_events, er_booking_email_outbox, er_reservation_refund_events, er_reservation_refunds, er_customer_trip_events, er_first_ride_claims, er_reservations, er_storage_audit, er_payment_ledger, er_paid_ride_eligibility');
+ await truncateFixtures();
  await t.test('creation commits a valid reservation; budget rejection creates nothing',async()=>{
   const r=fixture();await store.createWithBudget(r,records=>assert.equal(records.length,0));assert.equal((await store.get(r.id)).id,r.id);
   await assert.rejects(store.createWithBudget(fixture(),()=>{throw Object.assign(new Error('budget'),{status:429});}),e=>e.status===429);
@@ -119,7 +126,7 @@ test('isolated PostgreSQL integration: transactions, concurrent workers, import 
   await assert.rejects(store.list(),generic);await assert.rejects(store.get(record.id),generic);
   await pool.query('UPDATE er_reservations SET record=$2::jsonb WHERE id=$1',[record.id,JSON.stringify(record)]);
  });
- await pool.query('TRUNCATE er_review_moderation_events, er_customer_reviews, er_review_invitations, er_admin_payment_links, er_admin_trip_archive_events, er_booking_email_outbox, er_reservation_refund_events, er_reservation_refunds, er_customer_trip_events, er_first_ride_claims, er_reservations, er_storage_audit, er_payment_ledger, er_paid_ride_eligibility');
+ await truncateFixtures();
  const testPath=path.join(__dirname,'security-abuse.test.cjs'),source=fs.readFileSync(testPath,'utf8');
  const factory=new Function('require','__dirname',source.slice(0,source.indexOf('test("approved prices'))+'\nreturn {harness,booking};')(createRequire(testPath),__dirname);
  const h=await factory.harness(t,{},'[]',store),other=await factory.harness(t,{},'[]',second);other.state.sessions=h.state.sessions;
@@ -304,7 +311,7 @@ test('isolated PostgreSQL integration: transactions, concurrent workers, import 
  });
 
  await t.test('New audit 3: PostgreSQL persists only verified special pickup; Checkout re-verifies across workers',async()=>{
-  await pool.query('TRUNCATE er_review_moderation_events, er_customer_reviews, er_review_invitations, er_admin_payment_links, er_admin_trip_archive_events, er_booking_email_outbox, er_reservation_refund_events, er_reservation_refunds, er_customer_trip_events, er_first_ride_claims, er_reservations, er_storage_audit, er_payment_ledger, er_paid_ride_eligibility');
+  await truncateFixtures();
   const body={...factory.booking,vehicle:'suv',offerCode:'EWR_MANHATTAN_SUV',promoCode:'FIRST15',email:'ewr-bound@example.test',phone:'2015550188'};
   const fresh=await factory.harness(t,{},'[]',store),retryWorker=await factory.harness(t,{},'[]',second);
   const result=await fresh.request('/api/checkout',body);assert.equal(result.status,200);
@@ -321,7 +328,7 @@ test('isolated PostgreSQL integration: transactions, concurrent workers, import 
  });
 
  await t.test('Terminal C-only fallback persists chauffeur instructions across PostgreSQL workers and payment updates',async()=>{
-  await pool.query('TRUNCATE er_review_moderation_events, er_customer_reviews, er_review_invitations, er_admin_payment_links, er_admin_trip_archive_events, er_booking_email_outbox, er_reservation_refund_events, er_reservation_refunds, er_customer_trip_events, er_first_ride_claims, er_reservations, er_storage_audit, er_payment_ledger, er_paid_ride_eligibility');
+  await truncateFixtures();
   const c='ChIJMYEleJSwokRawcDBeH8NVg',general=factory.booking.pickupPlaceId;
   const body={...factory.booking,pickup:'Newark Liberty International Airport Terminal C',pickupPlaceId:c,pickupTerminal:'c',vehicle:'suv',offerCode:'EWR_MANHATTAN_SUV',promoCode:'FIRST15'};
   const fresh=await factory.harness(t,{},'[]',store),worker=await factory.harness(t,{},'[]',second);fresh.state.rejectTerminalCDetails=true;worker.state.rejectTerminalCDetails=true;

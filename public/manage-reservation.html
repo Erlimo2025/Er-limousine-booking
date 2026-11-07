@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en-US">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="referrer" content="no-referrer">
+  <title>Manage My Reservation | ER Limousine Service</title>
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/reservation-management.css">
+  <script src="/trip-date-format.js" defer></script>
+  <script src="/reservation-self-service.js?v=recovery-1" defer></script>
+  <script src="/reservation-management.js?v=recovery-1" defer></script>
+</head>
+<body>
+  <nav class="nav" aria-label="Main navigation">
+    <div class="wrap nav-inner">
+      <a class="brand" href="/">ER <span>LIMOUSINE</span> SERVICE</a>
+      <a class="nav-cta" href="/">Home</a>
+    </div>
+  </nav>
+
+  <main class="section">
+    <div class="wrap reservation-management">
+      <div class="section-head">
+        <h1>Manage My Reservation</h1>
+        <p>View your ride, complete payment, or send a request to ER Limousine Service.</p>
+      </div>
+      <p id="manageStatus" role="status" aria-live="polite"></p>
+
+      <section id="manageAccess" class="booking-card">
+        <h2>Find your reservation</h2>
+        <p>Booked through your account? <a class="manage-link" href="/account.html">Open My Trips</a> and select a reservation.</p>
+        <p>Booked as a guest? Use the reservation ID from your confirmation email and the email address used to book.</p>
+        <form id="manageLinkForm" method="post">
+          <div class="field">
+            <label for="manageReference">Reservation reference</label>
+            <input id="manageReference" required maxlength="36" autocomplete="off" spellcheck="false">
+          </div>
+          <div class="field">
+            <label for="manageEmail">Booking email</label>
+            <input id="manageEmail" type="email" required maxlength="200" autocomplete="email">
+          </div>
+          <button class="btn btn-primary" type="submit">Email verification link</button>
+        </form>
+      </section>
+
+      <section id="manageVerify" class="booking-card" hidden>
+        <h2>Verify guest access</h2>
+        <p>Continue to open the reservation associated with this email link.</p>
+        <button id="manageVerifyButton" class="btn btn-primary" type="button">Verify reservation access</button>
+      </section>
+
+      <div id="manageContent" hidden>
+        <section class="booking-card" aria-labelledby="manageDetailsHeading">
+          <h2 id="manageDetailsHeading">Reservation details</h2>
+          <dl id="manageDetails" class="manage-details"></dl>
+          <div id="managedCancellationResult" class="managed-quote" aria-live="polite" hidden></div>
+          <div class="manage-actions">
+            <button id="managePay" class="btn btn-primary" type="button" hidden>Complete Payment</button>
+            <button id="manageRefresh" class="btn btn-secondary" type="button">Refresh status</button>
+            <button id="manageSignOut" class="btn btn-secondary" type="button" hidden>End guest access</button>
+          </div>
+        </section>
+
+        <section id="managedActions" class="booking-card" aria-labelledby="managedActionsHeading" hidden>
+          <h2 id="managedActionsHeading">Change or cancel your reservation</h2>
+          <form id="managedChangeForm" method="post" hidden>
+            <h3>Review proposed changes</h3>
+            <p>Fill in the details you want to change. The fare preview is subject to Dispatch approval and vehicle availability.</p>
+            <div class="form-grid">
+              <div class="field"><label for="managedChange-date">New pickup date</label><input id="managedChange-date" type="date"></div>
+              <div class="field"><label for="managedChange-time">Proposed time in New York</label><input id="managedChange-time" type="time"></div>
+              <div class="field full"><label for="managedChange-pickup">New pickup address</label><input id="managedChange-pickup" maxlength="200"></div>
+              <div class="field full"><label for="managedChange-dropoff">New destination address</label><input id="managedChange-dropoff" maxlength="200"></div>
+              <div class="field"><label for="managedChange-vehicle">New vehicle</label><select id="managedChange-vehicle"><option value="">Keep current</option><option value="suv">Chevrolet Suburban</option><option value="escalade">Cadillac Escalade</option></select></div>
+              <div class="field"><label for="managedChange-passengers">New passenger count</label><input id="managedChange-passengers" type="number" min="1" max="6" step="1"></div>
+              <div class="field"><label for="managedChange-luggage">Luggage count</label><input id="managedChange-luggage" type="number" min="0" max="20" step="1"></div>
+              <div class="field"><label for="managedChange-flightNumber">Flight number</label><input id="managedChange-flightNumber" maxlength="40"></div>
+              <div class="field"><label for="managedChange-pickupTerminal">EWR pickup terminal</label><select id="managedChange-pickupTerminal"><option value="">Keep current</option><option value="general">General airport</option><option value="a">Terminal A</option><option value="b">Terminal B</option><option value="c">Terminal C</option></select></div>
+              <div class="field"><label for="managedChange-dropoffTerminal">EWR drop-off terminal</label><select id="managedChange-dropoffTerminal"><option value="">Keep current</option><option value="general">General airport</option><option value="a">Terminal A</option><option value="b">Terminal B</option><option value="c">Terminal C</option></select></div>
+            </div>
+            <button id="managedPreviewChange" class="btn btn-secondary" type="submit">Preview fare change</button>
+            <div id="managedChangeReview" hidden>
+              <div id="managedChangeQuote" class="managed-quote" aria-live="polite"></div>
+              <label class="manage-confirm"><input id="managedChangeConsent" type="checkbox"><span>I reviewed these changes and the proposed fare.</span></label>
+              <button id="managedSubmitChange" class="btn btn-primary" type="button">Send changes to Dispatch</button>
+            </div>
+          </form>
+          <div id="managedCancelControls" hidden>
+            <h3>Cancel this reservation</h3>
+            <button id="managedPreviewCancel" class="btn btn-secondary" type="button">Review cancellation</button>
+            <div id="managedCancelReview" hidden>
+              <div id="managedCancelQuote" class="managed-quote" aria-live="polite"></div>
+              <label class="manage-confirm"><input id="managedCancelConsent" type="checkbox"><span id="managedCancelConsentLabel">I confirm cancellation and the expected refund shown above.</span></label>
+              <div class="manage-actions">
+                <button id="managedCancelConfirm" class="btn btn-primary" type="button">Confirm cancellation</button>
+                <button id="managedCancelManual" class="btn btn-secondary" type="button" hidden>Request Cancellation</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="booking-card" aria-labelledby="manageRequestsHeading">
+          <h2 id="manageRequestsHeading">Reservation requests</h2>
+          <p>ER Limousine Service reviews each request. Follow your current reservation details until the office confirms an update. For urgent changes, <a class="manage-link" href="/#contact">contact the office</a>.</p>
+          <p id="manageRequestAvailability"></p>
+          <form id="manageRequestForm" method="post" hidden>
+            <div class="field">
+              <label for="manageKind">Request type</label>
+              <select id="manageKind">
+                <option value="pickup_schedule">Change pickup date or time</option>
+                <option value="locations">Change pickup or destination</option>
+                <option value="cancellation">Request cancellation</option>
+              </select>
+            </div>
+            <div id="manageSchedule" class="two-fields">
+              <div class="field"><label for="manageDate">Pickup date</label><input type="date" id="manageDate"></div>
+              <div class="field"><label for="manageTime">Pickup time (New York)</label><input type="time" id="manageTime"></div>
+            </div>
+            <div id="manageLocations" hidden>
+              <div class="field"><label for="managePickup">Requested pickup (optional)</label><input id="managePickup" maxlength="200" autocomplete="off"></div>
+              <div class="field"><label for="manageDropoff">Requested destination (optional)</label><input id="manageDropoff" maxlength="200" autocomplete="off"></div>
+            </div>
+            <label class="manage-confirm">
+              <input id="manageConfirmed" type="checkbox" required>
+              <span>I confirm that I’m sending this request for review.</span>
+            </label>
+            <button id="manageSubmitRequest" class="btn btn-primary" type="submit">Send request</button>
+          </form>
+          <h3>Recent request history</h3>
+          <ul id="manageRequests" class="manage-history"></ul>
+        </section>
+      </div>
+    </div>
+  </main>
+</body>
+</html>

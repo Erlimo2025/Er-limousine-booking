@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const {AsyncLocalStorage} = require('async_hooks');
 const {enqueueBookingEmail,bookingEmailStorage}=require('./booking-emails');
 const {validQuote}=require('../services/route-tolls');
+const {acceptedPolicy}=require('../services/cancellation-policy');
 class StorageError extends Error {
   constructor() { super('Reservation service temporarily unavailable. Please try again.'); this.status = 503; this.storageFailure = true; }
 }
@@ -16,6 +17,7 @@ function validateRecord(r) {
       typeof r.createdAt !== 'string' || !Number.isFinite(Date.parse(r.createdAt)) || !statuses.includes(r.status) ||
       !['unpaid','paid','failed'].includes(r.paymentStatus) || !plain(r.customer) || !plain(r.trip) || !plain(r.quote) || !plain(r.dispatch)) fail();
   if(!validQuote(r.quote) || r.checkoutAttempt?.quote && !validQuote(r.checkoutAttempt.quote))fail();
+  if(Object.hasOwn(r,'cancellationPolicyAcceptance') && !acceptedPolicy(r))fail();
   for (const key of ['firstName','lastName','email','phone']) if(typeof r.customer[key] !== 'string' || !r.customer[key].trim() || r.customer[key].length>200) fail();
   for (const key of ['pickup','dropoff','date','time','vehicle','tripType']) if(typeof r.trip[key] !== 'string' || !r.trip[key].trim() || r.trip[key].length>200) fail();
   if(!['escalade','suv'].includes(r.trip.vehicle) || !['oneway','roundtrip','airport','hourly'].includes(r.trip.tripType) ||
@@ -233,10 +235,15 @@ function createStore(env = process.env, suppliedPool) {
       await client.query(fs.readFileSync(path.join(__dirname,'../migrations/010-admin-trip-archives.sql'),'utf8'));
       await client.query(fs.readFileSync(path.join(__dirname,'../migrations/011-admin-payment-links.sql'),'utf8'));
       await client.query(fs.readFileSync(path.join(__dirname,'../migrations/012-customer-reviews.sql'),'utf8'));
+      if(!(await client.query('SELECT 1 FROM er_schema_migrations WHERE version=13')).rowCount)await client.query(fs.readFileSync(path.join(__dirname,'../migrations/013-reservation-management.sql'),'utf8'));
+      if(!(await client.query('SELECT 1 FROM er_schema_migrations WHERE version=14')).rowCount)await client.query(fs.readFileSync(path.join(__dirname,'../migrations/014-managed-cancellations.sql'),'utf8'));
+      if(!(await client.query('SELECT 1 FROM er_schema_migrations WHERE version=15')).rowCount)await client.query(fs.readFileSync(path.join(__dirname,'../migrations/015-policy-acceptance-refund-recovery.sql'),'utf8'));
+      if(!(await client.query('SELECT 1 FROM er_schema_migrations WHERE version=16')).rowCount)await client.query(fs.readFileSync(path.join(__dirname,'../migrations/016-simple-cancellation-policy.sql'),'utf8'));
     });
   }
   async function importLegacy(records) {
     validateRecords(records);
+    if(records.some(record=>Object.hasOwn(record,'cancellationPolicyAcceptance')))throw new StorageError();
     return transaction(async client=>{
       await client.query('SELECT pg_advisory_xact_lock($1)',[730901]);
       let inserted=0;for(const record of records)inserted+=await insert(record,client,true);
@@ -247,6 +254,6 @@ function createStore(env = process.env, suppliedPool) {
   }
   const assertActionLock=key=>{if(actionScope.getStore()!==key)throw Object.assign(new Error('Reservation action is already processing. Please try again.'),{status:409});};
   const adminSearch={...require('./admin-reservations').adminReservationStorage(pool,transaction,validateRecord),...require('./admin-archives').adminArchiveStorage(transaction,validateRecord,assertActionLock),...require('./customer-reviews').customerReviewStorage(pool,transaction,safe)};
-  return {...adminSearch,...require('./admin-payment-links').adminPaymentLinkStorage(pool,transaction,safe,validateRecord,assertActionLock),...require('./refunds').refundStorage(pool,transaction,validateRecord,assertActionLock,()=>scope.getStore() || pool),...require('./trip-management').tripManagementStorage(pool,transaction,validateRecord,assertActionLock,()=>scope.getStore() || pool),...bookingEmailStorage(pool,transaction,safe),...require('./customer-payments').customerPaymentStorage(pool,transaction,safe),...require('./customer-trips').customerTripsStorage(pool,safe,validateRecord),...require('./recovery').recoveryStorage(pool,transaction,safe),...require('./customers').customerStorage(pool,transaction,safe),list,get,hasPaidRide,update,createWithBudget,withActionLock,firstRideConflicts,claimFirstRide,releaseExpiredFirstRide,reconciliationCandidates,abandonedDeferredCandidates,finalizeReconciliation,migrate,importLegacy,close:()=>pool.end()};
+  return {...adminSearch,...require('./reservation-management').reservationManagementStorage(transaction,safe,validateRecord,()=>scope.getStore() || pool,assertActionLock),...require('./admin-payment-links').adminPaymentLinkStorage(pool,transaction,safe,validateRecord,assertActionLock),...require('./refunds').refundStorage(pool,transaction,validateRecord,assertActionLock,()=>scope.getStore() || pool),...require('./trip-management').tripManagementStorage(pool,transaction,validateRecord,assertActionLock,()=>scope.getStore() || pool),...bookingEmailStorage(pool,transaction,safe),...require('./customer-payments').customerPaymentStorage(pool,transaction,safe),...require('./customer-trips').customerTripsStorage(pool,safe,validateRecord),...require('./recovery').recoveryStorage(pool,transaction,safe),...require('./customers').customerStorage(pool,transaction,safe),list,get,hasPaidRide,update,createWithBudget,withActionLock,firstRideConflicts,claimFirstRide,releaseExpiredFirstRide,reconciliationCandidates,abandonedDeferredCandidates,finalizeReconciliation,migrate,importLegacy,close:()=>pool.end()};
 }
 module.exports={createStore,StorageError,validateRecord,validateRecords,connectionOptions};
