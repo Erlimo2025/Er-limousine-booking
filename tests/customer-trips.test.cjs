@@ -141,14 +141,14 @@ function uiHarness(){
  const html=fs.readFileSync(path.join(__dirname,'../public/account.html'),'utf8');for(const match of html.matchAll(/id="([^"]+)"/g)){elements[match[1]]=node('element');elements[match[1]].id=match[1];}
  for(const prefix of ['login','register']){const form=elements[prefix+'Form'];form.reset=()=>{};form.querySelector=selector=>selector==='button[type=submit]'?node('button'):elements[prefix+'Password'];}
  const context={TripDateFormat:require('../public/trip-date-format'),document:{getElementById:id=>elements[id],querySelectorAll:()=>[],createElement:node},window:{addEventListener:(event,fn)=>{events['window:'+event]=fn;}},history:{replaceState(){}},location:{hash:''},setTimeout,
-  fetch:async(url,options)=>{state.requests.push({url,options});if(url.endsWith('/profile')&&state.profilePending)return await state.profilePending;if(url.includes('/trips'))return state.pending?await state.pending:{ok:!state.error,status:state.error?503:200,json:async()=>state.error?{error:'Service temporarily unavailable.'}:state.tripResult};return {ok:state.profile || url.endsWith('/logout'),status:state.profile?200:401,json:async()=>url.endsWith('/logout')?{ok:true}:{customer:{fullName:'Test Customer',email:'synthetic@example.test',phone:'2015550188'}}};}};
+  fetch:async(url,options)=>{state.requests.push({url,options});if(url.endsWith('/profile')&&state.profilePending)return await state.profilePending;if(url.includes('/trips'))return state.pending?await state.pending:{ok:!state.error,status:state.error?503:200,json:async()=>state.error?{error:'Service temporarily unavailable.'}:(state.tripResponse?.(new URL(url,'http://localhost').searchParams)||state.tripResult)};return {ok:state.profile || url.endsWith('/logout'),status:state.profile?200:401,json:async()=>url.endsWith('/logout')?{ok:true}:{customer:{fullName:'Test Customer',email:'synthetic@example.test',phone:'2015550188'}}};}};
  require('node:vm').createContext(context);require('node:vm').runInContext(fs.readFileSync(path.join(__dirname,'../public/account.js'),'utf8'),context);
  return {elements,events,state,context,node};
 }
 test('My Trips UI uses safe text nodes, wraps long addresses and displays read-only return/terminal details',()=>{
  const h=uiHarness(),r=fixture();r.trip.pickup='<img src=x onerror=alert(1)>'+('Very long address '.repeat(30));r.trip.tripType='roundtrip';r.trip.returnDate='2026-11-12';r.trip.returnTime='13:00';r.trip.pickupPlaceId='ChIJ2dQDPZNSwokRVJr9XE2SPt0';
  const card=h.context.tripCard(tripDto(r));const nodes=[];const walk=n=>{nodes.push(n);for(const child of n.children||[])walk(child);};walk(card);
- assert.ok(nodes.some(n=>n.textContent===r.trip.pickup+' → '+r.trip.dropoff));assert.ok(nodes.some(n=>n.textContent==='Terminal A'));assert.ok(nodes.some(n=>n.textContent.includes('11/12/2026 · 1:00 PM')));assert.ok(!nodes.some(n=>['script','img','iframe'].includes(n.tag)));
+ assert.deepEqual(nodes.filter(n=>n.className==='trip-address').map(n=>n.textContent),[r.trip.pickup,r.trip.dropoff]);assert.ok(nodes.some(n=>n.textContent==='Terminal A'));assert.ok(nodes.some(n=>n.textContent.includes('11/12/2026 · 1:00 PM')));assert.ok(!nodes.some(n=>['script','img','iframe'].includes(n.tag)));
  const source=fs.readFileSync(path.join(__dirname,'../public/account.js'),'utf8');assert.doesNotMatch(source,/innerHTML|outerHTML|insertAdjacentHTML|localStorage|sessionStorage|indexedDB/);
  assert.match(fs.readFileSync(path.join(__dirname,'../public/account.css'),'utf8'),/overflow-wrap:anywhere/);
 });
@@ -159,33 +159,67 @@ test('My Trips collapses repeated A/B/C terminal labels only in displayed route;
   const r=fixture();r.trip.pickup='Terminal '+letter+', Terminal '+letter+', 3 Brewster Rd, Newark, NJ 07114, USA';
   r.trip.dropoff='Terminal '+letter+', Terminal '+letter+', Terminal '+letter+', 3 Brewster Rd';r.trip.pickupPlaceId='unchanged-pickup-id';r.trip.dropoffPlaceId='unchanged-dropoff-id';
   const dto=tripDto(r),recordBefore=JSON.stringify(r),dtoBefore=JSON.stringify(dto),nodes=walk(h.context.tripCard(dto));
-  assert.equal(nodes.find(n=>n.className==='trip-route').textContent,'Terminal '+letter+', 3 Brewster Rd, Newark, NJ 07114, USA → Terminal '+letter+', 3 Brewster Rd');
+  assert.deepEqual(nodes.filter(n=>n.className==='trip-address').map(n=>n.textContent),['Terminal '+letter+', 3 Brewster Rd, Newark, NJ 07114, USA','Terminal '+letter+', 3 Brewster Rd']);
   assert.equal(JSON.stringify(r),recordBefore);assert.equal(JSON.stringify(dto),dtoBefore);
   for(const [address,display]of [['Terminal '+letter+', Terminal '+letter,'Terminal '+letter],['Newark Liberty International Airport Terminal '+letter+', Terminal '+letter+', 3 Brewster Rd','Newark Liberty International Airport Terminal '+letter+', 3 Brewster Rd']]){
-   r.trip.pickup=address;assert.equal(walk(h.context.tripCard(tripDto(r))).find(n=>n.className==='trip-route').textContent,display+' → Terminal '+letter+', 3 Brewster Rd');
+   r.trip.pickup=address;assert.deepEqual(walk(h.context.tripCard(tripDto(r))).filter(n=>n.className==='trip-address').map(n=>n.textContent),[display,'Terminal '+letter+', 3 Brewster Rd']);
   }
  }
  for(const address of ['Terminal A, 3 Brewster Rd','Terminal A, Terminal B, 3 Brewster Rd','Terminal AA, Terminal AA, Main St','Terminal A Annex, Terminal A Annex, Main St','Normal pickup street']){
-  const r=fixture();r.trip.pickup=address;assert.equal(walk(h.context.tripCard(tripDto(r))).find(n=>n.className==='trip-route').textContent,address+' → Destination');
+  const r=fixture();r.trip.pickup=address;assert.deepEqual(walk(h.context.tripCard(tripDto(r))).filter(n=>n.className==='trip-address').map(n=>n.textContent),[address,'Destination']);
  }
 });
 
-test('Upcoming layout follows the selected tab through loading and pagination; Past layout remains separate',async()=>{
- const h=uiHarness();h.elements.dashboardView.hidden=false;h.state.tripResult={trips:[tripDto(fixture())],nextCursor:'fixture-cursor'};
- await h.context.loadTrips(false);assert.equal(h.elements.tripsList.attributes['data-view'],'upcoming');
- await h.context.loadTrips(true);assert.equal(h.elements.tripsList.attributes['data-view'],'upcoming');assert.equal(h.elements.tripsList.children.length,2);
- h.events['pastTrips:click']();await new Promise(r=>setImmediate(r));assert.equal(h.elements.tripsList.attributes['data-view'],'past');assert.ok(h.state.requests.at(-1).url.includes('view=past'));
- h.events['upcomingTrips:click']();await new Promise(r=>setImmediate(r));assert.equal(h.elements.tripsList.attributes['data-view'],'upcoming');assert.ok(h.state.requests.at(-1).url.includes('view=upcoming'));
- const css=fs.readFileSync(path.join(__dirname,'../public/account.css'),'utf8');
- assert.match(css,/\.trips-list\{[^}]*grid-template-columns:1fr 1fr/);
- assert.match(css,/\.trips-list\[data-view="upcoming"\]\{[^}]*grid-template-columns:minmax\(0,1fr\)/);
- assert.match(css,/\.trips-list\[data-view="upcoming"\] \.trip-card\{padding:15px\}/);
- assert.match(css,/@media\(max-width:700px\)\{\.trips-list\[data-view="upcoming"\] \.trip-card\{padding:12px\}/);
- assert.match(css,/\.trips-list\[data-view="upcoming"\] \.trip-primary-actions\{[^}]*flex-wrap:wrap/);
- assert.match(css,/\.trips-list\[data-view="upcoming"\] \.trip-payment\{[^}]*min-height:44px/);
- assert.match(css,/\.trips-list\[data-view="upcoming"\] \.trip-fare-row\{[^}]*justify-content:space-between;flex-wrap:wrap/);
- const nodes=[];const walk=n=>{nodes.push(n);for(const child of n.children||[])walk(child);};walk(h.elements.tripsList.children[0]);
- const fareRow=nodes.find(n=>n.className==='trip-fare-row');assert.deepEqual(fareRow.children.map(n=>n.className),['trip-vehicle','trip-total']);assert.equal(fareRow.children[1].textContent,'$100.00');
+test('My Trips separates cancelled history and reuses both server schedules with independent cursors',async()=>{
+ const h=uiHarness();
+ h.elements.dashboardView.hidden=false;
+ const upcoming=tripDto(fixture()),past=tripDto(fixture({status:'completed',paymentStatus:'paid'}));
+ const cancelledFuture=tripDto(fixture({status:'cancelled'})),cancelledPast=tripDto(fixture({status:'cancelled',paymentStatus:'paid'}));
+ const verifying={...tripDto(fixture()),paymentVerificationPending:true};
+ const walk=n=>[n,...(n.children||[]).flatMap(walk)];
+ const refs=()=>h.elements.tripsList.children.map(card=>walk(card).find(n=>n.href?.includes('?reservation=')).href.split('reservation=')[1].split('#')[0]);
+ h.state.tripResponse=q=>q.get('view')==='upcoming'
+  ?q.get('cursor')?{trips:[cancelledFuture,cancelledPast],nextCursor:null}:{trips:[upcoming,cancelledFuture,verifying],nextCursor:'future-page'}
+  :{trips:[past,cancelledPast],nextCursor:null};
+ await h.context.selectTripsView('upcoming');
+ assert.deepEqual(refs(),[upcoming.reference,verifying.reference]);
+ await h.context.selectTripsView('past');
+ assert.deepEqual(refs(),[past.reference]);
+ await h.context.selectTripsView('cancelled');
+ assert.equal(h.elements.cancelledTrips.attributes['aria-pressed'],'true');
+ assert.deepEqual(refs(),[cancelledFuture.reference,cancelledPast.reference]);
+ assert.equal(h.elements.tripsMore.hidden,false);
+ await h.context.loadTrips(true);
+ assert.deepEqual(refs(),[cancelledFuture.reference,cancelledPast.reference],'A repeated reference must not add a second card');
+ assert.match(h.state.requests.at(-1).url,/view=upcoming.*cursor=future-page/);
+ assert.equal(h.elements.tripsMore.hidden,true);
+ await h.context.selectTripsView('payment');
+ assert.equal(h.elements.tripsFilterTitle.textContent,'Complete Payment');
+ assert.deepEqual(refs(),[upcoming.reference]);
+ await h.context.selectTripsView('requests');
+ assert.equal(h.elements.tripsFilterTitle.textContent,'Reservation Requests');
+ assert.deepEqual(refs(),[upcoming.reference,cancelledFuture.reference,verifying.reference,past.reference,cancelledPast.reference]);
+ assert.ok(walk(h.elements.tripsList.children[0]).some(n=>n.href?.endsWith('#manageRequestsHeading')));
+});
+test('filtered history keeps the cursor and first-page actions valid when retrying pagination',async()=>{
+ const h=uiHarness();
+ h.elements.dashboardView.hidden=false;
+ const cancelled=tripDto(fixture({status:'cancelled'}));
+ h.state.tripResponse=q=>q.get('view')==='past'?{trips:[],nextCursor:null}
+  :q.get('cursor')?{trips:[cancelled],nextCursor:null}:{trips:[tripDto(fixture())],nextCursor:'next'};
+ await h.context.selectTripsView('cancelled');
+ assert.equal(h.elements.tripsList.childElementCount,0);
+ assert.match(h.elements.tripsStatus.textContent,/Load more to continue/);
+ assert.equal(h.elements.tripsMore.hidden,false);
+ const generation=require('node:vm').runInContext('tripsGeneration',h.context);
+ h.state.error=true;
+ await h.context.loadTrips(true);
+ assert.equal(h.elements.tripsRetry.hidden,false);
+ h.state.error=false;
+ await h.events['tripsRetry:click']();
+ assert.equal(h.elements.tripsList.childElementCount,1);
+ assert.match(h.state.requests.at(-1).url,/view=upcoming.*cursor=next/);
+ assert.equal(require('node:vm').runInContext('tripsGeneration',h.context),generation);
 });
 test('My Trips UI loading, empty, error/retry and pagination states are explicit',async()=>{
  const h=uiHarness();h.elements.dashboardView.hidden=false;await h.context.loadTrips(false);assert.match(h.elements.tripsStatus.textContent,/Only rides booked while signed into this account/);assert.equal(h.elements.tripsBook.hidden,false);
@@ -255,7 +289,8 @@ test('My Trips renders payment action for unpaid only and scopes full payment re
  const ctx={document:{createElement:node},Intl,TripDateFormat:require('../public/trip-date-format')};require('node:vm').createContext(ctx);require('node:vm').runInContext(src.slice(start,end),ctx);
  const walk=n=>[n,...n.children.flatMap(walk)];
  const r=fixture(),dto=tripDto(r),original=JSON.stringify(dto),unpaidNodes=walk(ctx.tripCard(dto));
- assert.deepEqual(unpaidNodes.filter(x=>x.className==='trip-badge').map(x=>x.textContent),['Unpaid']);
+ assert.deepEqual(unpaidNodes.filter(x=>x.className==='trip-badge').map(x=>x.textContent),['Payment Pending','Unpaid']);
+ assert.equal(unpaidNodes.find(n=>n.className==='trip-total').textContent,'$100.00');
  assert.ok(unpaidNodes.some(x=>x.tag==='button'&&x.textContent==='Complete Payment'));
  assert.equal(JSON.stringify(dto),original);assert.equal(r.status,'awaiting_payment');assert.equal(r.paymentStatus,'unpaid');
  r.paymentStatus='paid';const paidNodes=walk(ctx.tripCard(tripDto(r)));

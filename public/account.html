@@ -8,12 +8,25 @@
   <script src="/trip-date-format.js" defer></script><script src="/booking-date-controls.js" defer></script><script src="/account.js" defer></script>
 </head>
 <body>
-<header class="account-header">
+<header class="account-header" id="accountHeader">
   <a class="brand" href="/" aria-label="ER Limousine Service home"><span class="brand-monogram">ER</span><span class="brand-copy">LIMOUSINE SERVICE<small>LUXURY · RELIABILITY · ALWAYS ON TIME</small></span></a>
-  <nav aria-label="Customer account navigation">
-    <a class="header-book" href="/#book">BOOK A RIDE</a>
-    <span id="accountNavigation" hidden><a href="#profile">MY ACCOUNT</a><button id="navLogout" class="nav-logout" type="button">LOG OUT</button></span>
-  </nav>
+  <nav id="headerBook" aria-label="Booking navigation"><a class="header-book" href="/#book">BOOK A RIDE</a></nav>
+  <div id="accountNavigation" hidden>
+    <button id="accountMenuToggle" class="account-menu-toggle" type="button" aria-label="Customer menu" aria-expanded="false" aria-controls="accountMenu">
+      <svg class="menu-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 6h16M4 12h16M4 18h16"/></svg><span>Menu</span>
+    </button>
+    <nav id="accountMenu" class="account-menu" aria-label="Customer dashboard" hidden>
+      <button id="menuDashboard" type="button"><svg class="menu-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="4" y="4" width="7" height="7" rx="1"/><rect x="13" y="4" width="7" height="7" rx="1"/><rect x="4" y="13" width="7" height="7" rx="1"/><rect x="13" y="13" width="7" height="7" rx="1"/></svg><span>Dashboard</span></button>
+      <button id="menuUpcoming" type="button"><svg class="menu-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="4" y="6" width="16" height="14" rx="2"/><path d="M8 4v4m8-4v4M4 11h16m-11 5h6"/></svg><span>Upcoming Trips</span></button>
+      <button id="menuPast" type="button"><svg class="menu-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 11a8 8 0 1 1 2 6m-2-11v5h5m3-3v5l3 2"/></svg><span>Past Trips</span></button>
+      <button id="menuCancelled" type="button"><svg class="menu-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8"/><path d="m9 9 6 6m0-6-6 6"/></svg><span>Cancelled Trips</span></button>
+      <button id="menuRequests" type="button"><svg class="menu-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 4h12a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-7l-5 3v-3a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm2 5h8m-8 4h5"/></svg><span>Reservation Requests</span></button>
+      <button id="menuPayment" type="button"><svg class="menu-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M3 10h18M7 14h3"/></svg><span>Complete Payment</span></button>
+      <a id="menuProfile" href="#profile"><svg class="menu-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="8" r="3"/><path d="M5 20v-2a5 5 0 0 1 5-5h4a5 5 0 0 1 5 5v2"/></svg><span>My Profile</span></a>
+      <a id="menuBook" href="/#book"><svg class="menu-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 12h14m-6-6 6 6-6 6"/></svg><span>Book a New Ride</span></a>
+      <button id="navLogout" type="button"><svg class="menu-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 5H5v14h7m-3-7h11m-4-4 4 4-4 4"/></svg><span>Log Out</span></button>
+    </nav>
+  </div>
 </header>
 <main class="account-shell" id="accountShell">
 <section id="loginView" class="auth-card">
@@ -47,28 +60,41 @@
   <p class="switch"><a href="/account.html">Back to Log In</a></p>
 </section>
 <section id="dashboardView" hidden>
-  <div class="dashboard-heading"><p class="eyebrow">YOUR ER LIMOUSINE ACCOUNT</p><h1 id="welcome">Welcome</h1><p>Manage your account and book your next ride.</p></div>
-  <div class="dashboard-grid">
-    <article class="ride-card"><span class="card-icon" aria-hidden="true">↗</span><p class="eyebrow">YOUR NEXT JOURNEY</p><h2>Travel in comfort.</h2><p>Premium private transportation, whenever you need it.</p><a class="primary" href="/#book">Book a Ride <span aria-hidden="true">→</span></a></article>
-    <article class="profile-card" id="profile"><div class="card-heading"><span class="card-icon" aria-hidden="true">♙</span><h2>My Account</h2></div><p class="card-description">Your account details</p><dl><div><dt>Full Name</dt><dd id="profileName"></dd></div><div><dt>Email Address (read-only)</dt><dd id="profileEmail"></dd></div><div><dt>Phone Number</dt><dd id="profilePhone"></dd></div></dl>
-      <button id="editProfile" class="text-button" type="button" aria-expanded="false" aria-controls="profileForm">Edit Profile</button>
-      <form id="profileForm" hidden>
-        <div class="form-field"><label for="editFullName">Full Name</label><input id="editFullName" autocomplete="name" required minlength="2" maxlength="120"></div>
-        <div class="form-field"><label for="editEmail">Email Address (read-only)</label><input id="editEmail" type="email" readonly aria-readonly="true"></div>
-        <div class="form-field"><label for="editPhone">Phone Number</label><input id="editPhone" type="tel" autocomplete="tel" required maxlength="40"></div>
-        <div class="profile-actions"><button id="saveProfile" class="primary" type="submit">Save Changes</button><button id="cancelProfile" class="text-button" type="button">Cancel</button></div>
-      </form>
-      <p id="profileStatus" role="status" aria-live="polite"></p>
-      <button id="logout" class="text-button" type="button">Log Out</button></article>
-    <article class="trips-panel" id="tripsPanel" aria-labelledby="tripsHeading">
-      <div class="card-heading"><span class="card-icon" aria-hidden="true">◷</span><h2 id="tripsHeading">My Trips</h2></div>
-      <p class="card-description">Rides booked while signed into this account.</p>
-      <div class="trip-tabs" role="group" aria-label="Trip history"><button id="upcomingTrips" type="button" aria-pressed="true">Upcoming Trips</button><button id="pastTrips" type="button" aria-pressed="false">Past Trips</button></div>
-      <p id="tripsStatus" role="status" aria-live="polite"></p>
-      <div id="tripsList" class="trips-list"></div>
-      <div class="trip-actions"><button id="tripsRetry" class="text-button" type="button" hidden>Retry</button><button id="tripsMore" class="primary" type="button" hidden>Load More</button><a id="tripsBook" href="/#book" hidden>Book a Ride</a></div>
-    </article>
+  <div class="dashboard-heading" id="dashboardHeading" tabindex="-1">
+    <p class="eyebrow">CUSTOMER DASHBOARD</p>
+    <h1 id="welcome">Welcome</h1>
+    <p>View your rides, payments, and profile.</p>
   </div>
+  <section class="trips-panel" id="tripsPanel" aria-labelledby="tripsHeading">
+    <div class="dashboard-section-heading">
+      <span class="dashboard-section-icon"><svg class="menu-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="4" y="6" width="16" height="14" rx="2"/><path d="M8 4v4m8-4v4M4 11h16m-11 5h6"/></svg></span>
+      <div><h2 id="tripsHeading" tabindex="-1">My Trips</h2><p>Reservations booked with this account.</p></div>
+    </div>
+    <div class="trip-tabs" role="group" aria-label="Trip history">
+      <button id="upcomingTrips" type="button" aria-pressed="true">Upcoming Trips</button>
+      <button id="pastTrips" type="button" aria-pressed="false">Past Trips</button>
+      <button id="cancelledTrips" type="button" aria-pressed="false">Cancelled Trips</button>
+    </div>
+    <div id="tripsFilter" class="trips-filter" hidden><h3 id="tripsFilterTitle"></h3><p id="tripsFilterDescription"></p></div>
+    <p id="tripsStatus" role="status" aria-live="polite"></p>
+    <div id="tripsList" class="trips-list" aria-busy="false"></div>
+    <div class="trip-actions"><button id="tripsRetry" class="text-button" type="button" hidden>Retry</button><button id="tripsMore" class="text-button" type="button" hidden>Load More Trips</button><a id="tripsBook" class="primary" href="/#book" hidden>Book a New Ride</a></div>
+  </section>
+  <section class="profile-card" id="profile" aria-labelledby="profileHeading">
+    <div class="dashboard-section-heading">
+      <span class="dashboard-section-icon"><svg class="menu-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="8" r="3"/><path d="M5 20v-2a5 5 0 0 1 5-5h4a5 5 0 0 1 5 5v2"/></svg></span>
+      <h2 id="profileHeading" tabindex="-1">My Profile</h2>
+    </div>
+    <dl class="profile-details"><div><dt>Full Name</dt><dd id="profileName"></dd></div><div><dt>Email Address (read-only)</dt><dd id="profileEmail"></dd></div><div><dt>Phone Number</dt><dd id="profilePhone"></dd></div></dl>
+    <button id="editProfile" class="text-button" type="button" aria-expanded="false" aria-controls="profileForm">Edit Profile</button>
+    <form id="profileForm" hidden>
+      <div class="form-field"><label for="editFullName">Full Name</label><input id="editFullName" autocomplete="name" required minlength="2" maxlength="120"></div>
+      <div class="form-field"><label for="editEmail">Email Address (read-only)</label><input id="editEmail" type="email" readonly aria-readonly="true"></div>
+      <div class="form-field"><label for="editPhone">Phone Number</label><input id="editPhone" type="tel" autocomplete="tel" required maxlength="40"></div>
+      <div class="profile-actions"><button id="saveProfile" class="primary" type="submit">Save Changes</button><button id="cancelProfile" class="text-button" type="button">Cancel</button></div>
+    </form>
+    <p id="profileStatus" role="status" aria-live="polite"></p>
+  </section>
 </section>
 <p id="message" role="status" aria-live="polite"></p>
 </main>

@@ -98,7 +98,7 @@ test('restored Book Again rejection leaves manual booking usable and clears the 
  h.events.pageshow({persisted:true});assert.equal(requests,1,'Terminal failure must not keep restarting reads');
 });
 test('My Trips shows Book Again for reusable past/paid/unpaid trips, but hides it for incomplete data',()=>{
- const src=fs.readFileSync(path.join(__dirname,'../public/account.js'),'utf8'),start=src.indexOf('function tripCard('),end=src.indexOf('async function loadTrips',start),node=tag=>({tag,children:[],append(...x){this.children.push(...x);},addEventListener(){}}),ctx={document:{createElement:node},Intl,TripDateFormat:require('../public/trip-date-format')};vm.createContext(ctx);vm.runInContext(src.slice(start,end),ctx);
+ const src=fs.readFileSync(path.join(__dirname,'../public/account.js'),'utf8'),start=src.indexOf('function tripCard('),end=src.indexOf('async function loadTrips',start),node=tag=>({tag,children:[],append(...x){this.children.push(...x);},addEventListener(){},setAttribute(){}}),ctx={document:{createElement:node},Intl,TripDateFormat:require('../public/trip-date-format')};vm.createContext(ctx);vm.runInContext(src.slice(start,end),ctx);
  const walk=n=>[n,...n.children.flatMap(walk)],r={id:crypto.randomUUID(),trip:booking,quote:{total:100,currency:'usd',vehicle:'Luxury SUV'},createdAt:'2026-10-01T16:00:00Z'};
  for(const [status,paymentStatus]of [['completed','paid'],['awaiting_payment','unpaid'],['cancelled','unpaid']]){r.status=status;r.paymentStatus=paymentStatus;const link=walk(ctx.tripCard(tripDto(r))).find(x=>x.textContent==='Book Again');assert.ok(link);assert.equal(link.href,'/?bookAgain='+r.id+'#book');}
  r.trip={...booking,pickup:''};assert.ok(!walk(ctx.tripCard(tripDto(r))).some(x=>x.textContent==='Book Again'));
