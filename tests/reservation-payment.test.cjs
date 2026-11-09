@@ -116,11 +116,11 @@ test('booking choice double submit is blocked and browser sends only intent, nev
  const src=fs.readFileSync(path.join(__dirname,'../public/app.js'),'utf8').replace(/\r\n/g,'\n'),start=src.indexOf('form.addEventListener(\n  "submit"'),end=src.indexOf('/* =========================================',start+20);
  assert.ok(start>=0&&end>start,'Booking-submit test source boundaries must exist.');
  let handler,release,calls=0,sent;
- const ctx={form:{addEventListener:(e,f)=>handler=f},payBtn:{disabled:false},payLaterBtn:{disabled:false},reservationBusy:false,currentQuote:{total:80,quoteRevision:'d'.repeat(64),cancellationPolicy:require('../services/cancellation-policy').currentPolicy},activeBookingStep:3,hasCurrentQuote:()=>true,hasPolicyConsent:()=>true,validateBookingStep:()=>true,tripStep:{},customerStep:{},updatePaymentControls(){},vehicle:{disabled:false},clearNotice(){},getFormData:()=>({...booking,vehicle:'suv'}),showNotice(){},window:{location:{}},
+ const ctx={form:{addEventListener:(e,f)=>handler=f},payBtn:{disabled:false},payLaterBtn:{disabled:false},reservationBusy:false,currentQuote:{total:80,quoteRevision:'d'.repeat(64),cancellationPolicy:require('../services/cancellation-policy').currentPolicy},activeBookingStep:3,hasCurrentQuote:()=>true,validateBookingStep:()=>true,tripStep:{},customerStep:{},updatePaymentControls(){},vehicle:{disabled:false},clearNotice(){},getFormData:()=>({...booking,vehicle:'suv'}),showNotice(){},window:{location:{}},
  fetch:async(url,options)=>{calls++;sent=JSON.parse(options.body);await new Promise(r=>release=r);return {ok:true,json:async()=>({url:'http://localhost:3000/success.html?booking=fixture'})};}};
  vm.createContext(ctx);vm.runInContext(src.slice(start,end),ctx);
  const first=handler({preventDefault(){},submitter:{id:'payLaterBtn'}});await Promise.resolve();await handler({preventDefault(){},submitter:{id:'payLaterBtn'}});
- assert.equal(calls,1);assert.equal(sent.paymentChoice,'later');assert.equal(sent.vehicle,'suv');assert.equal(sent.quoteRevision,'d'.repeat(64));assert.deepEqual(sent.cancellationPolicyAcceptance,{version:ctx.currentQuote.cancellationPolicy.version,accepted:true});assert.ok(!Object.hasOwn(sent,'total'));assert.ok(!Object.hasOwn(sent,'amount'));release();await first;
+ assert.equal(calls,1);assert.equal(sent.paymentChoice,'later');assert.equal(sent.vehicle,'suv');assert.equal(sent.quoteRevision,'d'.repeat(64));assert.equal(Object.hasOwn(sent,'cancellationPolicyAcceptance'),false);assert.ok(!Object.hasOwn(sent,'total'));assert.ok(!Object.hasOwn(sent,'amount'));release();await first;
 });
 test('confirmation page re-fetches status and never treats Stripe return parameters as Paid',async()=>{
  const html=fs.readFileSync(path.join(__dirname,'../public/success.html'),'utf8'),script=html.match(/<script>([\s\S]*?)<\/script>/)[1],events={},elements={};
@@ -231,14 +231,19 @@ test('cancelled-but-paid confirmation explicitly requests review and never claim
  fetch:async()=>({ok:true,status:200,json:async()=>({id:'fixture',status:'cancelled',paymentStatus:'paid',trip:{pickup:'Pickup',dropoff:'Destination',date:'2026-11-10',time:'12:00'},quote:{vehicle:'Luxury SUV',total:80,currency:'usd'}})})};
  vm.createContext(ctx);vm.runInContext(script,ctx);await events.pageshow();assert.match(elements.message.textContent,/cancelled reservation.*payment review/);assert.doesNotMatch(elements.message.textContent,/reservation is confirmed/);assert.equal(elements.completePayment.hidden,true);
 });
-test('PostgreSQL cancellation/claim transitions serialize across workers and expired holds do not starve reconciliation',{skip:!process.env.ER_TEST_DATABASE_URL},async t=>{
+test('PostgreSQL cancellation/claim transitions serialize across workers and expired holds do not starve reconciliation',{skip:!process.env.ER_TEST_DATABASE_URL,timeout:15000},async t=>{
  const u=new URL(process.env.ER_TEST_DATABASE_URL);assert.ok(['localhost','127.0.0.1'].includes(u.hostname)&&u.pathname.startsWith('/er_test_'));
  const admin=new Pool({connectionString:u.toString()}),schema='payment_fix_'+crypto.randomBytes(8).toString('hex');await admin.query('CREATE SCHEMA '+schema);
  const p1=new Pool({connectionString:u.toString(),options:'-c search_path='+schema}),p2=new Pool({connectionString:u.toString(),options:'-c search_path='+schema}),{createStore}=require('../storage/postgres'),store=createStore({},p1),other=createStore({},p2);
  t.after(async()=>{await store.close();await other.close();await admin.query('DROP SCHEMA '+schema+' CASCADE');await admin.end();});await Promise.all([store.migrate(),other.migrate()]);
  const h=await harness(t,{},'[]',store),worker=await harness(t,{},'[]',other);worker.state.sessions=h.state.sessions;
- const a=await register(h),adminCookie=await adminSession(worker),r=await reserve(h,{promoCode:'FIRST15'},{cookie:cookie(a)}),id=r.body.bookingId;
- h.state.createDelay=80;const pending=payment(h,id,cookie(a));while(!h.state.creates.length)await new Promise(r=>setTimeout(r,2));
+ const a=await register(h),adminCookie=await adminSession(worker),r=await reserve(h,{promoCode:'FIRST15'},{cookie:cookie(a)});
+ assert.equal(r.status,200);
+ const id=r.body.bookingId;
+ h.state.createDelay=80;
+ const pending=payment(h,id,cookie(a));
+ while(!h.state.creates.length&&!t.signal.aborted)await new Promise(r=>setTimeout(r,2));
+ assert.equal(h.state.creates.length,1);
  assert.equal((await cancel(worker,id,adminCookie)).status,409);assert.equal((await store.get(id)).status,'awaiting_payment');
  assert.equal((await pending).status,200);assert.equal((await cancel(worker,id,adminCookie)).status,200);assert.equal((await store.get(id)).status,'cancelled');
  assert.equal((await p1.query('SELECT count(*)::int AS n FROM er_first_ride_claims WHERE booking_id=$1',[id])).rows[0].n,0);

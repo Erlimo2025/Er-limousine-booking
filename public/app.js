@@ -2,9 +2,10 @@ const form = document.getElementById("bookingForm");
 const quoteBtn = document.getElementById("quoteBtn");
 const payBtn = document.getElementById("payBtn");
 const payLaterBtn=document.getElementById("payLaterBtn");
-const cancelPolicyPanel = document.getElementById("cancelPolicyPanel");
-const cancelPolicyAccepted = document.getElementById("cancelPolicyAccepted");
-cancelPolicyAccepted?.addEventListener("change", updatePaymentControls);
+const bookingPolicyDetails = document.getElementById("bookingPolicyDetails");
+const bookingPolicyDialog = document.getElementById("bookingPolicyDialog");
+bookingPolicyDetails?.addEventListener("click", () => bookingPolicyDialog.showModal());
+document.getElementById("bookingPolicyClose")?.addEventListener("click", () => bookingPolicyDialog.close());
 let reservationBusy=false;
 const notice = document.getElementById("notice");
 
@@ -561,23 +562,18 @@ function showPromoResult(data) {
 ========================================= */
 
 function renderBookingPolicy(policy) {
-  if (!cancelPolicyPanel || !cancelPolicyAccepted) return;
-  const visible = typeof policy?.version === "string" && typeof policy.summary === "string" &&
+  if (!bookingPolicyDetails || !bookingPolicyDialog) return;
+  const available = typeof policy?.version === "string" && typeof policy.summary === "string" &&
     Array.isArray(policy.tiers) && policy.tiers.length > 0 && policy.tiers.every(tier => typeof tier?.text === "string");
-  cancelPolicyPanel.hidden = !visible;
-  cancelPolicyAccepted.checked = false;
-  document.getElementById("cancelPolicySummary").textContent = visible ? policy.summary : "";
-  const tiers = visible ? policy.tiers.map(tier => {
+  bookingPolicyDetails.disabled = !available || typeof bookingPolicyDialog.showModal !== "function";
+  if (!available && bookingPolicyDialog.open) bookingPolicyDialog.close();
+  document.getElementById("bookingPolicySummary").textContent = available ? policy.summary : "";
+  const tiers = available ? policy.tiers.map(tier => {
     const item = document.createElement("li");
     item.textContent = tier.text;
     return item;
   }) : [];
-  document.getElementById("cancelPolicyTiers").replaceChildren(...tiers);
-}
-
-function hasPolicyConsent() {
-  return cancelPolicyPanel?.hidden === false && cancelPolicyAccepted?.checked === true &&
-    typeof currentQuote?.cancellationPolicy?.version === "string";
+  document.getElementById("bookingPolicyTiers").replaceChildren(...tiers);
 }
 
 function resetQuote() {
@@ -627,7 +623,7 @@ function hasCurrentQuote() {
 }
 
 function updatePaymentControls() {
-  const disabled = reservationBusy || activeBookingStep !== 3 || !hasCurrentQuote() || !hasPolicyConsent();
+  const disabled = reservationBusy || activeBookingStep !== 3 || !hasCurrentQuote();
   quoteBtn.disabled = reservationBusy || !!quoteController;
   payBtn.disabled = disabled;
   if (payLaterBtn) payLaterBtn.disabled = disabled;
@@ -1131,8 +1127,6 @@ function enableAddressAutocomplete(
 function renderFareBreakdown(data, review = false) {
   const container=document.getElementById('fareBreakdown');
   if(!container)return;
-  const policyNotice=document.getElementById('tollPolicyNotice');
-  if(policyNotice&&policyNotice!==container)policyNotice.textContent=data?.pricingBreakdown?'Tolls are estimated or included. No toll charges will be added to your accepted total.':'Your fare is calculated securely before payment.';
   container.replaceChildren();container.hidden=true;
   if(review||tollQuoteUnavailable(data)){container.textContent='Toll estimate unavailable — contact us for a final quote';container.hidden=false;return;}
   const p=data?.pricingBreakdown;
@@ -1428,7 +1422,7 @@ if (applyPromoBtn) {
 form.addEventListener(
   "input",
   (event) => {
-    if (event.target === cancelPolicyAccepted || event.target.id === "rememberBookingContact") return;
+    if (event.target.id === "rememberBookingContact") return;
 
     if (
       event.target === promoCode
@@ -1451,7 +1445,7 @@ form.addEventListener(
   }
 );
 form.addEventListener("change", event => {
-  if (event.target !== cancelPolicyAccepted && event.target.id !== "rememberBookingContact") resetQuote();
+  if (event.target.id !== "rememberBookingContact") resetQuote();
 });
 
 
@@ -1473,11 +1467,6 @@ form.addEventListener(
       resetQuote();
       showBookingStep(activeBookingStep === 1 ? 1 : 2, true);
       showNotice("Continue to Trip Summary and review an updated quote before reserving.");
-      return;
-    }
-    if (!hasPolicyConsent()) {
-      showNotice("Review and accept the cancellation and refund policy before reserving.");
-      if (!cancelPolicyPanel?.hidden) cancelPolicyAccepted?.focus();
       return;
     }
     if (!validateBookingStep(tripStep, 1) || !validateBookingStep(customerStep, 2)) return;
@@ -1519,7 +1508,6 @@ form.addEventListener(
             body:
               JSON.stringify(
                 {...bookingData,paymentChoice,
-                  cancellationPolicyAcceptance:{version:paymentQuote.cancellationPolicy.version,accepted:true},
                   ...(paymentQuote.quoteRevision?{quoteRevision:paymentQuote.quoteRevision}:{})}
               )
           }
@@ -1529,8 +1517,7 @@ form.addEventListener(
         await response.json();
 
       if (!response.ok) {
-        if(response.status===409 && data.error==='Your quote changed. Please get a new quote before reserving.' ||
-          response.status===400 && data.error==='Review and accept the current cancellation and refund policy before reserving.')resetQuote();
+        if(response.status===409 && data.error==='Your quote changed. Please get a new quote before reserving.')resetQuote();
         if(data.code==='TOLL_ESTIMATE_UNAVAILABLE'){
           resetQuote();sumTotal.textContent='Contact us';sumTotalLabel.textContent='Final quote required';
           if(typeof renderFareBreakdown==='function')renderFareBreakdown(null,true);

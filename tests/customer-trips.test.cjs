@@ -38,7 +38,7 @@ test('My Trips ownership derives only from a valid server session; cross-account
  const combined=JSON.stringify(own.body)+JSON.stringify(detail.body);
  for(const secret of ['customerAccess','tokenHash','stripeSessionId','checkoutFingerprint','checkoutAttempt','dispatch','customer_id',aid,booking.email,booking.phone])assert.ok(!combined.includes(secret),secret);
  assert.deepEqual(Object.keys(detail.body.trip).sort(),['management','canBookAgain','reference','status','paymentStatus','paymentVerificationPending','tripType','pickup','dropoff','date','time','timeZone','vehicle','passengers','pickupTerminal','dropoffTerminal','total','currency','createdAt','cancellationPolicy'].sort());
- assert.deepEqual(detail.body.trip.cancellationPolicy,h.records()[0].cancellationPolicyAcceptance);
+ assert.deepEqual(detail.body.trip.cancellationPolicy,h.records()[0].cancellationPolicyAtBooking);
 });
 
 test('guest email/phone matches and browser ownership fields never claim an account; guest retry stays guest',async t=>{

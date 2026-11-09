@@ -7,18 +7,18 @@ Manage My Reservation uses existing account sessions and verified guest access. 
 | `RESERVATION_SELF_SERVICE_ENABLED` | Off | Server-priced change previews and cancellation previews with owner-review requests |
 | `RESERVATION_AUTO_CANCELLATIONS_ENABLED` | Off | Confirmed, no-fee automatic cancellations at least 24 hours before pickup under the accepted simple policy |
 
-Only the literal value `true` enables either control. Booking consent, processing of previously committed refund obligations, the Dispatch recovery list, provider rechecks and signed Stripe webhooks operate independently. Turning off new actions must not orphan existing obligations.
+Only the literal value `true` enables either control. Booking policy disclosure, processing of previously committed refund obligations, the Dispatch recovery list, provider rechecks and signed Stripe webhooks operate independently. Turning off new actions must not orphan existing obligations.
 
-## Accepted cancellation terms
+## Cancellation policy at booking
 
-New Pay Now and Pay Later reservations, including guest reservations, require an unchecked-by-default acceptance in Step 3. The quote provides the current text and version, `ER-CANCELLATION-24H-2026-1`. Checkout requires explicit acceptance of that exact version and stores the server-generated timestamp and complete policy snapshot on the reservation. Booking confirmation, customer booking emails and My Trips show the accepted terms. Migration 015 prevents changing that evidence. Owned retries and Complete Payment continue using the accepted reservation.
+Step 3 shows a one-sentence cancellation notice with the full terms available through the Cancellation control. New Pay Now and Pay Later reservations store a server-assigned snapshot of the applicable policy `ER-CANCELLATION-24H-2026-1` and its booking timestamp. Booking confirmation, customer booking emails and My Trips label it as the policy at booking. Existing explicit acceptance records retain their original labels and timestamps. Migration 017 protects both types of evidence. Owned retries and Complete Payment continue using the existing reservation.
 
 | Time/status | Customer action | Reservation and refund |
 | --- | --- | --- |
 | At least 24 elapsed hours before pickup, service not started | Review the expected refund and explicitly confirm cancellation | Cancel without a fee. For eligible paid reservations, refund all verified remaining refundable payment. Unpaid reservations cancel without a refund. |
 | Less than 24 elapsed hours before pickup | Confirm Request Cancellation | Reservation remains active pending owner review. Approval cancels; decline leaves it active. Any refund requires a separate owner decision. No automatic fee. |
 | Started or completed service | Request authorized owner review | No automatic cancellation or refund. An authorized owner decision is required. |
-| Missing or earlier policy acceptance, uncertain payment or refund evidence | Request Dispatch review | Do not impose new terms, cancel automatically or guess a refund. |
+| Missing or earlier booking policy, uncertain payment or refund evidence | Request Dispatch review | Do not impose new terms, cancel automatically or guess a refund. |
 
 Exactly 24 hours qualifies. One second inside the boundary requires owner review. The server uses elapsed milliseconds, its current clock and the authoritative New York pickup instant, including daylight saving transitions. Status indicating service has started overrides a future scheduled pickup.
 
@@ -47,7 +47,7 @@ For unresolved cases, compare Dispatch with Stripe's charge/refund history in th
 ## Migrations, staged deployment and rollback
 
 1. Keep both controls off. Complete counsel review and an isolated PostgreSQL/Stripe test-mode rehearsal. Confirm the existing webhook subscription includes the required refund events.
-2. After separate release approval, deploy a compatible build with both controls off. Startup applies migrations 013–016 through the existing transaction/advisory-lock mechanism. Migration 013 adds guest verification and requests; 014 adds previews, settlements and audits; 015 protects consent and adds durable recovery scheduling; 016 preserves old settlement rows, records verified prior refunds, disallows new retained fees and records owner-applied cancellations. No accepted fare, historical consent or payment is rewritten.
-3. Verify browser assets, booking consent, email, My Trips, ordinary payments, migrations, workers and signed webhook handling. Enable priced previews only after separate approval.
-4. Enable automatic no-fee cancellations only after all gates and separate owner approval. All workers must understand migration 016 and the simple policy first. A build that still creates percentage settlements is not an activation or rollback target.
+2. After separate release approval, deploy a compatible build with both controls off. Startup applies migrations 013–017 through the existing transaction/advisory-lock mechanism. Migration 013 adds guest verification and requests; 014 adds previews, settlements and audits; 015 protects consent and adds durable recovery scheduling; 016 preserves old settlement rows, records verified prior refunds, disallows new retained fees and records owner-applied cancellations. Migration 017 protects the booking policy snapshot alongside historical acceptance evidence. Existing fares, consent and payments are preserved.
+3. Verify browser assets, booking disclosure, email, My Trips, ordinary payments, migrations, workers and signed webhook handling. Enable priced previews only after separate approval.
+4. Enable automatic no-fee cancellations only after all gates and separate owner approval. All workers must understand the simple policy and both forms of booking policy evidence first. A build that still creates percentage settlements is not an activation or rollback target.
 5. For rollback, disable new actions and retain a compatible worker and webhook receiver until every obligation and potential later provider failure is resolved. Preserve schema, consent, accepted fares, source-payment records and audit history. The old production build can operate ordinary bookings against the additive schema, but cannot be the sole refund receiver: it may acknowledge managed-refund events without recording them. Do not roll back to the retired proposal to generate new settlements.

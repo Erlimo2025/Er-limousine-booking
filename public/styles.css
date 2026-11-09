@@ -728,12 +728,6 @@ textarea:focus {
   font-size: 1.5rem;
 }
 
-.summary-note {
-  color: #777;
-  font-size: .76rem;
-  margin: 10px 0 0;
-}
-
 .fare-breakdown{grid-column:1/-1;padding:12px 18px;font-size:.82rem;overflow-wrap:anywhere}
 .summary-grid>.total-row{grid-column:1/-1;flex-direction:row;justify-content:space-between;align-items:center;border-right:0}
 .fare-breakdown[hidden]{display:none}
@@ -1340,12 +1334,13 @@ textarea:focus {
 }
 
 .quick-booking .fare-breakdown {
-  padding: 10px 0;
+  padding: 6px 0;
 }
 
 .quick-booking .payment-choice-description {
   color: #566572;
   line-height: 1.45;
+  margin: 6px 0 12px;
 }
 
 .quick-booking .total-row {
@@ -2275,35 +2270,33 @@ textarea:focus {
 
 .btn-pay-later{width:100%;min-height:48px;border:1px solid #c9a44c;background:#102633;color:#f0d78a;font-weight:700;white-space:normal}.payment-choice-description{font-size:13px;line-height:1.5;color:#c7d1da;text-align:center;margin:8px 0 18px}.btn-pay-later:focus-visible{outline:3px solid #d9b75a;outline-offset:3px}
 
-.booking-policy {
-  border-top: 1px solid #e6e1d6;
-  margin: 18px 0;
-  padding-top: 14px;
-  overflow-wrap: anywhere;
+.booking-cancellation-note {
+  color: #5f6368;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.4;
+  margin: 6px 0 2px;
 }
-.booking-policy h3 {
+.booking-cancellation-note button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-decoration: underline;
+}
+.booking-policy-dialog {
+  width: min(36rem, calc(100% - 32px));
+  max-height: calc(100% - 32px);
+  padding: 18px;
+  border: 1px solid #e4e4e4;
+  border-radius: 13px;
+}
+.booking-policy-dialog::backdrop {
+  background: rgb(0 0 0 / 45%);
+}
+.booking-policy-dialog h2 {
   margin: 0 0 8px;
 }
-.booking-policy p, .booking-policy li {
-  font-size: .875rem;
-  line-height: 1.45;
-}
-.booking-policy ul {
-  padding-inline-start: 1.2rem;
-}
-.booking-policy-accept {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 44px;
-  cursor: pointer;
-}
-.booking-policy-accept input {
-  flex: none;
-  width: 18px;
-  height: 18px;
-  min-height: 18px;
-  margin: 0;
-  padding: 0;
-  accent-color: var(--gold);
+.booking-policy-dialog li + li {
+  margin-top: 8px;
 }

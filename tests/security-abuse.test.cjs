@@ -12,7 +12,6 @@ const Stripe = require("stripe");
 const root = path.resolve(__dirname, "..");
 const source = fs.readFileSync(path.join(root, "server.js"), "utf8");
 const pricing = require("../pricing");
-const {currentPolicy} = require("../services/cancellation-policy");
 const booking = {
   pickup: "EWR", pickupPlaceId:"ChIJ7wzsxeFSwokRhvLXxTe087M", dropoff: "Manhattan", date: "2026-11-10", time: "12:00",
   vehicle: "escalade", passengers: 6, tripType: "oneway",
@@ -170,12 +169,6 @@ async function harness(t, env = {}, saved = "[]", injectedStore, startedAt = Dat
     records: () => JSON.parse(JSON.stringify(testStore.shared.records)),
     advance: ms => {clock += ms;},
     async request(route, body, headers = {}, method = body === undefined ? "GET" : "POST") {
-      // Existing booking fixtures model a customer accepting the displayed policy.
-      // Raw request bodies exercise missing or forged consent without this helper.
-      if (route === "/api/checkout" && body && typeof body === "object" && !Array.isArray(body) &&
-          !Object.hasOwn(body, "cancellationPolicyAcceptance")) {
-        body = {...body, cancellationPolicyAcceptance: {version: currentPolicy.version, accepted: true}};
-      }
       const response = await fetch(url + route, {
         method, headers: {"content-type": "application/json", ...(route === "/api/checkout" ? {cookie:[...checkoutJar.values()].join("; ")} : {}), ...(production ? {"x-forwarded-proto": "https"} : {}), ...headers},
         body: body === undefined ? undefined : typeof body === "string" ? body : JSON.stringify(body)
@@ -813,7 +806,7 @@ test("reservation response whitelists fields and preserves driver visibility rul
     const result = await h.request(`/api/booking/${record.id}`, undefined, {cookie});
     assert.equal(result.status, 200);
     assert.deepEqual(Object.keys(result.body).sort(), ["cancellationPolicy", "dispatch", "id", "paymentStatus", "paymentVerificationPending", "quote", "status", "trip"]);
-    assert.deepEqual(result.body.cancellationPolicy, record.cancellationPolicyAcceptance);
+    assert.deepEqual(result.body.cancellationPolicy, record.cancellationPolicyAtBooking);
     assert.deepEqual(Object.keys(result.body.trip).sort(), ["date", "dropoff", "pickup", "time"]);
     assert.deepEqual(Object.keys(result.body.quote).sort(), ["currency", "total", "vehicle"]);
     assert.equal(result.headers.get("cache-control"), "no-store");
@@ -1749,7 +1742,7 @@ test('Trip Summary displays Luxury SUV while quote/request keep the internal suv
  context.getFormData=()=>({vehicle:context.vehicle.value});
  let sent;const data={vehicle:'Black SUV',vehicleKey:'suv',miles:10,minutes:20,total:150,currency:'usd',fixedOffer:{}};
  context.fetch=async(url,options)=>{sent=JSON.parse(options.body);return {ok:true,json:async()=>data};};vm.createContext(context);
- context.cancelPolicyPanel=null;context.cancelPolicyAccepted=null;
+ context.bookingPolicyDetails=null;context.bookingPolicyDialog=null;
  vm.runInContext(app.slice(app.indexOf('function renderBookingPolicy('),app.indexOf('/* =========================================',app.indexOf('function resetQuote()'))),context);
  context.resetQuote();assert.equal(context.sumVehicle.textContent,'Luxury SUV');assert.equal(context.vehicle.value,'suv');
  vm.runInContext(app.slice(app.indexOf('async function requestQuote('),app.indexOf('quoteBtn.addEventListener(',app.indexOf('async function requestQuote('))),context);

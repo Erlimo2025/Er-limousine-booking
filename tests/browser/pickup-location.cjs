@@ -146,7 +146,7 @@ async function quote(session, pickup) {
 
 async function reserve(session, pickup, quoted, payNow) {
   const {h, page, response} = session;
-  await page.locator('#cancelPolicyAccepted').check();
+  assert.equal(await page.locator('#payBtn').isEnabled(),true);
   const pending = response('/api/checkout');
   await pressBookingButton(session, payNow ? '#payBtn' : '#payLaterBtn');
   const result = await pending;

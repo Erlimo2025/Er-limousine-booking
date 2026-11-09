@@ -791,19 +791,9 @@
       </div>
 
 
-      <p class="summary-note" id="tollPolicyNotice">
-        Your fare is calculated securely before payment.
-      </p>
-
-        <section class="booking-policy" id="cancelPolicyPanel" aria-labelledby="cancelPolicyHeading" hidden>
-          <h3 id="cancelPolicyHeading">Cancellation and refund policy</h3>
-          <p id="cancelPolicySummary"></p>
-          <ul id="cancelPolicyTiers"></ul>
-          <label class="booking-policy-accept">
-            <input type="checkbox" id="cancelPolicyAccepted" autocomplete="off" aria-describedby="cancelPolicyHeading">
-            <span>I accept the cancellation and refund policy.</span>
-          </label>
-        </section>
+        <p class="booking-cancellation-note">
+          <button type="button" id="bookingPolicyDetails" aria-haspopup="dialog" aria-controls="bookingPolicyDialog" disabled>Cancellation</button>: Free with full eligible refund 24+ hours before pickup; within 24 hours, cancellation and refunds require approval.
+        </p>
         <button class="btn btn-pay" type="submit" id="payBtn" disabled>RESERVE & PAY NOW</button>
         <p class="payment-choice-description">Reserve your trip and continue to secure payment.</p>
         <button class="btn btn-pay-later" type="submit" id="payLaterBtn" disabled>RESERVE & PAY LATER</button>
@@ -812,6 +802,12 @@
     </aside>
         </section>
       </form>
+      <dialog class="booking-policy-dialog" id="bookingPolicyDialog" aria-labelledby="bookingPolicyHeading">
+        <h2 id="bookingPolicyHeading">Cancellation and refund policy</h2>
+        <p id="bookingPolicySummary"></p>
+        <ul id="bookingPolicyTiers"></ul>
+        <button class="btn" type="button" id="bookingPolicyClose" autofocus>Close</button>
+      </dialog>
     </div>
   </div>
 </section>

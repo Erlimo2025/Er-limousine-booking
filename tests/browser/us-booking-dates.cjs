@@ -32,7 +32,7 @@ for(const width of [320,390,1440])test('US calendar entry, round-trip summary an
  // Existing native pickers and programmatic fills refresh the visible US input.
  await page.locator('#time').fill('14:45');assert.equal(await page.locator('#time-display').inputValue(),'2:45 PM');await page.locator('#bookingContinue').click();assert.equal(await page.locator('#notes').inputValue(),input.notes);
  const requoted=page.waitForResponse(r=>r.url()===h.url+'/api/quote');await page.locator('#quoteBtn').click();assert.equal((await requoted).status(),200);await page.waitForFunction(()=>document.getElementById('book').dataset.bookingStep==='3');
- await page.locator('#cancelPolicyAccepted').check();
+ assert.equal(await page.locator('#payBtn').isEnabled(),true);
  const reserved=page.waitForResponse(r=>r.url()===h.url+'/api/checkout');await page.locator('#payLaterBtn').click();const out=await reserved;assert.equal(out.status(),200);assert.equal(out.request().postDataJSON().time,'14:45');await page.waitForURL(url=>url.pathname==='/success.html');await page.waitForFunction(()=>document.getElementById('message').textContent.includes('Payment is still required'));
  assert.match(await page.locator('#details').innerText(),/11\/17\/2026 · 2:45 PM \(New York time\)/);assert.match(await page.locator('#details').innerText(),/11\/18\/2026 · 12:15 AM/);assert.equal(await page.locator('#completePayment').isVisible(),true);assert.equal(h.state.creates.length,0);assert.equal(h.records()[0].trip.date,'2026-11-17');assert.equal(h.records()[0].trip.time,'14:45');assert.equal(h.records()[0].quote.total,q.total);await layout(page);
  results.push({width,scenario:'booking_quote_reservation',passed:true});

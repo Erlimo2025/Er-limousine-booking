@@ -1,6 +1,6 @@
 const ewr=require('../ewr-pickups');
 const pricing=require('../pricing');
-const {acceptedPolicy}=require('../services/cancellation-policy');
+const {policyAtBooking}=require('../services/cancellation-policy');
 const {customerPricing}=require('../services/route-tolls');
 const uuid=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const iso=value=>typeof value==='string' && Number.isFinite(Date.parse(value)) && new Date(value).toISOString()===value;
@@ -48,7 +48,7 @@ function reusableTrip(record){
  return template;
 }
 function tripDto(record,management=null) {
- const policy=acceptedPolicy(record);
+ const policy=policyAtBooking(record);
  const t=record.trip;
  const terminal=id=>typeof id==='string'&&Object.hasOwn(ewr,id)?ewr[id].label:null;
  return {...(management?{management}:{}),...(['processing','review_required','confirmed','failed'].includes(record.refundStatus)?{refundStatus:record.refundStatus}:{}),canBookAgain:reusableTrip(record)!==null,reference:record.id,status:record.status,paymentStatus:record.paymentStatus,paymentVerificationPending:paymentVerificationPending(record),tripType:t.tripType,

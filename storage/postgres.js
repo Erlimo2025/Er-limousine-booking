@@ -5,7 +5,7 @@ const crypto = require('crypto');
 const {AsyncLocalStorage} = require('async_hooks');
 const {enqueueBookingEmail,bookingEmailStorage}=require('./booking-emails');
 const {validQuote}=require('../services/route-tolls');
-const {acceptedPolicy}=require('../services/cancellation-policy');
+const {policyAtBooking}=require('../services/cancellation-policy');
 class StorageError extends Error {
   constructor() { super('Reservation service temporarily unavailable. Please try again.'); this.status = 503; this.storageFailure = true; }
 }
@@ -17,7 +17,7 @@ function validateRecord(r) {
       typeof r.createdAt !== 'string' || !Number.isFinite(Date.parse(r.createdAt)) || !statuses.includes(r.status) ||
       !['unpaid','paid','failed'].includes(r.paymentStatus) || !plain(r.customer) || !plain(r.trip) || !plain(r.quote) || !plain(r.dispatch)) fail();
   if(!validQuote(r.quote) || r.checkoutAttempt?.quote && !validQuote(r.checkoutAttempt.quote))fail();
-  if(Object.hasOwn(r,'cancellationPolicyAcceptance') && !acceptedPolicy(r))fail();
+  if((Object.hasOwn(r,'cancellationPolicyAcceptance') || Object.hasOwn(r,'cancellationPolicyAtBooking')) && !policyAtBooking(r))fail();
   for (const key of ['firstName','lastName','email','phone']) if(typeof r.customer[key] !== 'string' || !r.customer[key].trim() || r.customer[key].length>200) fail();
   for (const key of ['pickup','dropoff','date','time','vehicle','tripType']) if(typeof r.trip[key] !== 'string' || !r.trip[key].trim() || r.trip[key].length>200) fail();
   if(!['escalade','suv'].includes(r.trip.vehicle) || !['oneway','roundtrip','airport','hourly'].includes(r.trip.tripType) ||
@@ -239,11 +239,12 @@ function createStore(env = process.env, suppliedPool) {
       if(!(await client.query('SELECT 1 FROM er_schema_migrations WHERE version=14')).rowCount)await client.query(fs.readFileSync(path.join(__dirname,'../migrations/014-managed-cancellations.sql'),'utf8'));
       if(!(await client.query('SELECT 1 FROM er_schema_migrations WHERE version=15')).rowCount)await client.query(fs.readFileSync(path.join(__dirname,'../migrations/015-policy-acceptance-refund-recovery.sql'),'utf8'));
       if(!(await client.query('SELECT 1 FROM er_schema_migrations WHERE version=16')).rowCount)await client.query(fs.readFileSync(path.join(__dirname,'../migrations/016-simple-cancellation-policy.sql'),'utf8'));
+      if(!(await client.query('SELECT 1 FROM er_schema_migrations WHERE version=17')).rowCount)await client.query(fs.readFileSync(path.join(__dirname,'../migrations/017-booking-cancellation-policy.sql'),'utf8'));
     });
   }
   async function importLegacy(records) {
     validateRecords(records);
-    if(records.some(record=>Object.hasOwn(record,'cancellationPolicyAcceptance')))throw new StorageError();
+    if(records.some(record=>Object.hasOwn(record,'cancellationPolicyAcceptance') || Object.hasOwn(record,'cancellationPolicyAtBooking')))throw new StorageError();
     return transaction(async client=>{
       await client.query('SELECT pg_advisory_xact_lock($1)',[730901]);
       let inserted=0;for(const record of records)inserted+=await insert(record,client,true);
