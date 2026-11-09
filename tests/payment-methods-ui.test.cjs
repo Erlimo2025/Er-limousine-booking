@@ -100,6 +100,6 @@ test('logout clears persisted attempt; stale resumed verification cannot alter n
 test('account UI has no Payment Methods management entry or obsolete navigation, while booking and My Trips remain',()=>{
  const account=fs.readFileSync(path.join(__dirname,'../public/account.html'),'utf8');
  assert.doesNotMatch(account,/Payment Methods|Manage cards securely saved with Stripe|Manage Payment Methods|payment-methods\.html/);
- assert.match(account,/id="tripsPanel"/);assert.match(account,/Book a Ride/);assert.match(account,/id="profile"/);
+ assert.match(account,/id="tripsPanel"/);assert.match(account,/id="menuBook" href="\/#book"/);assert.match(account,/Book a New Ride/);assert.match(account,/id="profile"/);
  for(const name of fs.readdirSync(path.join(__dirname,'../public')).filter(x=>/\.(html|js)$/.test(x)))assert.doesNotMatch(fs.readFileSync(path.join(__dirname,'../public',name),'utf8'),/href=["']\/payment-methods\.html["']/,'Obsolete management-page navigation in '+name);
 });

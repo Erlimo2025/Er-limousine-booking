@@ -170,7 +170,7 @@ test(engine + ' signed-in customer opens the new page from My Trips without chan
   await login.getByLabel('Password', {exact: true}).fill(account.password);
   await login.getByRole('button', {name: 'LOG IN', exact: true}).click();
   const trip = page.locator('#tripsList');
-  await trip.getByText('Manage Trip', {exact: true}).waitFor();
+  await trip.getByText('Manage Trip', {exact: true}).click();
   await trip.getByRole('link', {name: 'Manage My Reservation'}).click();
   assert.equal(new URL(page.url()).searchParams.get('reservation'), id);
   await page.locator('#manageDetails').getByText(id, {exact: true}).waitFor();

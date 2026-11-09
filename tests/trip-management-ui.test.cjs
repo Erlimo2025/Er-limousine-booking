@@ -23,7 +23,7 @@ test('My Trips management follows only server eligibility; paid/unpaid inside 24
   assert.equal(h.nodes.find(n=>n.href?.startsWith('tel:')).href,'tel:9738474128');assert.equal(h.nodes.find(n=>n.href?.startsWith('mailto:')).href,'mailto:bookings@example.test');
   assert.ok(h.find('Book Again'));assert.equal(!!h.find('Complete Payment'),paymentStatus==='unpaid');
  }
- const inactive=ui({status:'cancelled',management:{canChangePickupTime:false,canCancel:false,cancelReason:'inactive'}});assert.ok(!inactive.find('Change Pickup Time'));assert.ok(!inactive.find('Cancel Trip'));assert.equal(inactive.nodes.find(n=>n.className==='trip-management').hidden,true);
+ const inactive=ui({status:'cancelled',management:{canChangePickupTime:false,canCancel:false,cancelReason:'inactive'}});assert.ok(!inactive.find('Change Pickup Time'));assert.ok(!inactive.find('Cancel Trip'));assert.ok(!inactive.nodes.some(n=>n.className==='trip-management'));assert.equal(inactive.find('Manage Trip').href,'/manage-reservation.html?reservation='+inactive.trip.reference);
  const paid=ui({paymentStatus:'paid'});assert.ok(paid.find('Cancel Trip'));assert.ok(paid.find('Change Pickup Time'));assert.ok(!paid.find('Complete Payment'));assert.ok(!paid.nodes.some(n=>/Online refunds are not available yet/.test(n.textContent)));assert.ok(!paid.nodes.some(n=>n.textContent==='Refunded'));
 });
 
@@ -72,7 +72,7 @@ test('management contact and provider-derived content are safely rendered and no
  assert.ok(h.nodes.some(n=>n.textContent.includes('<script>bad()</script>')));assert.ok(!h.nodes.some(n=>n.href?.startsWith('javascript:')));assert.ok(!h.nodes.some(n=>n.href?.startsWith('tel:')||n.href?.startsWith('mailto:')));
  const management=source.slice(source.indexOf('function tripManagement('),source.indexOf('async function loadTrips'));
  assert.doesNotMatch(management,/innerHTML|outerHTML|insertAdjacentHTML|localStorage|sessionStorage|indexedDB|stripe|checkout/i);assert.match(management,/canChangePickupTime===true/);assert.match(management,/canCancel===true/);
- const css=fs.readFileSync(path.join(__dirname,'../public/account.css'),'utf8');assert.match(css,/\.trip-management-button\{min-height:44px/);assert.match(css,/@media\(max-width:350px\).*\.trip-management-actions\{display:grid/);
+ const css=fs.readFileSync(path.join(__dirname,'../public/account.css'),'utf8');assert.match(css,/\.trip-management-button\{min-height:44px/);assert.match(css,/@media\(max-width:350px\)\{\s*\.trip-management-actions\{display:grid/);
 });
 
 test('paid cancellation clearly requests a full refund and never claims provider completion from the click',async()=>{
