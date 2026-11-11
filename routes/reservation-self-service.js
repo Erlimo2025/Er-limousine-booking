@@ -173,6 +173,7 @@ function reservationSelfService({app, store, mutation, rateLimit, handle, requir
       date: new Date(last.created_at).toISOString(), id: last.id
     })).toString('base64url') : null;
     res.json({nextCursor, settlements: page.map(row => ({...settlementView(row, row.record),
+      bookingReference: row.booking_reference,
       evidence: row.evidence, reviewer: row.reviewer_id, verificationNote: row.verification_note,
       lastAttemptAt: row.last_attempt_at, nextAttemptAt: row.next_attempt_at, escalatedAt: row.escalated_at,
       attempts: row.reconciliation_attempts, canRecheck: Number(row.captured_cents) > 0}))});

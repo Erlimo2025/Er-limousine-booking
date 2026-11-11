@@ -73,6 +73,10 @@ for (const width of [320, 390, 430, 1440]) {
     t.after(() => context.close());
     await context.addInitScript(() => {
       window.dashboardCspFailures = [];
+      Object.defineProperty(navigator, 'clipboard', {value: {writeText: async text => {
+        if (innerWidth === 320) throw new Error('Clipboard unavailable');
+        window.copiedBookingReference = text;
+      }}});
       document.addEventListener('securitypolicyviolation', event => window.dashboardCspFailures.push(event.effectiveDirective));
     });
     await context.route('**/*', route => {
@@ -121,7 +125,17 @@ for (const width of [320, 390, 430, 1440]) {
       'Newark Liberty International Airport', '350 Fifth Avenue, New York, NY'
     ]);
     assert.equal(await first.locator('.trip-vehicle').innerText(), 'Luxury SUV');
-    const accepted = await f.store.get(f.upcoming);
+    const accepted = await f.store.getForDisplay(f.upcoming);
+    assert.equal(await first.locator('.trip-reference-row .booking-reference-value').innerText(), accepted.bookingReference);
+    const copy = first.getByRole('button', {name: 'Copy booking reference ' + accepted.bookingReference});
+    await activate(copy);
+    if (width === 320) {
+      await first.getByText(/Use your device/).waitFor();
+      assert.equal(await page.evaluate(() => getSelection().toString()), accepted.bookingReference);
+    } else {
+      await first.getByText('Copied', {exact: true}).waitFor();
+      assert.equal(await page.evaluate(() => window.copiedBookingReference), accepted.bookingReference);
+    }
     const formattedFare = new Intl.NumberFormat('en-US', {style: 'currency', currency: 'USD'}).format(accepted.quote.total);
     assert.equal(await first.locator('.trip-total').innerText(), formattedFare);
     assert.deepEqual(await first.locator('.trip-badge').allTextContents(), ['Payment Pending', 'Unpaid']);
@@ -165,7 +179,12 @@ for (const width of [320, 390, 430, 1440]) {
     assert.equal(await page.locator('#cancelledTrips').getAttribute('aria-pressed'), 'true');
     await menuTo('Upcoming Trips');
     await activate(first.getByText('View Trip Details', {exact: true}));
-    assert.equal(await first.getByText(f.upcoming, {exact: true}).isVisible(), true);
+    const detailReference = first.locator('.trip-details .booking-reference-value');
+    await detailReference.waitFor();
+    await first.locator('.trip-reference-row').waitFor({state: 'hidden'});
+    assert.equal(await detailReference.innerText(), accepted.bookingReference);
+    assert.equal(await first.getByRole('button', {name: 'Copy booking reference ' + accepted.bookingReference}).count(), 1);
+    assert.equal(await first.getByText(f.upcoming, {exact: true}).isVisible(), false);
     await activate(first.getByText('View Trip Details', {exact: true}));
     await activate(first.getByText('Manage Trip', {exact: true}));
     assert.equal(await first.getByRole('button', {name: 'Change Pickup Time'}).isVisible(), true);
@@ -187,7 +206,7 @@ for (const width of [320, 390, 430, 1440]) {
       activate(requestsLink)
     ]);
     await page.getByRole('heading', {name: 'Reservation requests', exact: true}).waitFor();
-    assert.equal(await page.locator('#manageDetails').getByText(f.upcoming, {exact: true}).isVisible(), true);
+    assert.equal(await page.locator('#manageDetails').getByText(accepted.bookingReference, {exact: true}).isVisible(), true);
     assert.equal(await page.locator('#manageRequestForm').isVisible(), true);
     assert.equal(await page.locator('#managedActions').isVisible(), false);
 

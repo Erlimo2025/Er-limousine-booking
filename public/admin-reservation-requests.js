@@ -54,7 +54,7 @@
     const tripStatus = trip.status.replaceAll('_', ' ');
     const paymentStatus = trip.paymentVerificationPending ? 'verification pending' : trip.paymentStatus;
     card.append(node('h3', labels[request.kind] + ' · ' + request.status));
-    card.append(node('p', 'Reservation ' + trip.reference + ' · ' + request.source));
+    card.append(node('p', 'Reservation ' + (trip.bookingReference || trip.reference) + ' · ' + request.source));
     card.append(node('p', 'Current trip: ' + trip.pickup + ' → ' + trip.dropoff));
     card.append(node('p', TripDateFormat.trip(trip.date, trip.time) + ' · ' + trip.vehicle));
     card.append(node('p', 'Booking ' + tripStatus + ' · Payment ' + paymentStatus + ' · Accepted fare ' + fare));
@@ -94,7 +94,7 @@
   function renderSettlement(settlement) {
     const card = node('article', undefined, 'manage-queue-card');
     card.append(node('h3', 'Cancellation · ' + (refundStates[settlement.state] || 'Refund needs review')));
-    card.append(node('p', 'Reservation ' + settlement.reference + ' · ' + settlement.origin));
+    card.append(node('p', 'Reservation ' + (settlement.bookingReference || settlement.reference) + ' · ' + settlement.origin));
     for (const line of cancellationText(settlement)) card.append(node('p', line));
 
     card.append(node('p', 'Cancelled ' + TripDateFormat.instant(settlement.cancelledAt)));

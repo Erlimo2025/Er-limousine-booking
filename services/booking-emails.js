@@ -12,6 +12,7 @@ function customerSupportHtml(contact){
  return 'Contact ER Limousine Service: '+email+(phone?' | '+(dial?'<a href="tel:'+dial+'" style="color:#008000;text-decoration:underline;">'+escape(phone)+'</a>':escape(phone)):'');
 }
 const tripActionKinds=['customer_pickup_time_updated','admin_pickup_time_updated','customer_trip_cancelled','admin_trip_cancelled','customer_refund_confirmed','admin_refund_confirmed','customer_refund_review','admin_refund_review'];
+const referenceRow=record=>record.bookingReference ? ['Booking reference',record.bookingReference] : ['Reservation ID',record.id];
 function tripActionMessage(record,kind,contact,event){
  const changed=kind.endsWith('pickup_time_updated'),refundConfirmed=kind.endsWith('refund_confirmed'),refundReview=kind.endsWith('refund_review'),admin=kind.startsWith('admin_'),d=event?.details;
  const validDate=value=>typeof value==='string' && /^\d{4}-\d{2}-\d{2}$/.test(value);
@@ -25,7 +26,7 @@ function tripActionMessage(record,kind,contact,event){
  if(refundConfirmed && (record.status!=='cancelled' || record.paymentStatus!=='paid' || record.refundStatus!=='confirmed'))throw Error('Email unavailable.');
  if(refundReview && (record.status!=='cancelled' || record.paymentStatus!=='paid' || !['review_required','failed'].includes(record.refundStatus)))throw Error('Email unavailable.');
  const t=record.trip,c=record.customer,timezone=admin?'America/New_York':'New York time';
- const rows=[['Reservation ID',record.id],['Pickup',admin?t.pickup:customerPickup(t.pickup)],['Destination',t.dropoff]];
+ const rows=[referenceRow(record),['Pickup',admin?t.pickup:customerPickup(t.pickup)],['Destination',t.dropoff]];
  if(admin)rows.splice(1,0,['Customer name',c.firstName+' '+c.lastName],['Customer email',c.email],['Customer phone',c.phone]);
  const schedule=(date,time)=>admin?date+' '+time+' ('+timezone+')':TripDateFormat.trip(date,time);
  const oldTime=schedule(d.oldDate,d.oldTime);
@@ -43,7 +44,7 @@ function tripActionMessage(record,kind,contact,event){
   paid?'This trip was cancelled. Payment was received for this cancelled reservation. Please contact ER Limousine Service for payment review. No refund has been confirmed.':
   admin?'A customer cancelled this unpaid reservation.':'Your trip has been cancelled. No payment is required for this cancelled reservation.';
  const title=changed?'Pickup Time Updated':refundConfirmed?'Refund Confirmed':refundReview?'Refund Review Required':'Trip Cancelled',support='Contact ER Limousine Service: '+contact.email+(contact.phone?' | '+contact.phone:'');
- return {to:admin?contact.email:c.email,subject:title+(admin?' — '+record.id:' | ER Limousine Service'),
+ return {to:admin?contact.email:c.email,subject:title+(admin?' — '+(record.bookingReference || record.id):' | ER Limousine Service'),
   text:'ER Limousine Service\n\n'+intro+'\n\n'+rows.map(([k,v])=>k+': '+v).join('\n')+'\n\n'+support,
   html:'<h1>ER Limousine Service</h1><p>'+escape(intro)+'</p><table>'+rows.map(([k,v])=>'<tr><th align="left">'+escape(k)+'</th><td>'+escape(v)+'</td></tr>').join('')+'</table><p>'+(admin?escape(support):customerSupportHtml(contact))+'</p>'};
 }
@@ -57,7 +58,7 @@ function bookingMessage(record,kind,contact,myTripsUrl=null,event=null){
  const amount=new Intl.NumberFormat('en-US',{style:'currency',currency:q.currency}).format(q.total);
  const timezone=admin?'America/New_York':'New York time';
  const schedule=(date,time)=>admin?date+' '+time+' ('+timezone+')':TripDateFormat.trip(date,time);
- const rows=[['Reservation ID',record.id],['Pickup',admin?t.pickup:customerPickup(t.pickup)],['Destination',t.dropoff],['Pickup date/time',schedule(t.date,t.time)],['Vehicle',vehicle]];
+ const rows=[referenceRow(record),['Pickup',admin?t.pickup:customerPickup(t.pickup)],['Destination',t.dropoff],['Pickup date/time',schedule(t.date,t.time)],['Vehicle',vehicle]];
  if(t.returnDate)rows.push(['Return pickup',schedule(t.returnDate,t.returnTime)]);
  const p=q.pricingBreakdown;
  if(p?.version===1){
@@ -99,7 +100,7 @@ function bookingMessage(record,kind,contact,myTripsUrl=null,event=null){
  const link=kind==='customer_reservation_created' && !cancelled && myTripsUrl;
  const action=link?'Open My Trips to view your reservation'+(!paid?' and use Complete Payment':'')+': '+link:'';
  return {to:admin?contact.email:customer.email,
-  subject:(reservation?(admin?'New reservation':cancelled?'Reservation Cancelled':paid?'Reservation Confirmed':'Reservation Confirmed — Payment Due'):'Payment Confirmed')+(admin?' — '+record.id:' | ER Limousine Service'),
+  subject:(reservation?(admin?'New reservation':cancelled?'Reservation Cancelled':paid?'Reservation Confirmed':'Reservation Confirmed — Payment Due'):'Payment Confirmed')+(admin?' — '+(record.bookingReference || record.id):' | ER Limousine Service'),
   text:'ER Limousine Service\n\n'+intro+'\n\n'+rows.map(([k,v])=>k+': '+v).join('\n')+(action?'\n\n'+action:'')+'\n\n'+support,
   html:'<h1>ER Limousine Service</h1><p>'+escape(intro)+'</p><table>'+rows.map(([k,v])=>'<tr><th align="left">'+escape(k)+'</th><td>'+escape(v)+'</td></tr>').join('')+'</table>'+(action?'<p><a href="'+escape(link)+'">Open My Trips'+(!paid?' / Complete Payment':'')+'</a></p>':'')+'<p>'+(admin?escape(support):customerSupportHtml(contact))+'</p>'};
 }
@@ -117,7 +118,7 @@ function createBookingEmails({store,provider,contact,siteUrl,now=Date.now,report
     try{
      const link=job.kind==='customer_reservation_created' && !job.payload && myTripsUrl && await store.reservationOwner(job.booking_id)?myTripsUrl:null;
      const event=!job.payload && tripActionKinds.includes(job.kind)?await store.tripEvent(job.event_id,job.booking_id):null;
-     const message=job.payload || bookingMessage(await store.get(job.booking_id),job.kind,contact,link,event);
+     const message=job.payload || bookingMessage(await store.getForDisplay(job.booking_id),job.kind,contact,link,event);
      const prepared=await store.prepareBookingEmail(job.id,job.claim_token,message,now());
      if(!prepared)continue;
      // A stale worker must never submit after its lease or provider retry window.
