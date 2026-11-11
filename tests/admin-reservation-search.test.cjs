@@ -125,7 +125,7 @@ test('dispatch editor preserves status/dispatch/reconciliation actions with acce
 test('dispatch polish shows friendly visible labels while retaining internal action values and refreshed asset URLs',()=>{
  const h=ui(),r=fixture({checkoutAttempt:{state:'submitted_unknown',quote:{promotion:{code:'FIRST15'}}}}),html=h.context.renderBooking(adminDto(r));
  assert.match(html,/>Awaiting Payment<\/span>/);assert.match(html,/value="awaiting_payment" selected>Awaiting Payment<\/option>/);assert.doesNotMatch(html,/>awaiting_payment<|>driver_en_route<|>submitted_unknown</);assert.match(html,/Provider response pending/);
- const page=fs.readFileSync(path.join(__dirname,'../public/admin.html'),'utf8');assert.match(page,/\/admin\.js\?v=dispatch-archive-1/);assert.match(page,/\/styles\.css\?v=dispatch-archive-1/);
+ const page=fs.readFileSync(path.join(__dirname,'../public/admin.html'),'utf8');assert.match(page,/\/admin\.js\?v=dispatch-analytics-1/);assert.match(page,/\/styles\.css\?v=dispatch-archive-1/);
  const css=fs.readFileSync(path.join(__dirname,'../public/styles.css'),'utf8');assert.match(css,/\.dispatch-editor:not\(\[open\]\)>:not\(summary\)\{display:none\}/);assert.match(css,/\.dispatch-contact a\.dispatch-phone\{[^}]*background:#123b2c/);
 });
 

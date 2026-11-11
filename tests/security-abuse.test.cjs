@@ -144,6 +144,7 @@ async function harness(t, env = {}, saved = "[]", injectedStore, startedAt = Dat
       if (name === "./routes/customer-payment-methods") return require("../routes/customer-payment-methods");
       if (name === "./routes/customer-trip-management") return require("../routes/customer-trip-management");
       if (name === "./routes/reservation-management") return require("../routes/reservation-management");
+      if (name === "./routes/dispatch-analytics") return require("../routes/dispatch-analytics");
       if (name === "./pricing") return testPricing;
       if (name === "./services/route-tolls") return require('../services/route-tolls');
       if (name === "./services/admin-toll-validation") return require('../services/admin-toll-validation');

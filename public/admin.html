@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="dispatch-page">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="/admin-toll-validation.css?v=1">
   <link rel="stylesheet" href="/customer-reviews.css">
   <link rel="stylesheet" href="/reservation-management.css">
+  <link rel="stylesheet" href="/dispatch-analytics.css">
 </head>
 <body>
   <nav class="nav">
@@ -18,7 +19,7 @@
     </div>
   </nav>
 
-  <main class="section">
+  <main class="section" tabindex="0">
     <div class="wrap">
       <div class="section-head">
         <div class="eyebrow">Private dashboard</div>
@@ -39,6 +40,84 @@
         </div>
         <div id="notice" class="notice"></div>
       </div>
+
+      <details id="businessAnalytics" class="booking-card ba" hidden>
+        <summary>Business Analytics</summary>
+        <div class="ba-content">
+          <form id="analyticsDates" class="ba-filters">
+            <div class="field">
+              <label for="analyticsPreset">Quick date filter</label>
+              <select id="analyticsPreset">
+                <option value="today">Today</option>
+                <option value="yesterday">Yesterday</option>
+                <option value="thisWeek">This Week</option>
+                <option value="lastWeek">Last Week</option>
+                <option value="thisMonth" selected>This Month</option>
+                <option value="lastMonth">Last Month</option>
+                <option value="thisYear">This Year</option>
+                <option value="lastYear">Last Year</option>
+                <option value="custom">Custom Date Range</option>
+              </select>
+            </div>
+            <div class="field"><label for="analyticsFrom">From Date</label><input id="analyticsFrom" type="date" min="0001-01-01" max="9999-12-31" required></div>
+            <div class="field"><label for="analyticsTo">To Date</label><input id="analyticsTo" type="date" min="0001-01-01" max="9999-12-31" required></div>
+            <div class="ba-actions">
+              <button class="btn btn-primary" type="submit">Apply Filter</button>
+              <button id="analyticsReset" class="btn btn-secondary" type="button">Reset Filter</button>
+            </div>
+          </form>
+          <p id="analyticsStatus" class="ba-status" role="status" aria-live="polite"></p>
+          <div id="analyticsResults" hidden>
+            <h3 id="analyticsPeriod" class="ba-period"></h3>
+            <p class="ba-note">New York time · Both dates included</p>
+            <div id="analyticsMetrics"></div>
+            <p id="analyticsCoverage" class="ba-coverage" hidden></p>
+            <details class="ba-definitions">
+              <summary>How these numbers are calculated</summary>
+              <dl>
+                <dt>Bookings received and gross accepted value</dt><dd>Based on when each reservation was created. The gross value includes unpaid and cancelled reservations.</dd>
+                <dt>Ride activity and trip report</dt><dd>Based on scheduled pickup date and current Dispatch status. Upcoming counts future confirmed, assigned and en-route reservations. Pending means awaiting payment. Cancellation rate is cancelled reservations divided by all scheduled reservations in the range.</dd>
+                <dt>Customer requests</dt><dd>Change and cancellation requests submitted in the range, grouped by their current decision status.</dd>
+                <dt>Completed fares and collectible balances</dt><dd>Completed fares use stored fares for rides marked Completed. Balances use the accepted fare less verified captures for noncancelled trips. Unresolved payment evidence may make a balance unavailable.</dd>
+                <dt>Payments, refunds and net collected</dt><dd>Based on application-recorded Stripe confirmation dates. Net collected is confirmed captures less confirmed refunds. External activity without verifiable local evidence and Stripe fees are outside these totals.</dd>
+                <dt>Prior period</dt><dd>Whole-month selections compare the same number of preceding full calendar months. Other selections compare the same number of preceding New York calendar days. Weeks start Monday.</dd>
+              </dl>
+            </details>
+            <section class="ba-group" aria-labelledby="analyticsComparisonHeading">
+              <h3 id="analyticsComparisonHeading">Growth versus prior period</h3>
+              <div id="analyticsComparison"></div>
+            </section>
+            <section class="ba-group" aria-labelledby="analyticsChartsHeading">
+              <h3 id="analyticsChartsHeading">Trends</h3>
+              <p id="analyticsGranularity" class="ba-note"></p>
+              <div id="analyticsCharts" class="ba-chart-grid"></div>
+            </section>
+            <section class="ba-group" aria-labelledby="analyticsTripsHeading">
+              <h3 id="analyticsTripsHeading">Detailed Trip Report</h3>
+              <p class="ba-note">Trips use the selected pickup dates. Payment and refund amounts are lifetime totals per trip.</p>
+              <form id="analyticsTripFilters" class="ba-filters ba-trip-filters">
+                <div class="field ba-search"><label for="analyticsSearch">Search trips</label><input type="search" id="analyticsSearch" maxlength="120" autocomplete="off" placeholder="Reference, pickup or destination"></div>
+                <div class="field"><label for="analyticsTripStatus">Trip status</label><select id="analyticsTripStatus"><option value="all">All statuses</option><option value="awaiting_payment">Awaiting payment</option><option value="confirmed">Confirmed</option><option value="assigned">Assigned</option><option value="driver_en_route">Driver en route</option><option value="passenger_on_board">Passenger on board</option><option value="completed">Completed</option><option value="cancelled">Cancelled</option></select></div>
+                <div class="field"><label for="analyticsPayment">Payment status</label><select id="analyticsPayment"><option value="all">All payment states</option><option value="unpaid">Unpaid</option><option value="failed">Payment failed</option><option value="processing">Processing</option><option value="paid">Paid</option><option value="partially_paid">Partially paid</option><option value="refunded">Refunded</option><option value="partially_refunded">Partially refunded</option><option value="review">Review required</option></select></div>
+                <div class="field"><label for="analyticsVehicle">Vehicle</label><select id="analyticsVehicle"><option value="all">All vehicles</option><option value="suv">Luxury SUV / Suburban</option><option value="escalade">Cadillac Escalade</option></select></div>
+                <div class="field"><label for="analyticsSort">Sort by</label><select id="analyticsSort"><option value="pickupDate">Pickup date</option><option value="reference">Booking reference</option><option value="pickup">Pickup address</option><option value="destination">Destination</option><option value="vehicle">Vehicle</option><option value="status">Trip status</option><option value="payment">Payment status</option><option value="fare">Accepted fare</option><option value="captured">Captured payments</option><option value="refunded">Refunded amount</option></select></div>
+                <div class="field"><label for="analyticsOrder">Sort order</label><select id="analyticsOrder"><option value="desc">Descending</option><option value="asc">Ascending</option></select></div>
+                <div class="ba-actions">
+                  <button class="btn btn-primary" type="submit">Apply Trip Filters</button>
+                  <button id="analyticsCsv" class="btn btn-secondary" type="button" disabled>Export CSV</button>
+                </div>
+              </form>
+              <p id="analyticsReportStatus" class="ba-status" role="status" aria-live="polite"></p>
+              <div id="analyticsTripReport"></div>
+              <div id="analyticsPager" class="ba-actions ba-pager" hidden>
+                <button id="analyticsPrevious" class="btn btn-secondary" type="button">Previous page</button>
+                <span id="analyticsPage"></span>
+                <button id="analyticsNext" class="btn btn-secondary" type="button">Next page</button>
+              </div>
+            </section>
+          </div>
+        </div>
+      </details>
 
       <details id="tvPanel" class="booking-card toll-validation" hidden>
         <summary>Toll Validation — Estimate Only</summary>
@@ -138,6 +217,7 @@
   <script src="/trip-date-format.js"></script>
   <script src="/reservation-self-service.js?v=recovery-1"></script>
   <script src="/admin-reservation-requests.js?v=recovery-1"></script>
-  <script src="/admin.js?v=dispatch-archive-1-toll-validation-1-reservation-requests-1"></script>
+  <script src="/dispatch-analytics.js"></script>
+  <script src="/admin.js?v=dispatch-analytics-1"></script>
 </body>
 </html>
