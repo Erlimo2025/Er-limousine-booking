@@ -29,6 +29,7 @@ function setLoggedIn(value) {
   window.erTollValidation?.setAuthenticated(value,adminFetch);
   window.erCustomerReviews?.setAuthenticated(value,adminFetch);
   window.erReservationRequests?.setAuthenticated(value,adminFetch);
+  window.erBusinessAnalytics?.setAuthenticated(value,adminFetch,openDispatchTrip);
   if (!value) {
     archiveRequests.clear();
     paymentLinkActions.clear();
@@ -38,7 +39,7 @@ function setLoggedIn(value) {
   }
 }
 
-async function adminFetch(url, options = {}) {
+async function adminFetch(url, {asBlob = false, ...options} = {}) {
   const generation=authGeneration;
   const response = await fetch(url, {
     ...options,
@@ -46,7 +47,7 @@ async function adminFetch(url, options = {}) {
     cache: "no-store",
     headers: {"Content-Type": "application/json", ...options.headers}
   });
-  const data = await response.json();
+  const data = response.ok && asBlob ? await response.blob() : await response.json();
   if (!response.ok) {
     if (generation===authGeneration && (response.status === 401 || response.status === 403)) setLoggedIn(false);
     throw new Error(data.error || "Request failed. Please try again.");
@@ -101,6 +102,26 @@ async function loadBookings(more=false) {
   }
 }
 
+async function openDispatchTrip(trip) {
+  if (!authenticated) return;
+  const generation = authGeneration;
+  filters.reset();
+  document.getElementById('filterView').value = trip.archived ? 'archived' : 'dispatch';
+  document.getElementById('filterStatus').value = 'all';
+  document.getElementById('filterTiming').value = 'all';
+  document.getElementById('reservationSearch').value = trip.reference;
+  await loadBookings();
+  if (!authenticated || generation !== authGeneration) return;
+  const card = [...bookingsEl.querySelectorAll('.dispatch-card')].find(element => element.dataset.id === trip.id);
+  if (!card) return showNotice('This trip could not be opened in Dispatch.');
+  const details = card.querySelector('.dispatch-editor');
+  if (details) {
+    details.open = true;
+    details.querySelector('summary').focus({preventScroll: true});
+  }
+  card.scrollIntoView({block: 'start'});
+}
+
 async function loginAndLoad() {
   if (authenticated) return loadBookings();
   if (!tokenInput.value.trim()) return showNotice("Enter your admin credential.");
@@ -138,6 +159,7 @@ async function logout() {
   window.erTollValidation?.setAuthenticated(false);
   window.erCustomerReviews?.setAuthenticated(false);
   window.erReservationRequests?.setAuthenticated(false);
+  window.erBusinessAnalytics?.setAuthenticated(false);
   loadBtn.disabled = true;
   logoutBtn.disabled = true;
   authGeneration++;
@@ -339,6 +361,7 @@ document.getElementById('filterView').addEventListener('change',()=>{
 moreBtn.addEventListener('click',()=>{if(!moreBtn.disabled&&nextCursor)loadBookings(true);});
 logoutBtn.addEventListener("click", logout);
 window.addEventListener("pagehide", () => {
+  window.erBusinessAnalytics?.setAuthenticated(false);
   archiveRequests.clear();
   paymentLinkActions.clear();
   tokenInput.value = "";

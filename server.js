@@ -1899,6 +1899,9 @@ app.post("/api/admin/login", (req, res) => {
 });
 
 app.get("/api/admin/session", requireAdmin, (req, res) => res.json({authenticated: true}));
+require('./routes/dispatch-analytics').installDispatchAnalytics(app,{
+  store:reservationStore,route,rateLimit,requireAdmin,siteUrl:SITE_URL,now:()=>Date.now()
+});
 
 app.get('/api/admin/toll-validation/config',requireAdmin,(req,res)=>res.json(adminTollValidation.config()));
 app.post('/api/admin/toll-validation/estimate',requireAdmin,async(req,res)=>{
