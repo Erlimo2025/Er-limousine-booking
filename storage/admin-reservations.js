@@ -1,6 +1,7 @@
 const crypto=require('node:crypto');
 const ewr=require('../ewr-pickups');
 const {paymentVerificationPending}=require('./customer-trips');
+const {normalizeBookingReference}=require('../services/booking-reference');
 const choices={view:['dispatch','archived'],status:['active','all','cancelled','completed'],payment:['all','paid','unpaid','processing','review','refunded'],timing:['upcoming','all','today','tomorrow','past'],airport:['all','ewr','jfk','lga','other'],vehicle:['all','suv','escalade']};
 const defaults={view:'dispatch',status:'active',payment:'all',timing:'upcoming',airport:'all',vehicle:'all'};
 const invalid=()=>{throw Object.assign(new Error('Invalid reservation search.'),{status:400});};
@@ -41,10 +42,15 @@ function searchSql(q){
  if(q.airport==='other')where.push('NOT ('+Object.keys(airportPatterns).map(airportSql).join(' OR ')+')');else if(q.airport!=='all')where.push(airportSql(q.airport));
  if(q.vehicle!=='all')where.push("record->'trip'->>'vehicle'="+bind(q.vehicle));
  const text="lower(concat_ws(' ',id::text,record->'customer'->>'firstName',record->'customer'->>'lastName',record->'customer'->>'email',record->'customer'->>'phone',record->'trip'->>'pickup',record->'trip'->>'dropoff',record->'trip'->>'flightNumber'))";
- for(const term of q.terms){const escaped=term.replace(/[\\%_]/g,'\\$&'),match=text+' LIKE '+bind('%'+escaped+'%')+" ESCAPE E'\\\\'";where.push(/^\+?[0-9().-]+$/.test(term)&&term.replace(/\D/g,'').length>=3?'('+match+" OR regexp_replace(record->'customer'->>'phone','[^0-9]','','g') LIKE "+bind('%'+term.replace(/\D/g,'')+'%')+')':match);}
+ for(const term of q.terms){
+  const reference=normalizeBookingReference(term);
+  if(reference){where.push('booking_reference='+bind(reference));continue;}
+  const escaped=term.replace(/[\\%_]/g,'\\$&'),match=text+' LIKE '+bind('%'+escaped+'%')+" ESCAPE E'\\\\'";
+  where.push(/^\+?[0-9().-]+$/.test(term)&&term.replace(/\D/g,'').length>=3?'('+match+" OR regexp_replace(record->'customer'->>'phone','[^0-9]','','g') LIKE "+bind('%'+term.replace(/\D/g,'')+'%')+')':match);
+ }
  if(q.cursor)where.push('(start,id)>('+bind(q.cursor.start)+'::timestamptz,'+bind(q.cursor.id)+'::uuid)');
  const limit=bind(q.limit+1);
- return {text:`WITH scheduled AS (SELECT id,record,archived_at,archived_by,COALESCE(scheduled_start_at,${pickupStart}) AS start,COALESCE(scheduled_end_at,${legacyEnd}) AS finish FROM er_reservations) SELECT id,record,start,finish,archived_at,archived_by FROM scheduled WHERE ${where.join(' AND ')} ORDER BY start ASC,id ASC LIMIT ${limit}`,values};
+ return {text:`WITH scheduled AS (SELECT id,record,booking_reference,archived_at,archived_by,COALESCE(scheduled_start_at,${pickupStart}) AS start,COALESCE(scheduled_end_at,${legacyEnd}) AS finish FROM er_reservations) SELECT id,record,booking_reference,start,finish,archived_at,archived_by FROM scheduled WHERE ${where.join(' AND ')} ORDER BY start ASC,id ASC LIMIT ${limit}`,values};
 }
 function dispatchAirport(trip,side){
  const id=trip[side+'PlaceId'];
@@ -62,7 +68,7 @@ function adminDto(r,archive={},now=Date.now()){
  const canRequestPaymentLink=require('../services/admin-payment-links').eligible(r);
  const trip={...Object.fromEntries(['pickup','dropoff','date','time','returnDate','returnTime','hours','tripType','vehicle','passengers','flightNumber'].filter(k=>r.trip[k]!==undefined).map(k=>[k,r.trip[k]])),timeZone:'America/New_York',pickupAirport:dispatchAirport(r.trip,'pickup'),dropoffAirport:dispatchAirport(r.trip,'dropoff')};
  for(const [field,max]of [['notes',2000],['airline',120]])if(typeof r.trip[field]==='string' && r.trip[field].trim())trip[field]=r.trip[field].slice(0,max);
- return {canRequestPaymentLink,archived:!!archive.archived_at,archivedAt:archive.archived_at?new Date(archive.archived_at).toISOString():null,archivedBy:archive.archived_by || null,canArchive:!archive.archived_at&&require('./admin-archives').canArchive(r,archive.finish,now),id:r.id,customer:{firstName:r.customer.firstName,lastName:r.customer.lastName,email:r.customer.email,phone:r.customer.phone},trip,quote:{total:r.quote.total,currency:r.quote.currency,vehicle:r.trip.vehicle==='suv'?'Luxury SUV':r.quote.vehicle},status:r.status,paymentStatus:r.paymentStatus,paymentReviewRequired:r.paymentReviewRequired===true,paymentVerificationPending:paymentVerificationPending(r),...(r.refundStatus?{refundStatus:r.refundStatus}:{}),dispatch:{...r.dispatch},...(r.checkoutAttempt?{checkoutAttempt:{state:r.checkoutAttempt.state,quote:{promotion:{code:r.checkoutAttempt.quote?.promotion?.code}}}}:{})};
+ return {canRequestPaymentLink,archived:!!archive.archived_at,archivedAt:archive.archived_at?new Date(archive.archived_at).toISOString():null,archivedBy:archive.archived_by || null,canArchive:!archive.archived_at&&require('./admin-archives').canArchive(r,archive.finish,now),id:r.id,bookingReference:archive.booking_reference || null,customer:{firstName:r.customer.firstName,lastName:r.customer.lastName,email:r.customer.email,phone:r.customer.phone},trip,quote:{total:r.quote.total,currency:r.quote.currency,vehicle:r.trip.vehicle==='suv'?'Luxury SUV':r.quote.vehicle},status:r.status,paymentStatus:r.paymentStatus,paymentReviewRequired:r.paymentReviewRequired===true,paymentVerificationPending:paymentVerificationPending(r),...(r.refundStatus?{refundStatus:r.refundStatus}:{}),dispatch:{...r.dispatch},...(r.checkoutAttempt?{checkoutAttempt:{state:r.checkoutAttempt.state,quote:{promotion:{code:r.checkoutAttempt.quote?.promotion?.code}}}}:{})};
 }
 function page(rows,q){const subset=rows.slice(0,q.limit),last=subset.at(-1);return {bookings:subset.map(x=>adminDto(x.record,x,Date.parse(q.at))),nextCursor:rows.length>q.limit?Buffer.from(JSON.stringify({hash:q.hash,at:q.at,start:new Date(last.start).toISOString(),id:last.id})).toString('base64url'):null};}
 function adminReservationStorage(pool,transaction,validate){return {searchAdminReservations:q=>transaction(async client=>{

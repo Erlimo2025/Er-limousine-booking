@@ -41,7 +41,7 @@ test('action email text and HTML use escaped stored data without hidden payment 
 test('worker loads the reservation-bound event once and reuses frozen message and provider idempotency key after failure',async()=>{
  const r=record(),e=event(r),now=Date.parse('2026-10-01T16:00:00Z'),job={id:crypto.randomUUID(),booking_id:r.id,event_id:e.id,kind:'customer_pickup_time_updated',claim_token:crypto.randomUUID(),payload:null};
  let available=true,eventCalls=0,fail=true;const sends=[],finishes=[],failures=[];
- const store={claimBookingEmail:async()=>{if(!available)return null;available=false;return {...job};},reservationOwner:async()=>{throw Error('not needed');},get:async id=>{assert.equal(id,r.id);return r;},tripEvent:async(id,bookingId)=>{eventCalls++;assert.equal(id,e.id);assert.equal(bookingId,r.id);return e;},prepareBookingEmail:async(id,token,payload)=>{assert.equal(id,job.id);assert.equal(token,job.claim_token);job.payload=job.payload||structuredClone(payload);return {...job,lease_until:new Date(now+60000),first_submitted_at:new Date(now)};},finishBookingEmail:async(id,token,success)=>{finishes.push(success);}};
+ const store={claimBookingEmail:async()=>{if(!available)return null;available=false;return {...job};},reservationOwner:async()=>{throw Error('not needed');},getForDisplay:async id=>{assert.equal(id,r.id);return r;},tripEvent:async(id,bookingId)=>{eventCalls++;assert.equal(id,e.id);assert.equal(bookingId,r.id);return e;},prepareBookingEmail:async(id,token,payload)=>{assert.equal(id,job.id);assert.equal(token,job.claim_token);job.payload=job.payload||structuredClone(payload);return {...job,lease_until:new Date(now+60000),first_submitted_at:new Date(now)};},finishBookingEmail:async(id,token,success)=>{finishes.push(success);}};
  const service=createBookingEmails({store,contact,siteUrl:'http://localhost:3000',now:()=>now,reportFailure:(...args)=>failures.push(args),provider:{enabled:true,sendBookingEmail:async m=>{sends.push(structuredClone(m));if(fail)throw Error('private-provider-body');}}});
  await service.run();assert.equal(eventCalls,1);assert.deepEqual(finishes,[false]);assert.equal(failures.length,1);assert.deepEqual(failures[0],[]);
  available=true;fail=false;e.details.newDate='2026-12-01';r.trip.date='2026-12-31';await service.run();assert.equal(eventCalls,1);assert.deepEqual(finishes,[false,true]);assert.equal(sends.length,2);assert.deepEqual(sends[1],sends[0]);assert.equal(sends[0].idempotencyKey,'booking-email/'+job.id);assert.match(sends[1].text,/New pickup date\/time: 11\/11\/2026 · 2:30 PM/);
@@ -49,7 +49,7 @@ test('worker loads the reservation-bound event once and reuses frozen message an
 
 test('worker fails closed without a matching audit event and never sends an unverifiable notification',async()=>{
  const r=record(),e=event(r),job={id:crypto.randomUUID(),booking_id:r.id,event_id:e.id,kind:'customer_trip_cancelled',claim_token:crypto.randomUUID(),payload:null};let available=true,sent=0,prepared=0;const results=[];
- const service=createBookingEmails({store:{claimBookingEmail:async()=>{if(!available)return null;available=false;return job;},get:async()=>r,tripEvent:async()=>e,prepareBookingEmail:async()=>{prepared++;},finishBookingEmail:async(id,token,success)=>results.push(success)},contact,provider:{enabled:true,sendBookingEmail:async()=>{sent++;}}});
+ const service=createBookingEmails({store:{claimBookingEmail:async()=>{if(!available)return null;available=false;return job;},getForDisplay:async()=>r,tripEvent:async()=>e,prepareBookingEmail:async()=>{prepared++;},finishBookingEmail:async(id,token,success)=>results.push(success)},contact,provider:{enabled:true,sendBookingEmail:async()=>{sent++;}}});
  await service.run();assert.equal(sent,0);assert.equal(prepared,0);assert.deepEqual(results,[false]);
 });
 
@@ -78,7 +78,7 @@ test('refund confirmation emails require stored confirmed refund state and reser
 test('refund-confirmed outbox retry freezes one safe message and reuses provider idempotency',async()=>{
  const r=record();r.status='cancelled';r.refundStatus='confirmed';const e=event(r,'customer_cancelled'),now=Date.parse('2026-10-01T16:00:00Z'),job={id:crypto.randomUUID(),booking_id:r.id,event_id:e.id,kind:'customer_refund_confirmed',claim_token:crypto.randomUUID(),payload:null};
  let available=true,fail=true,eventCalls=0;const sends=[],results=[],failures=[];
- const service=createBookingEmails({store:{claimBookingEmail:async()=>{if(!available)return null;available=false;return {...job};},get:async()=>r,tripEvent:async(id,b)=>{eventCalls++;assert.equal(id,e.id);assert.equal(b,r.id);return e;},prepareBookingEmail:async(id,token,payload)=>{assert.equal(id,job.id);assert.equal(token,job.claim_token);job.payload=job.payload||structuredClone(payload);return {...job,lease_until:new Date(now+60000),first_submitted_at:new Date(now)};},finishBookingEmail:async(id,token,success)=>results.push(success)},contact,now:()=>now,reportFailure:(...args)=>failures.push(args),provider:{enabled:true,sendBookingEmail:async m=>{sends.push(structuredClone(m));if(fail)throw Error('private-refund-provider-error');}}});
+ const service=createBookingEmails({store:{claimBookingEmail:async()=>{if(!available)return null;available=false;return {...job};},getForDisplay:async()=>r,tripEvent:async(id,b)=>{eventCalls++;assert.equal(id,e.id);assert.equal(b,r.id);return e;},prepareBookingEmail:async(id,token,payload)=>{assert.equal(id,job.id);assert.equal(token,job.claim_token);job.payload=job.payload||structuredClone(payload);return {...job,lease_until:new Date(now+60000),first_submitted_at:new Date(now)};},finishBookingEmail:async(id,token,success)=>results.push(success)},contact,now:()=>now,reportFailure:(...args)=>failures.push(args),provider:{enabled:true,sendBookingEmail:async m=>{sends.push(structuredClone(m));if(fail)throw Error('private-refund-provider-error');}}});
  await service.run();assert.deepEqual(results,[false]);assert.deepEqual(failures,[[]]);available=true;fail=false;r.trip.pickup='Later edit';e.details.oldDate='2026-12-01';await service.run();
  assert.equal(eventCalls,1);assert.deepEqual(results,[false,true]);assert.equal(sends.length,2);assert.deepEqual(sends[1],sends[0]);assert.equal(sends[1].idempotencyKey,'booking-email/'+job.id);assert.match(sends[1].text,/full refund has been confirmed/);assert.doesNotMatch(JSON.stringify(sends[1]),/private-refund-provider-error|Later edit|2026-12-01/);
 });
@@ -98,7 +98,21 @@ test('refund-review notifications require owned cancellation audit and safe auth
 test('refund-review email failure retries one frozen correction without provider details or refund submission',async()=>{
  const r=record();r.status='cancelled';r.refundStatus='review_required';const e=event(r,'customer_cancelled'),now=Date.parse('2026-10-01T16:00:00Z'),job={id:crypto.randomUUID(),booking_id:r.id,event_id:e.id,kind:'customer_refund_review',claim_token:crypto.randomUUID(),payload:null};
  let available=true,fail=true,eventCalls=0;const sends=[],results=[],failures=[];
- const service=createBookingEmails({store:{claimBookingEmail:async()=>{if(!available)return null;available=false;return {...job};},get:async()=>r,tripEvent:async(id,b)=>{eventCalls++;assert.equal(id,e.id);assert.equal(b,r.id);return e;},prepareBookingEmail:async(id,token,payload)=>{assert.equal(id,job.id);assert.equal(token,job.claim_token);job.payload=job.payload||structuredClone(payload);return {...job,lease_until:new Date(now+60000),first_submitted_at:new Date(now)};},finishBookingEmail:async(id,token,success)=>results.push(success)},contact,now:()=>now,reportFailure:(...args)=>failures.push(args),provider:{enabled:true,sendBookingEmail:async m=>{sends.push(structuredClone(m));if(fail)throw Error('private-refund-review-provider-error');}}});
+ const service=createBookingEmails({store:{claimBookingEmail:async()=>{if(!available)return null;available=false;return {...job};},getForDisplay:async()=>r,tripEvent:async(id,b)=>{eventCalls++;assert.equal(id,e.id);assert.equal(b,r.id);return e;},prepareBookingEmail:async(id,token,payload)=>{assert.equal(id,job.id);assert.equal(token,job.claim_token);job.payload=job.payload||structuredClone(payload);return {...job,lease_until:new Date(now+60000),first_submitted_at:new Date(now)};},finishBookingEmail:async(id,token,success)=>results.push(success)},contact,now:()=>now,reportFailure:(...args)=>failures.push(args),provider:{enabled:true,sendBookingEmail:async m=>{sends.push(structuredClone(m));if(fail)throw Error('private-refund-review-provider-error');}}});
  await service.run();assert.deepEqual(results,[false]);assert.deepEqual(failures,[[]]);available=true;fail=false;r.customer.firstName='Later edit';e.details.oldDate='2026-12-01';await service.run();
  assert.equal(eventCalls,1);assert.deepEqual(results,[false,true]);assert.equal(sends.length,2);assert.deepEqual(sends[1],sends[0]);assert.equal(sends[1].idempotencyKey,'booking-email/'+job.id);assert.match(sends[1].subject,/Refund Review Required/);assert.match(sends[1].text,/refund requires operator review/);assert.doesNotMatch(JSON.stringify(sends[1]),/private-refund-review-provider-error|Later edit|2026-12-01|full refund has been confirmed/);
+});
+
+test('short references appear in change, cancellation and refund notifications without replacing audit identity',()=>{
+ const r={...record(),bookingReference:'ER-256781'};
+ const changed=bookingMessage(r,'customer_pickup_time_updated',contact,null,event(r));
+ r.status='cancelled';r.refundStatus='confirmed';
+ const cancelled=event(r,'customer_cancelled');
+ for(const m of [changed,bookingMessage(r,'customer_trip_cancelled',contact,null,cancelled),
+   bookingMessage(r,'customer_refund_confirmed',contact,null,cancelled)]){
+  assert.match(m.text,/Booking reference: ER-256781/);
+  assert.ok(m.html.includes(r.bookingReference));
+  assert.ok(!JSON.stringify(m).includes(r.id));
+ }
+ assert.equal(cancelled.booking_id,r.id);
 });

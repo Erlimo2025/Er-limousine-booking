@@ -38,6 +38,7 @@ for(const account of [false,true])for(const state of ['unpaid','paid','cancelled
   }
   const reserved=await h.request('/api/checkout',{...booking,vehicle:'suv',paymentChoice:'later'},auth);assert.equal(reserved.status,200);
   const id=reserved.body.bookingId,expectedTotal=h.records()[0].quote.total;
+  const reference=(await h.testStore.getForDisplay(id)).bookingReference;
   if(account)assert.ok(await h.testStore.reservationOwner(id));else assert.equal(await h.testStore.reservationOwner(id),null);
   // Account cases must exercise the account-status fallback, not a guest cookie.
   if(!account)cookies.push(...browserCookies(reserved,h.url));
@@ -56,6 +57,7 @@ for(const account of [false,true])for(const state of ['unpaid','paid','cancelled
   }
   const context=await browser.newContext({viewport:{width,height:1000}});let release;const gate=new Promise(r=>release=r);let released=false;
   try{
+   await context.grantPermissions(['clipboard-read','clipboard-write'],{origin:h.url});
    await context.addCookies(cookies);await context.addInitScript(()=>{window.cspFailures=[];document.addEventListener('securitypolicyviolation',e=>window.cspFailures.push(e.effectiveDirective));});
    await context.route('**/*',async r=>{
     const url=new URL(r.request().url());
@@ -69,17 +71,24 @@ for(const account of [false,true])for(const state of ['unpaid','paid','cancelled
    assert.equal(await button.evaluate(e=>getComputedStyle(e).display),'none');released=true;release();
    const message=state==='unpaid'?'Payment is still required':state==='verification_pending'?'confirming your payment':state.startsWith('cancelled')?'cancelled':'Payment received';
    await page.waitForFunction(text=>document.getElementById('message').textContent.includes(text),message);
+   assert.equal(await page.locator('.booking-reference-value').innerText(),reference);
+   assert.ok(!(await page.locator('#details').innerText()).includes(id));
+   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
    assert.equal(await button.evaluate(e=>e.hidden),state!=='unpaid');assert.equal(await button.isVisible(),state==='unpaid');
    assert.equal(await button.evaluate(e=>getComputedStyle(e).display),state==='unpaid'?'inline-flex':'none');
    assert.equal(await page.locator('#refreshReservation').isVisible(),true,'The scoped fix must not hide other controls');
    assert.deepEqual(await page.evaluate(()=>window.cspFailures),[]);
    if(state==='unpaid'){
+    await page.getByRole('button',{name:'Copy booking reference '+reference}).click();
+    await page.getByText('Copied',{exact:true}).waitFor();
+    assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),reference);
     assert.equal(h.state.creates.length,0);h.state.createDelay=75;
     await button.dblclick({delay:10});await page.waitForURL('https://checkout.example.test/mock');assert.equal(h.state.creates.length,1);
     const duplicate=await Promise.all([payment(),payment()]);assert.ok(duplicate.every(r=>r.status===200));assert.equal(h.state.creates.length,1);
     session=[...h.state.sessions.values()][0];assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount,Math.round(expectedTotal*100));
     session.status='complete';session.payment_status='paid';assert.equal((await h.webhook(session)).status,200);
     await page.goto(h.url+'/success.html?booking='+id);await page.waitForFunction(()=>document.getElementById('message').textContent.includes('Payment received'));
+    assert.equal(await page.locator('.booking-reference-value').innerText(),reference);
     assert.equal(await button.isVisible(),false);assert.equal(await button.evaluate(e=>getComputedStyle(e).display),'none');
     const denied=await Promise.all([payment(),payment()]);assert.ok(denied.every(r=>r.status===409));assert.equal(h.state.creates.length,1);
    }else{

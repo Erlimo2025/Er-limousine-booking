@@ -65,10 +65,13 @@
     details.replaceChildren();
     function add(label, value) {
       const group = node('div');
-      group.append(node('dt', label), node('dd', value));
+      const description = node('dd');
+      description.append(value);
+      group.append(node('dt', label), description);
       details.append(group);
     }
-    add('Reservation reference', reservation.reference);
+    const reference = reservation.bookingReference || reservation.reference;
+    add('Booking reference', globalThis.BookingReference?.control(reference) || reference);
     add('Booking status', bookingLabels[reservation.status] || 'Unavailable');
     add('Pickup', reservation.pickup);
     add('Destination', reservation.dropoff);

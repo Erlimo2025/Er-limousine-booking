@@ -5,6 +5,7 @@ const {isDeepStrictEqual} = require('node:util');
 const {
   LINK_MINUTES, GRANT_MINUTES, ManagementError, normalizeGuestEmail, tripFingerprint
 } = require('../services/reservation-management');
+const {normalizeBookingReference} = require('../services/booking-reference');
 
 const MINUTE = 60000;
 const unavailable = () => new ManagementError(404, 'Reservation unavailable.');
@@ -22,7 +23,7 @@ function reservationManagementStorage(transaction, safe, validateRecord, queryCl
       if (!access || (reference && reference !== access.booking_id)) return null;
       if (paymentWrite) await paymentLock(client);
       return (await client.query(
-        'SELECT record FROM er_reservations WHERE id=$1 AND customer_id IS NULL' + reservationLock,
+        'SELECT record,booking_reference FROM er_reservations WHERE id=$1 AND customer_id IS NULL' + reservationLock,
         [access.booking_id]
       )).rows[0] || null;
     }
@@ -36,7 +37,7 @@ function reservationManagementStorage(transaction, safe, validateRecord, queryCl
     if (!active) return null;
     if (paymentWrite) await paymentLock(client);
     return (await client.query(
-      'SELECT record FROM er_reservations WHERE id=$1 AND customer_id=$2' + reservationLock,
+      'SELECT record,booking_reference FROM er_reservations WHERE id=$1 AND customer_id=$2' + reservationLock,
       [reference, authority.customerId]
     )).rows[0] || null;
   }
@@ -46,8 +47,10 @@ function reservationManagementStorage(transaction, safe, validateRecord, queryCl
       transaction, safe, validateRecord, queryClient, ownedRow, assertActionLock
     }),
     issueReservationVerification: (reference, email, linkHash, now) => transaction(async client => {
-      const row = (await client.query(
-        'SELECT record FROM er_reservations WHERE id=$1 AND customer_id IS NULL', [reference]
+      const shortReference = normalizeBookingReference(reference);
+      const row = (await client.query(shortReference
+        ? 'SELECT record FROM er_reservations WHERE booking_reference=$1 AND customer_id IS NULL'
+        : 'SELECT record FROM er_reservations WHERE id=$1 AND customer_id IS NULL', [shortReference || reference]
       )).rows[0];
       if (!row) return null;
       const record = validateRecord(row.record);
@@ -64,7 +67,7 @@ function reservationManagementStorage(transaction, safe, validateRecord, queryCl
         'ELSE er_reservation_management_access.issued_count+1 END ' +
         'WHERE er_reservation_management_access.issued_at <= $5 AND ' +
         '(er_reservation_management_access.issued_count < 4 OR er_reservation_management_access.window_started_at <= $6)',
-        [reference, linkHash, issuedAt, new Date(now + LINK_MINUTES * MINUTE), new Date(now - MINUTE), new Date(now - 60 * MINUTE)]
+        [record.id, linkHash, issuedAt, new Date(now + LINK_MINUTES * MINUTE), new Date(now - MINUTE), new Date(now - 60 * MINUTE)]
       );
       return result.rowCount ? record.customer.email : null;
     }),
@@ -100,7 +103,7 @@ function reservationManagementStorage(transaction, safe, validateRecord, queryCl
         "SELECT * FROM er_reservation_management_requests WHERE booking_id=$1 " +
         "ORDER BY (status='pending') DESC, created_at DESC, id DESC LIMIT 20", [record.id]
       );
-      return {record, requests: rows};
+      return {record, bookingReference: row.booking_reference, requests: rows};
     }),
 
     submitReservationRequest: (authority, reference, input, now, checkChange) => transaction(async client => {
@@ -133,7 +136,7 @@ function reservationManagementStorage(transaction, safe, validateRecord, queryCl
 
     listReservationRequests: (status, cursor, limit) => safe(async () => {
       const result = await queryClient().query(
-        'SELECT q.*, r.record FROM er_reservation_management_requests q JOIN er_reservations r ON r.id=q.booking_id ' +
+        'SELECT q.*, r.record, r.booking_reference FROM er_reservation_management_requests q JOIN er_reservations r ON r.id=q.booking_id ' +
         'WHERE q.status=$1 AND ($2::timestamptz IS NULL OR (q.created_at,q.id)<($2,$3::uuid)) ' +
         'ORDER BY q.created_at DESC,q.id DESC LIMIT $4',
         [status, cursor?.date || null, cursor?.id || null, limit + 1]

@@ -1,6 +1,7 @@
 // Test-only relational archive state; never changes reservation JSON or payment helpers.
 const {archiveInput,canArchive,archiveError}=require('../../storage/admin-archives');
 const {page,adminDto}=require('../../storage/admin-reservations');
+const {normalizeBookingReference}=require('../../services/booking-reference');
 function adminArchiveMemory(shared,fail,atomic,actionScope){
  shared.adminArchives ||= new Map();shared.archiveEvents ||= new Map();
  function ny(date,time){
@@ -24,7 +25,7 @@ function adminArchiveMemory(shared,fail,atomic,actionScope){
    return {changed,archived:action==='archive'};
   }),
   searchAdminReservations:async q=>{
-   fail('read');const rows=shared.records.map(record=>({record,id:record.id,...schedule(record),archived_at:null,archived_by:null,...shared.adminArchives.get(record.id)})).filter(row=>{
+   fail('read');const rows=shared.records.map(record=>({record,id:record.id,booking_reference:shared.bookingReferences.get(record.id),...schedule(record),archived_at:null,archived_by:null,...shared.adminArchives.get(record.id)})).filter(row=>{
     const r=row.record;if((q.view==='archived')!==!!row.archived_at)return false;
     if(q.status==='active'&&['cancelled','completed'].includes(r.status)||!['all','active'].includes(q.status)&&r.status!==q.status)return false;
     if(q.timing==='upcoming'&&row.finish<=q.at||q.timing==='past'&&row.finish>q.at||['today','tomorrow'].includes(q.timing)&&r.trip.date!==q[q.timing])return false;
@@ -32,7 +33,10 @@ function adminArchiveMemory(shared,fail,atomic,actionScope){
     if(q.payment==='paid'&&r.paymentStatus!=='paid'||q.payment==='unpaid'&&r.paymentStatus==='paid')return false;
     const dto=adminDto(r),airports=[dto.trip.pickupAirport?.code,dto.trip.dropoffAirport?.code];if(q.airport!=='all'&&(q.airport==='other'?airports.some(Boolean):!airports.includes(q.airport.toUpperCase())))return false;
     const text=[r.id,r.customer.firstName,r.customer.lastName,r.customer.email,r.customer.phone,r.trip.pickup,r.trip.dropoff,r.trip.flightNumber].join(' ').toLowerCase();
-    if(!q.terms.every(term=>text.includes(term)||/^\d+$/.test(term)&&r.customer.phone.replace(/\D/g,'').includes(term)))return false;
+    if(!q.terms.every(term=>{
+     const reference=normalizeBookingReference(term);
+     return reference?row.booking_reference===reference:text.includes(term)||/^\d+$/.test(term)&&r.customer.phone.replace(/\D/g,'').includes(term);
+    }))return false;
     return !q.cursor || row.start>q.cursor.start || row.start===q.cursor.start&&row.id>q.cursor.id;
    }).sort((a,b)=>a.start.localeCompare(b.start)||a.id.localeCompare(b.id));return page(rows,q);
   }

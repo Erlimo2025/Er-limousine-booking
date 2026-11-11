@@ -5,6 +5,7 @@ const {
   normalizeGuestEmail, guestToken, guestTokenHash, verificationEmail, parseRequest,
   checkProposedChange, requestView, reservationView
 } = require('../services/reservation-management');
+const {normalizeBookingReference} = require('../services/booking-reference');
 
 const BASE = '/api/booking/manage';
 const ADMIN = '/api/admin/reservation-requests';
@@ -80,7 +81,9 @@ function installReservationManagement(app, options) {
     handle(async (req, res) => {
       const {reference, email} = req.body;
       const normalized = normalizeGuestEmail(email);
-      if (!exactKeys(req.body, ['reference', 'email']) || typeof reference !== 'string' || !UUID.test(reference) || !normalized) {
+      const selector = normalizeBookingReference(reference) ||
+        (typeof reference === 'string' && UUID.test(reference) ? reference.toLowerCase() : null);
+      if (!exactKeys(req.body, ['reference', 'email']) || !selector || !normalized) {
         throw new ManagementError(400, 'Enter your full reservation reference and booking email.');
       }
       if (!emailProvider?.enabled) throw new ManagementError(503, 'Guest verification is temporarily unavailable. Please contact ER Limousine Service.');
@@ -91,7 +94,7 @@ function installReservationManagement(app, options) {
       void (async () => {
         try {
           const token = guestToken();
-          const recipient = await store.issueReservationVerification(reference.toLowerCase(), normalized, guestTokenHash(token), now());
+          const recipient = await store.issueReservationVerification(selector, normalized, guestTokenHash(token), now());
           if (recipient) await emailProvider.sendBookingEmail(verificationEmail(origin, recipient, token));
         } catch (_) {
           reportFailure();
@@ -147,7 +150,7 @@ function installReservationManagement(app, options) {
       const result = await store.reservationManagementView(authority, reference, now());
       if (!result) throw new ManagementError(404, UNAVAILABLE);
       res.json({
-        reservation: reservationView(result.record, now(), parseDateTime),
+        reservation: reservationView(result.record, now(), parseDateTime, result.bookingReference),
         requests: result.requests.map(requestView),
         ...await automation.customerView(result.record, result.requests)
       });
@@ -176,7 +179,7 @@ function installReservationManagement(app, options) {
     })).toString('base64url') : null;
     res.json({nextCursor, requests: page.map(row => ({
       ...requestView(row),
-      reservation: reservationView(row.record, now(), parseDateTime),
+      reservation: reservationView(row.record, now(), parseDateTime, row.booking_reference),
       source: row.customer_id ? 'account' : 'guest',
       reviewer: row.reviewer_id
     }))});

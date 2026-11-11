@@ -805,7 +805,8 @@ test("reservation response whitelists fields and preserves driver visibility rul
     h.testStore.fixtures(h.context.fixtureRecords);
     const result = await h.request(`/api/booking/${record.id}`, undefined, {cookie});
     assert.equal(result.status, 200);
-    assert.deepEqual(Object.keys(result.body).sort(), ["cancellationPolicy", "dispatch", "id", "paymentStatus", "paymentVerificationPending", "quote", "status", "trip"]);
+    assert.deepEqual(Object.keys(result.body).sort(), ["bookingReference", "cancellationPolicy", "dispatch", "id", "paymentStatus", "paymentVerificationPending", "quote", "status", "trip"]);
+    assert.match(result.body.bookingReference, /^ER-[0-9]{6}$/);
     assert.deepEqual(result.body.cancellationPolicy, record.cancellationPolicyAtBooking);
     assert.deepEqual(Object.keys(result.body.trip).sort(), ["date", "dropoff", "pickup", "time"]);
     assert.deepEqual(Object.keys(result.body.quote).sort(), ["currency", "total", "vehicle"]);

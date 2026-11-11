@@ -56,6 +56,7 @@ for (const width of [320, 390, 1440]) {
     const {h} = fixture;
     const id = await fixture.reserve();
     const initial = await fixture.store.get(id);
+    const {bookingReference} = await fixture.store.getForDisplay(id);
     const context = await contextFor(t, h, width);
     let page = await context.newPage();
     page.setDefaultTimeout(15000);
@@ -66,7 +67,7 @@ for (const width of [320, 390, 1440]) {
     await page.getByRole('heading', {name: 'Manage My Reservation'}).waitFor();
     await layout(page);
     assert.equal(await page.locator('#manageContent').isVisible(), false);
-    await page.getByLabel('Reservation reference').fill(id);
+    await page.getByLabel('Reservation reference').fill(bookingReference.toLowerCase());
     await page.getByLabel('Booking email').fill(guestBooking.email);
     await page.getByRole('button', {name: 'Email verification link'}).click();
     await page.getByText(/we’ll email a verification link/).waitFor();
@@ -96,7 +97,8 @@ for (const width of [320, 390, 1440]) {
     assert.equal(grant.path, '/api/booking');
     assert.equal(await page.evaluate(() => document.cookie.includes('er_reservation_management')), false);
     const display = page.locator('#manageDetails');
-    await display.getByText(id, {exact: true}).waitFor();
+    await display.getByText(bookingReference, {exact: true}).waitFor();
+    assert.equal(await display.getByRole('button', {name: 'Copy booking reference ' + bookingReference}).isVisible(), true);
     await display.getByText('11/10/2026 · 1:00 PM (New York time)', {exact: true}).waitFor();
     await display.getByText('Unpaid', {exact: true}).waitFor();
     assert.ok(!(await page.locator('body').innerText()).includes(guestBooking.email));
@@ -119,7 +121,17 @@ for (const width of [320, 390, 1440]) {
     assert.equal(await panel.isVisible(), false);
     await dispatch.getByLabel('Admin credential').fill('local-test-token');
     await dispatch.getByRole('button', {name: 'Admin login'}).click();
+    await dispatch.getByLabel('Search reservations').fill(bookingReference.toLowerCase());
+    const [search] = await Promise.all([
+      dispatch.waitForResponse(response => new URL(response.url()).searchParams.get('search') === bookingReference.toLowerCase()),
+      dispatch.getByRole('button', {name: 'Search / Apply Filters'}).click()
+    ]);
+    assert.equal(search.status(), 200);
+    const card = dispatch.locator('#bookings .dispatch-card');
+    await card.getByText(bookingReference, {exact: false}).waitFor();
+    assert.equal(await card.getAttribute('data-id'), id);
     await panel.locator('summary').click();
+    await panel.getByText('Reservation ' + bookingReference + ' · guest', {exact: true}).waitFor();
     await panel.getByText('Requested pickup: ' + requested, {exact: true}).waitFor();
     await layout(dispatch);
     dispatch.once('dialog', dialog => dialog.dismiss());
@@ -173,7 +185,8 @@ test(engine + ' signed-in customer opens the new page from My Trips without chan
   await trip.getByText('Manage Trip', {exact: true}).click();
   await trip.getByRole('link', {name: 'Manage My Reservation'}).click();
   assert.equal(new URL(page.url()).searchParams.get('reservation'), id);
-  await page.locator('#manageDetails').getByText(id, {exact: true}).waitFor();
+  const {bookingReference} = await fixture.store.getForDisplay(id);
+  await page.locator('#manageDetails').getByText(bookingReference, {exact: true}).waitFor();
   assert.equal(await page.locator('#manageSignOut').isVisible(), false);
   await page.getByLabel('Request type').selectOption('pickup_schedule');
   await page.getByLabel('Pickup date', {exact: true}).fill('2026-11-11');

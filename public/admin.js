@@ -201,7 +201,7 @@ function renderBooking(b) {
       ${trip.tripType==='roundtrip' && trip.returnDate && trip.returnTime?`<p class="dispatch-secondary"><span class="dispatch-label">Return · New York time</span> ${esc(date(trip.returnDate))} · ${esc(time(trip.returnTime))}</p>`:''}
       ${trip.flightNumber || trip.airline?`<p class="dispatch-flight">${trip.flightNumber?'<span class="dispatch-label">Flight</span> '+esc(trip.flightNumber):''}${trip.airline?' <span class="dispatch-label">Airline</span> '+esc(trip.airline):''}</p>`:''}
       ${notes?`<details class="dispatch-notes"><summary>Customer notes <span class="dispatch-note-preview">${esc(notes.slice(0,100))}${notes.length>100?'…':''}</span></summary><p>${esc(notes)}</p></details>`:''}
-      <p class="dispatch-reference"><span class="dispatch-label">Reservation ID</span> ${esc(b.id)}</p>
+      <p class="dispatch-reference"><span class="dispatch-label">Booking reference</span> ${esc(b.bookingReference || b.id)}</p>
       <details class="dispatch-editor"><summary>Manage Dispatch</summary>
       ${b.checkoutAttempt?.quote?.promotion?.code === "FIRST15" ? `
         <p class="dispatch-secondary"><strong>FIRST15 reconciliation:</strong> ${esc(({prepared:'Not submitted',submitted_unknown:'Provider response pending',session_identified:'Payment session identified',confirmed_paid:'Payment confirmed',confirmed_unpaid:'Unpaid confirmed',review_required:'Review required'})[b.checkoutAttempt.state] || 'Review required')}

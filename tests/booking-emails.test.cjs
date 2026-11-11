@@ -13,8 +13,10 @@ test('new Pay Now/Pay Later reservations notify ER once with authoritative trip,
  for(const choice of ['now','later']){
   const h=await harness(t,env),r=await h.request('/api/checkout',{...booking,paymentChoice:choice,vehicle:'suv',flightNumber:'UA 1234',notes:'Meet at curb & wait',amount:1,paymentStatus:'paid'});assert.equal(r.status,200);await flush(h);
   assert.equal(h.state.bookingMessages.length,2);const m=h.state.bookingMessages.find(x=>x.to===env.COMPANY_EMAIL);assert.equal(m.to,env.COMPANY_EMAIL);
-  for(const text of [r.body.bookingId,'Test Customer',booking.email,booking.phone,'UA 1234','Meet at curb & wait','Luxury SUV','$80.00','Unpaid',choice==='later'?'Pay Later':'Pay Now','America/New_York'])assert.ok(m.text.includes(text),text);
-  const customerMail=h.state.bookingMessages.find(x=>x.to===booking.email);assert.match(customerMail.subject,/^Reservation Confirmed — Payment Due/);assert.match(customerMail.text,/successfully reserved.*Payment has not been completed and is still due/);for(const value of [r.body.bookingId,booking.pickup,booking.dropoff,'$80.00','Unpaid'])assert.ok(customerMail.text.includes(value));assert.doesNotMatch(customerMail.text,/https?:|er_booking_access|tokenHash/);
+  const {bookingReference}=await h.testStore.getForDisplay(r.body.bookingId);
+  assert.match(bookingReference,/^ER-[0-9]{6}$/);assert.ok(m.subject.includes(bookingReference));assert.ok(!m.text.includes(r.body.bookingId));
+  for(const text of ['Booking reference: '+bookingReference,'Test Customer',booking.email,booking.phone,'UA 1234','Meet at curb & wait','Luxury SUV','$80.00','Unpaid',choice==='later'?'Pay Later':'Pay Now','America/New_York'])assert.ok(m.text.includes(text),text);
+  const customerMail=h.state.bookingMessages.find(x=>x.to===booking.email);assert.match(customerMail.subject,/^Reservation Confirmed — Payment Due/);assert.match(customerMail.text,/successfully reserved.*Payment has not been completed and is still due/);for(const value of ['Booking reference: '+bookingReference,booking.pickup,booking.dropoff,'$80.00','Unpaid'])assert.ok(customerMail.text.includes(value));assert.doesNotMatch(customerMail.text,/https?:|er_booking_access|tokenHash/);
   assert.equal(h.state.creates.length,choice==='later'?0:1);assert.equal(h.records()[0].paymentStatus,'unpaid');
   assert.equal((await h.request('/api/checkout',{...booking,paymentChoice:choice,vehicle:'suv',flightNumber:'UA 1234',notes:'Meet at curb & wait'})).body.bookingId,r.body.bookingId);await flush(h);
   assert.equal(h.state.bookingMessages.length,2);assert.equal(jobs(h).length,2);assert.equal(jobs(h)[0].payload,null);
@@ -27,7 +29,7 @@ test('only a signed Paid webhook queues customer confirmation; returns, pending 
  si.payment_status='paid';await h.context.reconcileFirstRide(r.body.bookingId);await flush(h);assert.equal(h.records()[0].paymentStatus,'unpaid');assert.equal(h.state.bookingMessages.length,2);
  assert.equal((await h.webhook(si,undefined,true)).status,400);await flush(h);assert.equal(h.state.bookingMessages.length,2);
  assert.equal((await h.webhook({...si,customer_details:{email:'forged@example.test'}})).status,200);await flush(h);
- const m=h.state.bookingMessages.find(x=>x.to===booking.email&&x.subject.startsWith('Payment Confirmed'));assert.ok(m);assert.ok(m.text.includes('$85.00'));assert.match(m.text,/payment has been confirmed/);assert.ok(m.text.includes(r.body.bookingId));assert.ok(m.text.includes(env.COMPANY_PHONE));
+ const m=h.state.bookingMessages.find(x=>x.to===booking.email&&x.subject.startsWith('Payment Confirmed'));assert.ok(m);assert.ok(m.text.includes('$85.00'));assert.match(m.text,/payment has been confirmed/);assert.ok(m.text.includes('Booking reference: '+(await h.testStore.getForDisplay(r.body.bookingId)).bookingReference));assert.ok(!m.text.includes(r.body.bookingId));assert.ok(m.text.includes(env.COMPANY_PHONE));
  await Promise.all([h.webhook(si),h.webhook(si)]);await flush(h);assert.equal(h.state.bookingMessages.length,4);assert.equal(jobs(h).filter(x=>x.kind==='payment_confirmed').length,1);
  assert.equal(h.records()[0].paymentStatus,'paid');assert.deepEqual(jobs(h).map(x=>x.kind).sort(),['admin_payment_confirmed','customer_reservation_created','payment_confirmed','reservation_created']);assert.equal(h.state.bookingMessages.filter(x=>x.to===env.COMPANY_EMAIL&&x.subject.startsWith('Payment Confirmed')).length,1);
  for(const forbidden of ['stripeSessionId','checkoutFingerprint','tokenHash','cus_','cs_mock'])assert.ok(!m.text.includes(forbidden));
@@ -104,9 +106,11 @@ test('PostgreSQL booking emails: atomic outbox, cross-worker dedup, delivery fau
  const h=await harness(t,env),a=await h.request('/api/customer/register',{fullName:'Test Customer',email:booking.email,phone:booking.phone,password:'Synthetic payment owner password'});
  assert.equal(a.status,201);const cookie=a.headers.getSetCookie().find(x=>x.includes('er_customer_session')).split(';')[0];
  const owned=await h.request('/api/checkout',{...booking,paymentChoice:'later'},{cookie});assert.equal(owned.status,200);await flush(h);
- const mail=h.state.bookingMessages.find(x=>x.to===booking.email&&x.text.includes(owned.body.bookingId));assert.match(mail.text,/http:\/\/localhost:3000\/account\/dashboard/);assert.match(mail.html,/Open My Trips \/ Complete Payment/);
+ const ownerReference=(await h.testStore.getForDisplay(owned.body.bookingId)).bookingReference;
+ const mail=h.state.bookingMessages.find(x=>x.to===booking.email&&x.text.includes(ownerReference));assert.match(mail.text,/http:\/\/localhost:3000\/account\/dashboard/);assert.match(mail.html,/Open My Trips \/ Complete Payment/);
  const guest=await h.request('/api/checkout',{...booking,time:'14:00',paymentChoice:'later'});assert.equal(guest.status,200);await flush(h);
- const guestMail=h.state.bookingMessages.find(x=>x.to===booking.email&&x.text.includes(guest.body.bookingId));assert.doesNotMatch(guestMail.text,/https?:|tokenHash|er_booking_access/);assert.doesNotMatch(guestMail.html,/href="https?:|er_booking_access|tokenHash/);
+ const guestReference=(await h.testStore.getForDisplay(guest.body.bookingId)).bookingReference;
+ const guestMail=h.state.bookingMessages.find(x=>x.to===booking.email&&x.text.includes(guestReference));assert.doesNotMatch(guestMail.text,/https?:|tokenHash|er_booking_access/);assert.doesNotMatch(guestMail.html,/href="https?:|er_booking_access|tokenHash/);
  });
 
 const presentationRecord=()=>({id:crypto.randomUUID(),status:'awaiting_payment',paymentStatus:'unpaid',customer:{firstName:'Test',lastName:'Customer',email:'person@example.test',phone:'2025550101'},trip:{pickup:'Terminal A, Terminal A, 3 Brewster Rd, Newark, NJ 07114, USA',dropoff:'Manhattan',date:'2026-11-10',time:'12:00',returnDate:'2026-11-12',returnTime:'18:00',vehicle:'suv',passengers:3},quote:{total:150,currency:'usd'},deferredPayment:true});

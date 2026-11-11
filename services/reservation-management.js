@@ -140,10 +140,11 @@ function requestView(row) {
   };
 }
 
-function reservationView(record, now, parseDateTime) {
+function reservationView(record, now, parseDateTime, bookingReference = null) {
   const trip = tripDto(record);
   return {
     reference: trip.reference,
+    bookingReference,
     status: trip.status,
     pickup: trip.pickup,
     dropoff: trip.dropoff,

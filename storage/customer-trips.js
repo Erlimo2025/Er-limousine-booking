@@ -47,11 +47,11 @@ function reusableTrip(record){
   t.vehicle==='suv' && ['oneway','airport'].includes(t.tripType) && Object.hasOwn(ewr,t.pickupPlaceId))template.offerCode=code;
  return template;
 }
-function tripDto(record,management=null) {
+function tripDto(record,management=null,bookingReference=null) {
  const policy=policyAtBooking(record);
  const t=record.trip;
  const terminal=id=>typeof id==='string'&&Object.hasOwn(ewr,id)?ewr[id].label:null;
- return {...(management?{management}:{}),...(['processing','review_required','confirmed','failed'].includes(record.refundStatus)?{refundStatus:record.refundStatus}:{}),canBookAgain:reusableTrip(record)!==null,reference:record.id,status:record.status,paymentStatus:record.paymentStatus,paymentVerificationPending:paymentVerificationPending(record),tripType:t.tripType,
+ return {...(management?{management}:{}),...(['processing','review_required','confirmed','failed'].includes(record.refundStatus)?{refundStatus:record.refundStatus}:{}),canBookAgain:reusableTrip(record)!==null,reference:record.id,bookingReference,status:record.status,paymentStatus:record.paymentStatus,paymentVerificationPending:paymentVerificationPending(record),tripType:t.tripType,
   pickup:t.pickup,dropoff:t.dropoff,date:t.date,time:t.time,timeZone:'America/New_York',
   ...(t.tripType==='roundtrip'?{returnDate:t.returnDate,returnTime:t.returnTime}:{}),
   ...(t.tripType==='hourly'?{hours:Number(t.hours)}:{}),vehicle:t.vehicle==='suv'?'Luxury SUV':record.quote.vehicle,passengers:t.passengers,
@@ -61,7 +61,7 @@ function tripDto(record,management=null) {
   total:record.quote.total,currency:record.quote.currency,createdAt:record.createdAt};
 }
 function customerTripsStorage(pool,safe,validate) {
- const rowDto=(row,now)=>tripDto(validate(row.record),now===undefined?null:require('../services/trip-management').managementDto(row.record,row.scheduled_start_at,row.scheduled_end_at,now));
+ const rowDto=(row,now)=>tripDto(validate(row.record),now===undefined?null:require('../services/trip-management').managementDto(row.record,row.scheduled_start_at,row.scheduled_end_at,now),row.booking_reference);
  return {
   customerReservation:(customerId,id)=>safe(async()=>{
    if(typeof id!=='string'||!uuid.test(id))return null;
@@ -71,7 +71,7 @@ function customerTripsStorage(pool,safe,validate) {
   reservationOwner:id=>safe(async()=> (await pool.query('SELECT customer_id FROM er_reservations WHERE id=$1',[id])).rows[0]?.customer_id || null),
   customerTrip:(customerId,id,now)=>safe(async()=>{
    if(typeof id!=='string'||!uuid.test(id))return null;
-   const row=(await pool.query('SELECT record,scheduled_start_at,scheduled_end_at FROM er_reservations WHERE customer_id=$1 AND id=$2',[customerId,id])).rows[0];
+   const row=(await pool.query('SELECT record,booking_reference,scheduled_start_at,scheduled_end_at FROM er_reservations WHERE customer_id=$1 AND id=$2',[customerId,id])).rows[0];
    return row?rowDto(row,now):null;
   }),
   customerTrips:(customerId,q,now)=>safe(async()=>{
@@ -81,7 +81,7 @@ function customerTripsStorage(pool,safe,validate) {
    const values=[customerId,q.at,q.limit+1];
    let cursor='';
    if(q.cursor){values.push(q.cursor.schedule,q.cursor.id);cursor=` AND (scheduled_end_at,id) ${op} ($4::timestamptz,$5::uuid)`;}
-   const rows=(await pool.query(`SELECT record,scheduled_start_at,scheduled_end_at,id FROM er_reservations WHERE customer_id=$1 AND ${predicate}${cursor} ORDER BY scheduled_end_at ${order},id ${order} LIMIT $3`,values)).rows;
+   const rows=(await pool.query(`SELECT record,booking_reference,scheduled_start_at,scheduled_end_at,id FROM er_reservations WHERE customer_id=$1 AND ${predicate}${cursor} ORDER BY scheduled_end_at ${order},id ${order} LIMIT $3`,values)).rows;
    const page=rows.slice(0,q.limit),last=page.at(-1);
    return {trips:page.map(row=>rowDto(row,now)),nextCursor:rows.length>q.limit?Buffer.from(JSON.stringify({view:q.view,at:q.at,schedule:new Date(last.scheduled_end_at).toISOString(),id:last.id})).toString('base64url'):null};
   })

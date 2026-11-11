@@ -151,7 +151,7 @@ app.set("trust proxy", process.env.TRUSTED_PROXY_CIDRS
 const productionHttps = process.env.NODE_ENV === "production" || process.env.RENDER === "true";
 const contentSecurityPolicy = [
   "default-src 'self'",
-  "script-src 'self' 'sha256-R/d/PcD3d+Cnw0KcqJHnPcV7bls88/t1r6v2RPbttEE='",
+  "script-src 'self' 'sha256-bWFvN2yaKPwGmDEp3f55ro+URhos/JEmGUL4dwM/wR4='",
   "script-src-attr 'none'",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data:",
@@ -312,6 +312,15 @@ try {
 const storageReady = reservationStore && !recoveryConfigurationFailed ? reservationStore.migrate() : Promise.reject(new StorageError());
 // Attach immediately so an unavailable database never creates an unhandled rejection.
 storageReady.catch(() => { console.error("Reservation storage initialization unavailable."); });
+async function runBookingReferenceBackfill() {
+  try {
+    await storageReady;
+    await reservationStore.backfillBookingReferences();
+  } catch (_) {
+    console.error('Booking reference backfill unavailable.');
+  }
+}
+setInterval(runBookingReferenceBackfill, 60000).unref();
 const reportBookingEmailFailure=()=>logDiagnostic({referenceId:crypto.randomUUID(),route:{path:'/internal/booking-emails'}},503,'provider_error','resend');
 const bookingEmailService=require('./services/booking-emails').createBookingEmails({store:reservationStore,provider:bookingEmailProvider,siteUrl:SITE_URL,
  contact:{email:process.env.COMPANY_EMAIL || 'bookings@erlimousineservice.com',phone:process.env.COMPANY_PHONE || '(973) 555-0100'},
@@ -2881,7 +2890,7 @@ app.get(
   "/api/booking/:id",
 
   route(async (req, res) => {
-    const booking=await reservationStore.get(req.params.id);
+    const booking=await reservationStore.getForDisplay(req.params.id);
 
     if (!hasCustomerAccess(req, booking) && !(booking && await reservationManagement.verifiedGuest(req,booking.id))) {
       return res.status(401).json({error: "Reservation access unavailable."});
@@ -2890,6 +2899,7 @@ app.get(
     const bookedCancellationPolicy = cancellationPolicy.policyAtBooking(booking);
     res.json({
       id: booking.id,
+      bookingReference: booking.bookingReference,
       ...(bookedCancellationPolicy ? {cancellationPolicy: bookedCancellationPolicy} : {}),
       status: booking.status,
       paymentStatus: booking.paymentStatus,
@@ -2921,6 +2931,7 @@ app.use((error,req,res,next)=> {
 });
 
 storageReady.then(() => {
+void runBookingReferenceBackfill();
 void runBookingEmails().catch(reportBookingEmailFailure);
 void runReservationRefunds().catch(()=>logDiagnostic({referenceId:crypto.randomUUID()},503,'provider_error','stripe'));
 app.listen(

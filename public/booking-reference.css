@@ -1,0 +1,49 @@
+.booking-reference-control,
+.trip-reference-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  min-width: 0;
+}
+
+.trip-reference-row {
+  grid-column: 1 / -1;
+  font-size: .875rem;
+}
+
+.booking-reference-value {
+  font-weight: 700;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.summary-row .booking-reference-value {
+  color: inherit;
+  font-size: inherit;
+}
+
+.booking-reference-copy {
+  min-height: 32px;
+  padding: 4px 9px;
+  border: 1px solid #b98b3e;
+  border-radius: 5px;
+  background: #fff;
+  color: #745114;
+  font: inherit;
+  font-size: .8125rem;
+  cursor: pointer;
+}
+
+.booking-reference-copy:focus-visible {
+  outline: 2px solid #132c3f;
+  outline-offset: 2px;
+}
+
+.booking-reference-status {
+  font-size: .8125rem;
+}
+
+.booking-reference-status:empty {
+  display: none;
+}

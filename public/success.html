@@ -7,6 +7,7 @@
   <title>Reservation Status | ER Limousine Service</title>
   <meta name="robots" content="noindex, nofollow">
   <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/booking-reference.css">
 </head>
 <body>
   <nav class="nav">
@@ -34,6 +35,7 @@
   </main>
 
   <script src="/trip-date-format.js"></script>
+  <script src="/booking-reference.js"></script>
   <script>
     (() => {
       const id=new URLSearchParams(location.search).get('booking');
@@ -41,7 +43,12 @@
       const pay=document.getElementById('completePayment'),refresh=document.getElementById('refreshReservation');
       let generation=0,busy=false,endpoint=null;
       const valid=typeof id==='string'&&/^[a-f0-9-]{36}$/i.test(id);
-      const row=(label,value)=>{const r=document.createElement('div');r.className='summary-row';const l=document.createElement('span'),v=document.createElement('strong');l.textContent=label;v.textContent=String(value);r.append(l,v);details.append(r);};
+      const row=(label,value)=>{
+        const r=document.createElement('div'),l=document.createElement('span'),v=document.createElement('strong');
+        r.className='summary-row';l.textContent=label;
+        if(typeof value==='object' && value?.nodeType===1)v.append(value);else v.textContent=String(value);
+        r.append(l,v);details.append(r);
+      };
       async function load(){
         const g=++generation;details.replaceChildren();pay.hidden=true;endpoint=null;message.textContent='Checking your reservation…';
         if(!valid){message.textContent='Reservation access unavailable.';return;}
@@ -55,7 +62,9 @@
           const paid=b.paymentStatus==='paid',cancelled=b.status==='cancelled',processing=b.paymentVerificationPending===true;
           const refund=cancelled&&paid&&['processing','confirmed','review_required','failed'].includes(b.refundStatus)?b.refundStatus:null;
           message.textContent=refund?refund==='confirmed'?'This reservation is cancelled. Your full refund has been confirmed.':refund==='processing'?'This reservation is cancelled. Your full refund is processing; it has not been confirmed yet. You do not need to pay again.':'This reservation is cancelled. Your refund requires review. Please contact ER Limousine Service; no refund has been confirmed.':paid&&cancelled?'Payment received for this cancelled reservation. Please contact ER Limousine Service for payment review.':paid?'Payment received. Your reservation is confirmed.':cancelled?'This reservation is cancelled.':processing?'We’re confirming your payment. You do not need to pay again.':'Your trip has been reserved. Payment is still required.';
-          row('Reservation',account?b.reference:b.id);row('Pickup',t.pickup);row('Destination',t.dropoff);row('Date / time',TripDateFormat.trip(t.date,t.time));
+          const reference=b.bookingReference || (account?b.reference:b.id);
+          row('Booking reference',globalThis.BookingReference?.control(reference) || reference);
+          row('Pickup',t.pickup);row('Destination',t.dropoff);row('Date / time',TripDateFormat.trip(t.date,t.time));
           const money=value=>new Intl.NumberFormat('en-US',{style:'currency',currency:q.currency||'usd'}).format(value);
           row('Vehicle',q.vehicle);
           const p=q.pricingBreakdown;

@@ -176,7 +176,7 @@ function reservationSelfServiceStorage({transaction, safe, validateRecord, query
     }),
 
     listManagedCancellations: (cursor, limit, needsReview) => safe(async () => (await queryClient().query(
-      'SELECT c.*, r.record FROM er_managed_cancellations c JOIN er_reservations r ON r.id=c.booking_id ' +
+      'SELECT c.*, r.record, r.booking_reference FROM er_managed_cancellations c JOIN er_reservations r ON r.id=c.booking_id ' +
       'WHERE ($1::timestamptz IS NULL OR (c.created_at,c.id)<($1,$2::uuid)) ' +
       "AND (NOT $4::boolean OR c.state IN ('review_required','failed') OR r.record->>'paymentReviewRequired'='true') " +
       'ORDER BY c.created_at DESC,c.id DESC LIMIT $3',
