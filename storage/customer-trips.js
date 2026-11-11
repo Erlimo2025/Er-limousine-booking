@@ -2,6 +2,7 @@ const ewr=require('../ewr-pickups');
 const pricing=require('../pricing');
 const {policyAtBooking}=require('../services/cancellation-policy');
 const {customerPricing}=require('../services/route-tolls');
+const bookingStops=require('../services/booking-stops');
 const uuid=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const iso=value=>typeof value==='string' && Number.isFinite(Date.parse(value)) && new Date(value).toISOString()===value;
 function tripQuery(query,now) {
@@ -34,6 +35,8 @@ function reusableTrip(record){
  if(t.tripType==='hourly' && ![3,3.5,4,4.5,5,5.5,6,7,8].includes(Number(t.hours)))return null;
  const template={pickup:t.pickup,dropoff:t.dropoff,vehicle:t.vehicle,passengers:Number(t.passengers),tripType:t.tripType};
  if(t.tripType==='hourly')template.hours=Number(t.hours);
+ const stops=bookingStops.template(record.quote);
+ if(stops)template.stops=stops;
  for(const [key,field] of [['pickupPlaceId','pickup'],['dropoffPlaceId','dropoff']])if(typeof t[key]==='string' && /^[A-Za-z0-9_-]{1,255}$/.test(t[key])){
   template[key]=t[key];
   // Reuse the existing approved selection wording, not provider-formatted text
@@ -58,6 +61,7 @@ function tripDto(record,management=null,bookingReference=null) {
   pickupTerminal:terminal(t.pickupPlaceId),dropoffTerminal:terminal(t.dropoffPlaceId),
   ...(policy ? {cancellationPolicy:policy} : {}),
   ...(record.quote.pricingBreakdown?{pricingBreakdown:customerPricing(record.quote)}:{}),
+  ...bookingStops.publicSummary(record.quote),
   total:record.quote.total,currency:record.quote.currency,createdAt:record.createdAt};
 }
 function customerTripsStorage(pool,safe,validate) {

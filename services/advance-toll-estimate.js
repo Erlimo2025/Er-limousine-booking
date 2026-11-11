@@ -89,7 +89,7 @@ function estimate(routes,profile,eligibility,parseProvider){
   for(const [i,r]of routes.entries()){
    if(!r||r.origin!==(i?eligibility.dropoffPlaceId:eligibility.pickupPlaceId)||r.destination!==(i?eligibility.pickupPlaceId:eligibility.dropoffPlaceId))rates.review('route_unavailable');
    if(r.data?.unusableForTolls)rates.review('provider_fallback_route');
-   const g=geo.geometry(r.data),departure=rates.instant(r.departure);if(departure<priorEnd)rates.review('route_time_order');priorEnd=departure+g.travel*1000;
+   const g=geo.geometry(r.data,r.stopWaitSeconds),departure=rates.instant(r.departure);if(departure<priorEnd)rates.review('route_time_order');priorEnd=departure+g.travel*1000;
    const {gate,points}=detect(g),paRate=windowRate(g,gate.start,gate.end,r.departure,'pa'),pa=gate.direction==='ny_bound'?paRate.cents:0;
    const chargeBefore=ledger.get(paRate.day)?.chargedCents||0;
    if(gate.direction!==((i?eligibility.dropoffState:eligibility.pickupState)==='NJ'?'ny_bound':'nj_bound'))rates.review('direction_conflict');

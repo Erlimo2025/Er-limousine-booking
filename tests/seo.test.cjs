@@ -87,8 +87,8 @@ test('schema omits unconfigured/invalid company telephone and cannot leak config
     const r = await h.request('/');
     assert.ok(!Object.hasOwn(graph(r.body)[0], 'telephone'));
     assert.doesNotMatch(r.body, /synthetic.private|alert\(1\)|442071234567/);
-    assert.equal((r.body.match(/<script\b/g) || []).length, 6);
-    assert.deepEqual([...r.body.matchAll(/<script src="([^"]+)"/g)].map(match=>match[1]),['/trip-date-format.js','/booking-date-controls.js','/pickup-location.js','/app.js','/customer-reviews.js']);
+    assert.equal((r.body.match(/<script\b/g) || []).length, 7);
+    assert.deepEqual([...r.body.matchAll(/<script src="([^"]+)"/g)].map(match=>match[1]),['/trip-date-format.js','/booking-date-controls.js','/pickup-location.js','/booking-stops.js','/app.js?v=booking-stops-1','/customer-reviews.js']);
   }
 });
 
@@ -184,7 +184,7 @@ test('homepage marketing has one meaningful H1, working section links and no JFK
   assert.match(html, /id="ewrManhattanSpecialBtn"/);
   assert.match(html, /RESERVE & PAY NOW/);
   assert.match(html, /RESERVE & PAY LATER/);
-  assert.match(html, /<script src="\/app.js"><\/script>/);
+  assert.match(html, /<script src="\/app\.js\?v=booking-stops-1"><\/script>/);
 });
 
 test('public SEO reads create no reservation/provider activity and keep authoritative quotes/pay-later intact', async t => {

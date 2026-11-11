@@ -10,6 +10,10 @@ let reservationBusy=false;
 const notice = document.getElementById("notice");
 
 const tripTypeInput = document.getElementById("tripType");
+const bookingStopEditor = globalThis.BookingStops?.createEditor(document.getElementById("bookingStopEditor"), "booking-stop", () => {
+  syncStopOffer();
+  resetQuote();
+});
 const tripTabs = document.querySelectorAll(".trip-tab");
 
 const pickup = document.getElementById("pickup");
@@ -263,6 +267,12 @@ function validateBookingStep(panel, step) {
       return false;
     }
   }
+  const invalidStop = step === 1 && bookingStopEditor?.invalidAddress();
+  if (invalidStop) {
+    showBookingStep(1);
+    invalidStop.reportValidity();
+    return false;
+  }
   return true;
 }
 
@@ -392,6 +402,8 @@ function getFormData() {
     data.dropoffPlaceId = dropoff.dataset.placeId;
     data.dropoffTerminal = dropoffTerminal.value || "general";
   }
+  const stops = bookingStopEditor?.values();
+  if (stops?.length) data.stops = stops;
   if(bookAgainFlowReference)data.bookingFlow=bookAgainFlowReference;
   return data;
 }
@@ -597,6 +609,9 @@ function resetQuote() {
   sumMilesLabel.textContent = "Distance";
   sumMinutesLabel.textContent = "Estimated Drive Time";
   sumTotalLabel.textContent = "Total";
+  globalThis.BookingStops?.renderSummary(document.getElementById("summaryStops"),null);
+  const stopNotice = document.getElementById("summaryStopNotice");
+  if (stopNotice) stopNotice.hidden = true;
   if(typeof renderFareBreakdown==='function')renderFareBreakdown(null);
 
   sumVehicle.textContent =
@@ -636,15 +651,35 @@ function updatePaymentControls() {
    SPECIAL OFFER
 ========================================= */
 
-function specialOfferActive() {
-
-  return Boolean(
-    offerCode &&
-    offerCode.value ===
-      "EWR_MANHATTAN_SUV"
-  );
+function specialOfferSelected() {
+  return offerCode?.value === "EWR_MANHATTAN_SUV";
 }
 
+function specialOfferActive() {
+  return specialOfferSelected() && !bookingStopEditor?.values().length;
+}
+
+function syncStopOffer() {
+  const hasStops = !!bookingStopEditor?.values().length;
+  const selected = specialOfferSelected();
+  const note = document.getElementById("bookingStopOfferNote");
+  if (note) note.hidden = !(selected && hasStops);
+  if (!selected) return;
+  if (hasStops) {
+    if (!vehicle.disabled) return;
+    vehicle.disabled = false;
+    if (promoCode) promoCode.disabled = false;
+    if (applyPromoBtn) applyPromoBtn.disabled = false;
+    resetPromoDisplay();
+  } else {
+    vehicle.value = "suv";
+    vehicle.disabled = true;
+    if (promoCode) { promoCode.value = ""; promoCode.disabled = true; }
+    if (applyPromoBtn) applyPromoBtn.disabled = true;
+    resetPassengerOptions();
+    showSpecialPromoMessage();
+  }
+}
 
 function clearSpecialOffer() {
 
@@ -703,11 +738,13 @@ function activateEwrManhattanSpecial() {
   }
 
   showSpecialPromoMessage();
+  syncStopOffer();
 
   clearNotice();
 
   showNotice(
-    "EWR → Manhattan $150 Chevrolet Suburban Premier special selected. Enter your Manhattan destination.",
+    specialOfferActive() ? "EWR → Manhattan $150 Chevrolet Suburban Premier special selected. Enter your Manhattan destination." :
+      "The $150 EWR to Manhattan special is nonstop only. With stops, regular pricing applies.",
     "success"
   );
 
@@ -743,6 +780,10 @@ function selectTripType(type) {
   showBookingStep(1);
 
   tripTypeInput.value = type;
+  const stopsSupported = type === "oneway" || type === "airport";
+  bookingStopEditor?.setEnabled(stopsSupported);
+  const stopHelp = document.getElementById("bookingStopUnsupported");
+  if (stopHelp) stopHelp.hidden = stopsSupported;
 
   tripTabs.forEach(
     (button) => {
@@ -803,6 +844,7 @@ function selectTripType(type) {
     updateHourlyRates();
   }
 
+  syncStopOffer();
   resetPassengerOptions();
   resetQuote();
 }
@@ -1130,18 +1172,22 @@ function renderFareBreakdown(data, review = false) {
   container.replaceChildren();container.hidden=true;
   if(review||tollQuoteUnavailable(data)){container.textContent='Toll estimate unavailable — contact us for a final quote';container.hidden=false;return;}
   const p=data?.pricingBreakdown;
+  const waiting=data?.stopSummary;
+  const waitingCents=waiting?.chargeCents || 0;
   const amount=value=>formatMoney(value/100,data.currency);
   const row=(label,value)=>{const item=document.createElement('div'),name=document.createElement('span'),price=document.createElement('strong');item.className='fare-breakdown-row';name.textContent=label;price.textContent=value;item.append(name,price);container.append(item);};
   if(!p || p.version!==1){
     if(!data)return;
     // Legacy/flag-off and hourly quotes have no separate toll snapshot. Display
     // their server total unchanged, without inventing a zero-dollar toll estimate.
-    row('Trip Fare',formatMoney(data.total,data.currency));row('Tolls','Included');
+    row('Trip Fare',amount(Math.round(data.total*100)-waitingCents));row('Tolls','Included');
+    if(waiting)row('Additional Stop Waiting',amount(waitingCents));
     container.hidden=false;return;
   }
   const fare=Number.isSafeInteger(p.totalCents)?p.totalCents-(p.tollsCents||0):p.tripFareCents+p.surcharges.reduce((n,s)=>n+s.amountCents,0)-p.discountCents+p.gratuityCents;
-  row('Trip Fare',amount(fare));
+  row('Trip Fare',amount(fare-waitingCents));
   row('Tolls',p.tollsIncluded?'Included':amount(p.tollsCents||0));
+  if(waiting)row('Additional Stop Waiting',amount(waitingCents));
   container.hidden=false;
 }
 
@@ -1224,6 +1270,10 @@ async function requestQuote(event) {
       throw new Error('Toll estimate unavailable — contact us for a final quote');
     }
     if (!Number.isFinite(data.total) || data.total <= 0) throw new Error("Unable to calculate quote. Please try again.");
+    if (bookingData.stops?.length && (data.stopSummary?.stops?.length !== bookingData.stops.length ||
+        !/^[a-f0-9]{64}$/.test(data.quoteRevision || ""))) {
+      throw new Error("The route through your stops could not be verified. Please request a new quote.");
+    }
 
     currentQuote =
       data;
@@ -1268,8 +1318,21 @@ async function requestQuote(event) {
     sumMilesLabel.textContent = data.roundTrip ? "Distance (round trip)" : "Distance";
     sumMinutesLabel.textContent = data.roundTrip ? "Estimated Drive Time (round trip)" : "Estimated Drive Time";
     sumTotalLabel.textContent = "Total";
-    document.getElementById("sumPickup").textContent = bookingData.pickup;
-    document.getElementById("sumDestination").textContent = bookingData.dropoff;
+    const stopSummary = data.stopSummary;
+    document.getElementById("sumPickup").textContent = stopSummary?.pickup || bookingData.pickup;
+    document.getElementById("sumDestination").textContent = stopSummary?.dropoff || bookingData.dropoff;
+    const destinationLabel = document.getElementById("sumDestinationLabel");
+    if (destinationLabel) destinationLabel.textContent = stopSummary ? "Final Destination" : "Destination";
+    globalThis.BookingStops?.renderSummary(document.getElementById("summaryStops"),stopSummary);
+    const stopNotice = document.getElementById("summaryStopNotice");
+    if (stopNotice) {
+      stopNotice.hidden = !stopSummary;
+      const rate = stopSummary?.rateCentsPerMinute;
+      const waitingPrice = Number.isSafeInteger(rate) && rate > 0 ?
+        stopSummary.billableMinutes + " billable minutes at " + formatMoney(rate/100,data.currency) + " per minute. " : "";
+      stopNotice.textContent = (data.nonstopOfferExcluded ? "The $150 EWR to Manhattan special is nonstop only. This trip uses regular pricing. " : "") +
+        waitingPrice + "Waiting times are estimates. Any extra waiting charge requires your authorization and a separate payment.";
+    }
     document.getElementById("sumPickupTime").textContent = TripDateFormat.trip(bookingData.date,bookingData.time);
     document.getElementById("summaryReturnRow").hidden = bookingData.tripType !== "roundtrip";
     document.getElementById("sumReturnTime").textContent = bookingData.tripType === "roundtrip"
@@ -1664,6 +1727,7 @@ function applyBookAgainTemplate(template,flowReference){
   typeof template.pickup!=='string' || !template.pickup.trim() || typeof template.dropoff!=='string' || !template.dropoff.trim() || !Number.isInteger(template.passengers) || template.passengers<1 || template.passengers>6 ||
   template.tripType==='hourly' && ![3,3.5,4,4.5,5,5.5,6,7,8].includes(template.hours))throw new Error('Template unavailable.');
  form.reset();bookAgainFlowReference=flowReference;clearSpecialOffer();selectTripType(template.tripType);
+ bookingStopEditor?.replace(template.stops);
  pickup.value=template.pickup;dropoff.value=template.dropoff;
  delete pickup.dataset.placeId;delete dropoff.dataset.placeId;
  for(const [input,key] of [[pickup,'pickupPlaceId'],[dropoff,'dropoffPlaceId']])if(typeof template[key]==='string' && /^[A-Za-z0-9_-]{1,255}$/.test(template[key]))input.dataset.placeId=template[key];

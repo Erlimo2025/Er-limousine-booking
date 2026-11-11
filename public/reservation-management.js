@@ -7,6 +7,8 @@
   const access = el('manageAccess'), verify = el('manageVerify'), content = el('manageContent');
   const status = el('manageStatus'), details = el('manageDetails'), requests = el('manageRequests');
   const requestForm = el('manageRequestForm'), pay = el('managePay'), signOut = el('manageSignOut');
+  const stopEditor = globalThis.BookingStops?.createEditor(el('manageStopEditor'),'request-stop');
+  let editingStops = false;
 
   const bookingLabels = {
     awaiting_payment: 'Awaiting payment', confirmed: 'Confirmed', assigned: 'Chauffeur assigned',
@@ -49,13 +51,18 @@
   function requestDescription(request) {
     if (request.kind === 'pickup_schedule') return TripDateFormat.trip(request.details.date, request.details.time);
     if (request.kind === 'locations') {
+      const stops = request.details.stops;
+      const route = Array.isArray(stops) ? (stops.length ?
+        stops.map((stop,index) => 'Stop '+(index+1)+': '+stop.address+' ('+stop.waitMinutes+' min expected)') :
+        ['Remove all intermediate stops']) : [];
       return [request.details.pickup && 'Pickup: ' + request.details.pickup,
-        request.details.dropoff && 'Destination: ' + request.details.dropoff].filter(Boolean).join(' · ');
+        ...route, request.details.dropoff && 'Destination: ' + request.details.dropoff].filter(Boolean).join(' · ');
     }
     return '';
   }
 
   function render(data) {
+    if (reservation?.reference !== data.reservation.reference) resetStopRequest();
     reservation = data.reservation;
     access.hidden = true;
     verify.hidden = true;
@@ -74,7 +81,8 @@
     add('Booking reference', globalThis.BookingReference?.control(reference) || reference);
     add('Booking status', bookingLabels[reservation.status] || 'Unavailable');
     add('Pickup', reservation.pickup);
-    add('Destination', reservation.dropoff);
+    for (const stop of reservation.stopSummary?.stops || []) add('Stop '+stop.sequence,BookingStops.stopText(stop));
+    add(reservation.stopSummary?'Final destination':'Destination', reservation.dropoff);
     add('Pickup date and time', TripDateFormat.trip(reservation.date, reservation.time));
     if (reservation.returnDate) add('Return pickup', TripDateFormat.trip(reservation.returnDate, reservation.returnTime));
     add('Vehicle', reservation.vehicle);
@@ -84,10 +92,19 @@
       (reservation.paymentVerificationPending ? 'Payment verification in progress' : payLabels[reservation.paymentStatus] || 'Unavailable'));
 
     const pending = data.requests.some(request => request.status === 'pending');
-    requestForm.hidden = !!data.selfService?.changePreviewsEnabled || pending ||
+    const canRequestStops = Array.isArray(reservation.stopTemplate);
+    const previewEnabled = !!data.selfService?.changePreviewsEnabled;
+    requestForm.hidden = (previewEnabled && !canRequestStops) || pending ||
       !(reservation.canRequest || reservation.canRequestCancellation);
-    for (const option of el('manageKind').options) option.disabled = !reservation.canRequest && option.value !== 'cancellation';
-    if (!reservation.canRequest && reservation.canRequestCancellation) el('manageKind').value = 'cancellation';
+    if (pending || !canRequestStops) resetStopRequest();
+    for (const option of el('manageKind').options) {
+      option.disabled = previewEnabled && canRequestStops ? option.value !== 'locations' :
+        !reservation.canRequest && option.value !== 'cancellation';
+      if (option.value === 'locations') option.textContent = canRequestStops ?
+        'Change pickup, destination, or stops' : 'Change pickup or destination';
+    }
+    if (previewEnabled && canRequestStops) el('manageKind').value = 'locations';
+    else if (!reservation.canRequest && reservation.canRequestCancellation) el('manageKind').value = 'cancellation';
     updateFields();
     managedActions.render(data);
     el('manageRequestAvailability').textContent = pending ? 'A request is awaiting owner review.' :
@@ -121,6 +138,7 @@
     access.hidden = false;
     verify.hidden = true;
     reservation = null;
+    resetStopRequest();
     details.replaceChildren();
     requests.replaceChildren();
     retry = null;
@@ -196,8 +214,27 @@
     });
   });
 
+  function resetStopRequest() {
+    editingStops = false;
+    stopEditor?.replace();
+    stopEditor?.setEnabled(false);
+    el('manageEditStops').hidden = false;
+  }
+
+  el('manageEditStops').addEventListener('click', () => {
+    if (!Array.isArray(reservation?.stopTemplate)) return;
+    editingStops = true;
+    stopEditor?.replace(reservation.stopTemplate);
+    updateFields();
+    el('manageStopEditor').querySelector('input,button')?.focus();
+  });
+
   function updateFields() {
     const kind = el('manageKind').value;
+    const showStops = kind === 'locations' && Array.isArray(reservation?.stopTemplate);
+    el('manageStopsControls').hidden = !showStops;
+    el('manageEditStops').hidden = editingStops;
+    stopEditor?.setEnabled(showStops && editingStops);
     el('manageSchedule').hidden = kind !== 'pickup_schedule';
     el('manageLocations').hidden = kind !== 'locations';
     el('manageDate').required = el('manageTime').required = kind === 'pickup_schedule';
@@ -208,16 +245,20 @@
   requestForm.addEventListener('submit', event => {
     event.preventDefault();
     if (!reservation || requestForm.hidden) return;
+    const invalidStop = stopEditor?.invalidAddress();
+    if (invalidStop) { invalidStop.reportValidity(); return; }
     void act(el('manageSubmitRequest'), async current => {
       const kind = el('manageKind').value;
       const body = {kind, confirmed: el('manageConfirmed').checked};
       if (kind === 'pickup_schedule') Object.assign(body, {date: el('manageDate').value, time: el('manageTime').value});
-      if (kind === 'locations') Object.assign(body, {pickup: el('managePickup').value, dropoff: el('manageDropoff').value});
+      if (kind === 'locations') Object.assign(body, {pickup: el('managePickup').value, dropoff: el('manageDropoff').value,
+        ...(editingStops ? {stops:stopEditor.values()} : {})});
       const key = JSON.stringify(body);
       if (retry?.key !== key) retry = {key, id: crypto.randomUUID()};
       await api(endpoint() + '/requests', {...body, requestId: retry.id});
       if (current()) {
         requestForm.reset();
+        resetStopRequest();
         updateFields();
         retry = null;
         if (await load() && current()) status.textContent = 'Request sent for owner review.';
