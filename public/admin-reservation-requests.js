@@ -55,7 +55,9 @@
     const paymentStatus = trip.paymentVerificationPending ? 'verification pending' : trip.paymentStatus;
     card.append(node('h3', labels[request.kind] + ' · ' + request.status));
     card.append(node('p', 'Reservation ' + (trip.bookingReference || trip.reference) + ' · ' + request.source));
-    card.append(node('p', 'Current trip: ' + trip.pickup + ' → ' + trip.dropoff));
+    const route = [trip.pickup, ...(trip.stopSummary?.stops || []).map(stop =>
+      'Stop ' + stop.sequence + ': ' + stop.address), trip.dropoff];
+    card.append(node('p', 'Current trip: ' + route.join(' → ')));
     card.append(node('p', TripDateFormat.trip(trip.date, trip.time) + ' · ' + trip.vehicle));
     card.append(node('p', 'Booking ' + tripStatus + ' · Payment ' + paymentStatus + ' · Accepted fare ' + fare));
     if (request.kind === 'pickup_schedule') {

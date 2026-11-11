@@ -73,13 +73,17 @@
     const reference = reservation.bookingReference || reservation.reference;
     add('Booking reference', globalThis.BookingReference?.control(reference) || reference);
     add('Booking status', bookingLabels[reservation.status] || 'Unavailable');
+    const waiting = reservation.stopSummary;
     add('Pickup', reservation.pickup);
-    add('Destination', reservation.dropoff);
+    for (const stop of waiting?.stops || []) add('Stop ' + stop.sequence, BookingStops.stopText(stop));
+    add(waiting ? 'Final destination' : 'Destination', reservation.dropoff);
     add('Pickup date and time', TripDateFormat.trip(reservation.date, reservation.time));
     if (reservation.returnDate) add('Return pickup', TripDateFormat.trip(reservation.returnDate, reservation.returnTime));
     add('Vehicle', reservation.vehicle);
     add('Passengers', reservation.passengers);
-    add('Accepted total', new Intl.NumberFormat('en-US', {style: 'currency', currency: reservation.currency}).format(reservation.total));
+    const money = new Intl.NumberFormat('en-US', {style: 'currency', currency: reservation.currency});
+    if (waiting) add('Additional Stop Waiting', money.format(waiting.chargeCents / 100));
+    add('Accepted total', money.format(reservation.total));
     add('Payment status', refundLabels[reservation.refundStatus] ||
       (reservation.paymentVerificationPending ? 'Payment verification in progress' : payLabels[reservation.paymentStatus] || 'Unavailable'));
 

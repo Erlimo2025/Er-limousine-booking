@@ -129,6 +129,7 @@ async function harness(t, env = {}, saved = "[]", injectedStore, startedAt = Dat
       if (name === "stripe") return MockStripe;
       if (name === "./services/email") return {createEmailProvider:options=>{if(env.TEST_VALIDATE_EMAIL_CONFIG)require('../services/email').createEmailProvider(options);if(env.TEST_RECOVERY_CONFIG_FAILURE)throw new Error('synthetic provider configuration');return {enabled:options.enabled,sendBookingEmail:async message=>{if(state.bookingOnCall)await state.bookingOnCall();state.bookingCalls.push({...message});if(state.emailFail)throw new Error('synthetic email secret marker');if(!state.bookingKeys.has(message.idempotencyKey)){state.bookingKeys.add(message.idempotencyKey);state.bookingMessages.push({...message});}if(state.bookingLoseResponse){state.bookingLoseResponse=false;throw new Error('synthetic lost email response');}},sendResetLink:async message=>{if(state.emailFail)throw new Error('synthetic email secret marker');state.emailMessages.push({...message});}};}};
       if (name === "./services/booking-emails") return require("../services/booking-emails");
+      if (name === "./services/booking-stops") return require("../services/booking-stops");
       if (name === "./services/admin-payment-links") return require("../services/admin-payment-links");
       if (name === "./services/customer-reviews") return require("../services/customer-reviews");
       if (name === "./routes/customer-reviews") return require("../routes/customer-reviews");

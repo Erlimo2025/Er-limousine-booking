@@ -1,0 +1,2 @@
+.trip-route.trip-route-stops, .dispatch-route.dispatch-route-stops { grid-template-columns: minmax(0, 1fr); }
+.dispatch-route-stops .dispatch-stop-wait { margin-top: 2px; color: #cbd5dc; font-size: .78rem; }

@@ -92,7 +92,8 @@ function reservationSelfService({app, store, mutation, rateLimit, handle, requir
       const prepared = plan(record, amendmentInput(req.body), at);
       const sourceRevision = revision(record, 'amendment-source');
       let proposedQuote = null;
-      if (!prepared.promoReview) {
+      // Existing stopped trips can be reviewed by Dispatch without a direct-route price preview.
+      if (!prepared.promoReview && !record.quote.stopPlan) {
         try { proposedQuote = await quote(prepared.body, req); } catch (_) { /* Route/pricing failures require Dispatch. */ }
       }
       const id = crypto.randomUUID();

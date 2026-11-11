@@ -9,6 +9,7 @@ const { isIP } = require("net");
 const pricing = require("./pricing");
 const ewrPickups = require("./ewr-pickups");
 const routeTollPricing = require('./services/route-tolls');
+const bookingStops = require('./services/booking-stops');
 const cancellationPolicy=require('./services/cancellation-policy');
 const tollPricingEnabled = process.env.ROUTE_TOLLS_ENABLED === 'true';
 const tollEstimateMode = process.env.ROUTE_TOLLS_MODE !== 'verified';
@@ -61,6 +62,8 @@ app.use((req,res,next)=>{
 
 // Explicit customer-safe message allowlist. HTTP status alone never grants trust.
 const customerErrorMessages=new Map();
+const stopsUnavailable = 'New bookings with intermediate stops are unavailable. Remove the stops and request a new quote.';
+customerErrorMessages.set(stopsUnavailable,{message:stopsUnavailable,status:409});
 for(const message of [
   'Unknown vehicle type.','A valid vehicle is required.','A valid trip type is required.',
   'Pickup must be scheduled in the future (New York time).','Return must be later than pickup (New York time).',
@@ -151,7 +154,7 @@ app.set("trust proxy", process.env.TRUSTED_PROXY_CIDRS
 const productionHttps = process.env.NODE_ENV === "production" || process.env.RENDER === "true";
 const contentSecurityPolicy = [
   "default-src 'self'",
-  "script-src 'self' 'sha256-bWFvN2yaKPwGmDEp3f55ro+URhos/JEmGUL4dwM/wR4='",
+  "script-src 'self' 'sha256-4ydnYMLJlWl+Qmbpcob+YsiXqEuC4TrVSLLJexqXS34='",
   "script-src-attr 'none'",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data:",
@@ -543,6 +546,9 @@ function parseServiceDateTime(date, time, label) {
 function validateBookingInput(body) {
   if (!body || typeof body !== "object" || Array.isArray(body) || !Object.hasOwn(body, "vehicle")) {
     throw new Error("A valid vehicle is required.");
+  }
+  if (Object.hasOwn(body,'stops') && (!Array.isArray(body.stops) || body.stops.length !== 0)) {
+    throw new Error(stopsUnavailable);
   }
   const rate = getConfiguredVehicleRate(body.vehicle);
   if (!Object.hasOwn(body, "tripType") || typeof body.tripType !== "string" ||
@@ -2912,6 +2918,7 @@ app.get(
       trip: {
         pickup: booking.trip.pickup, dropoff: booking.trip.dropoff,
         date: booking.trip.date, time: booking.trip.time,
+        ...bookingStops.publicSummary(booking.quote),
         ...(booking.trip.tripType==='roundtrip'?{returnDate:booking.trip.returnDate,returnTime:booking.trip.returnTime}:{})
       },
       quote: {vehicle: booking.trip.vehicle==='suv'?'Luxury SUV':booking.quote.vehicle, total: booking.quote.total,currency:booking.quote.currency,

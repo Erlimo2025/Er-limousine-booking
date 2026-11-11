@@ -159,6 +159,7 @@ function reservationView(record, now, parseDateTime, bookingReference = null) {
     paymentStatus: trip.paymentStatus,
     paymentVerificationPending: trip.paymentVerificationPending,
     refundStatus: trip.refundStatus,
+    ...(trip.stopSummary ? {stopSummary:trip.stopSummary} : {}),
     canRequest: canRequest(record, now, parseDateTime),
     canRequestCancellation: record.status !== 'cancelled',
     canPay: trip.paymentStatus !== 'paid' && !['cancelled', 'completed'].includes(trip.status) &&

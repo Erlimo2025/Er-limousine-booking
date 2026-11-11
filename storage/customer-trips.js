@@ -2,6 +2,7 @@ const ewr=require('../ewr-pickups');
 const pricing=require('../pricing');
 const {policyAtBooking}=require('../services/cancellation-policy');
 const {customerPricing}=require('../services/route-tolls');
+const {publicSummary}=require('../services/booking-stops');
 const uuid=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const iso=value=>typeof value==='string' && Number.isFinite(Date.parse(value)) && new Date(value).toISOString()===value;
 function tripQuery(query,now) {
@@ -29,6 +30,8 @@ function paymentVerificationPending(record) {
 }
 // Read-only template; never carries reservation/payment/quote/customer authority.
 function reusableTrip(record){
+ // A new direct trip must not silently replace an accepted stopped itinerary.
+ if(record?.quote?.stopPlan)return null;
  const t=record?.trip,location=value=>typeof value==='string' && value.trim().length>0 && value.length<=400;
  if(!t || !location(t.pickup) || !location(t.dropoff) || !['oneway','airport','roundtrip','hourly'].includes(t.tripType) || !['suv','escalade'].includes(t.vehicle) || !Number.isInteger(Number(t.passengers)) || Number(t.passengers)<1 || Number(t.passengers)>6)return null;
  if(t.tripType==='hourly' && ![3,3.5,4,4.5,5,5.5,6,7,8].includes(Number(t.hours)))return null;
@@ -58,6 +61,7 @@ function tripDto(record,management=null,bookingReference=null) {
   pickupTerminal:terminal(t.pickupPlaceId),dropoffTerminal:terminal(t.dropoffPlaceId),
   ...(policy ? {cancellationPolicy:policy} : {}),
   ...(record.quote.pricingBreakdown?{pricingBreakdown:customerPricing(record.quote)}:{}),
+  ...publicSummary(record.quote),
   total:record.quote.total,currency:record.quote.currency,createdAt:record.createdAt};
 }
 function customerTripsStorage(pool,safe,validate) {

@@ -13,12 +13,16 @@ class StorageError extends Error {
 }
 const statuses = ['awaiting_payment','confirmed','assigned','driver_en_route','passenger_on_board','completed','cancelled'];
 const plain = value => value && typeof value === 'object' && !Array.isArray(value);
+const bookingStops = require('../services/booking-stops');
 function validateRecord(r) {
   const fail = () => {throw new StorageError();};
   if (!plain(r) || typeof r.id !== 'string' || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(r.id) ||
       typeof r.createdAt !== 'string' || !Number.isFinite(Date.parse(r.createdAt)) || !statuses.includes(r.status) ||
       !['unpaid','paid','failed'].includes(r.paymentStatus) || !plain(r.customer) || !plain(r.trip) || !plain(r.quote) || !plain(r.dispatch)) fail();
-  if(!validQuote(r.quote) || r.checkoutAttempt?.quote && !validQuote(r.checkoutAttempt.quote))fail();
+  if(!validQuote(r.quote) || !bookingStops.validQuote(r.quote,r.trip.tripType) ||
+     r.checkoutAttempt?.quote && (!validQuote(r.checkoutAttempt.quote) ||
+       !bookingStops.validQuote(r.checkoutAttempt.quote,r.trip.tripType) ||
+       r.checkoutAttempt.quote.stopQuoteRevision !== r.quote.stopQuoteRevision))fail();
   if((Object.hasOwn(r,'cancellationPolicyAcceptance') || Object.hasOwn(r,'cancellationPolicyAtBooking')) && !policyAtBooking(r))fail();
   for (const key of ['firstName','lastName','email','phone']) if(typeof r.customer[key] !== 'string' || !r.customer[key].trim() || r.customer[key].length>200) fail();
   for (const key of ['pickup','dropoff','date','time','vehicle','tripType']) if(typeof r.trip[key] !== 'string' || !r.trip[key].trim() || r.trip[key].length>200) fail();
@@ -191,7 +195,9 @@ function createStore(env = process.env, suppliedPool) {
       const record=decode(rows)[0];if(!record)return null;
       const priorStatus=record.status;
       const priorPayment=record.paymentStatus;
+      const acceptedStopRevision=record.quote.stopQuoteRevision;
       const result=await fn(record,client);
+      if(record.quote.stopQuoteRevision !== acceptedStopRevision)throw new StorageError();
       if(priorStatus!=='cancelled' && record.status==='cancelled' && actionScope.getStore()!==(record.checkoutFingerprint || 'reservation:'+record.id))throw Object.assign(new Error('Checkout is already processing. Please try again.'),{status:409});
       validateRecord(record);
       await client.query('UPDATE er_reservations SET record = $2::jsonb, version = version + 1, updated_at = now() WHERE id = $1',[id,JSON.stringify(record)]);
