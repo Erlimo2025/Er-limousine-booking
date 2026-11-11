@@ -55,13 +55,20 @@
     const paymentStatus = trip.paymentVerificationPending ? 'verification pending' : trip.paymentStatus;
     card.append(node('h3', labels[request.kind] + ' · ' + request.status));
     card.append(node('p', 'Reservation ' + (trip.bookingReference || trip.reference) + ' · ' + request.source));
-    card.append(node('p', 'Current trip: ' + trip.pickup + ' → ' + trip.dropoff));
+    const currentRoute = [trip.pickup,...(trip.stopSummary?.stops || []).map(stop => stop.address),trip.dropoff];
+    card.append(node('p', 'Current trip: ' + currentRoute.join(' → ')));
     card.append(node('p', TripDateFormat.trip(trip.date, trip.time) + ' · ' + trip.vehicle));
     card.append(node('p', 'Booking ' + tripStatus + ' · Payment ' + paymentStatus + ' · Accepted fare ' + fare));
     if (request.kind === 'pickup_schedule') {
       card.append(node('p', 'Requested pickup: ' + TripDateFormat.trip(request.details.date, request.details.time)));
     }
     if (request.details.pickup) card.append(node('p', 'Requested pickup: ' + request.details.pickup));
+    if (Array.isArray(request.details.stops)) {
+      if (!request.details.stops.length) card.append(node('p', 'Requested: remove all intermediate stops.'));
+      for (const [index,stop] of request.details.stops.entries()) {
+        card.append(node('p', 'Requested stop '+(index+1)+': '+stop.address+' · '+stop.waitMinutes+' min expected'));
+      }
+    }
     if (request.details.dropoff) card.append(node('p', 'Requested destination: ' + request.details.dropoff));
     if (request.kind === 'amendment') {
       for (const line of [...changesText(request.details), ...fareText(request.details)].filter(Boolean)) card.append(node('p', line));

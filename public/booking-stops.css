@@ -1,0 +1,52 @@
+.booking-stop-editor[hidden], .booking-stop-editor [hidden], .booking-stops-note[hidden],
+#summaryStops[hidden], #summaryStopNotice[hidden] { display: none !important; }
+
+.booking-stop-editor, .booking-stops-note { min-width: 0; }
+.booking-stop {
+  min-width: 0;
+  margin: 0 0 9px;
+  padding: 9px 10px;
+  border: 1px solid #b39554;
+  border-radius: 8px;
+}
+.booking-stop legend { padding: 1px 7px; border-radius: 5px; background: #132632; color: #f6d38b; font-size: .85rem; font-weight: 700; }
+.booking-stop-fields { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 8px 12px; }
+.booking-stop-fields > .field { min-width: 0; }
+.booking-stop-fields :is(input, select) { width: 100%; min-height: 44px; }
+.booking-stop-address { position: relative; }
+.booking-stop-suggestions button {
+  width: 100%;
+  min-height: 44px;
+  border: 0;
+  background: #fff;
+  color: #142632;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.booking-stop-suggestions button:is(:hover, :focus-visible) { background: #f9f0db; }
+.booking-stop-actions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.booking-stop-actions button, .booking-stop-add {
+  min-height: 44px;
+  padding: 6px 9px;
+  border: 1px solid #927445;
+  border-radius: 6px;
+  background: #132632;
+  color: #f6d38b;
+  font: inherit;
+  font-size: .8rem;
+  font-weight: 650;
+}
+.booking-stop-actions button:disabled { opacity: .5; cursor: default; }
+.booking-stop-editor button:focus-visible { outline: 2px solid #c3912f; outline-offset: 2px; }
+.booking-stops-note { margin: 5px 0; font-size: .8rem; line-height: 1.4; }
+.booked-stop-row { overflow-wrap: anywhere; }
+.booked-stop-row > span { flex: 0 0 auto; }
+.booked-stop-row div { min-width: 0; text-align: right; }
+.booked-stop-row small { display: block; margin-top: 2px; font-weight: 400; }
+.summary-stop-notice { margin: 8px 0; font-size: .85rem; line-height: 1.45; }
+.trip-route.trip-route-stops, .dispatch-route.dispatch-route-stops { grid-template-columns: minmax(0, 1fr); }
+.dispatch-route-stops .dispatch-stop-wait { margin-top: 2px; color: #cbd5dc; font-size: .78rem; }
+
+@media (max-width: 620px) {
+  .booking-stop-fields { grid-template-columns: minmax(0, 1fr); }
+}

@@ -198,7 +198,13 @@ function tripCard(trip,view='upcoming'){
   row.append(node('dt','trip-label',label),node('dd',className,text));
   return row;
  };
- route.append(field('Pickup',locationLabel(trip.pickup),'trip-address'),field('Destination',locationLabel(trip.dropoff),'trip-address'));
+ const waiting=trip.stopSummary;
+ route.append(field('Pickup',locationLabel(trip.pickup),'trip-address'));
+ if(waiting){
+  route.classList.add('trip-route-stops');
+  for(const stop of waiting.stops)route.append(field('Stop '+stop.sequence,BookingStops.stopText(stop),'trip-address'));
+ }
+ route.append(field(waiting?'Final destination':'Destination',locationLabel(trip.dropoff),'trip-address'));
  fareRow.append(field('Vehicle',trip.vehicle,'trip-vehicle'),field('Accepted fare',money,'trip-total'));
  const referenceRow=node('div','trip-reference-row');
  const reference=trip.bookingReference || trip.reference;
@@ -218,10 +224,18 @@ function tripCard(trip,view='upcoming'){
  if(trip.pickupTerminal)add('Pickup terminal',trip.pickupTerminal);
  if(trip.dropoffTerminal)add('Drop-off terminal',trip.dropoffTerminal);
  const p=trip.pricingBreakdown,price=value=>new Intl.NumberFormat('en-US',{style:'currency',currency:trip.currency}).format(value/100);
- if(p?.version===1){
-  add('Trip Fare',price(p.totalCents-(p.tollsCents||0)));
-  add('Tolls',p.tollsIncluded||p.tollStatus==='absorbed'?'Included':price(p.tollsCents||0));
-  add('Total',price(p.totalCents));
+ const waitingCents=waiting?.chargeCents || 0;
+ if(waiting){
+  add('Pickup',locationLabel(trip.pickup));
+  for(const stop of waiting.stops)add('Stop '+stop.sequence,BookingStops.stopText(stop));
+  add('Final destination',locationLabel(trip.dropoff));
+ }
+ if(p?.version===1 || waiting){
+  const total=p?.totalCents ?? Math.round(trip.total*100);
+  add('Trip Fare',price(total-(p?.tollsCents||0)-waitingCents));
+  add('Tolls',!p||p.tollsIncluded||p.tollStatus==='absorbed'?'Included':price(p.tollsCents||0));
+  if(waiting)add('Additional Stop Waiting',price(waitingCents));
+  add('Total',price(total));
  }
  const cancellation=trip.cancellationPolicy;
  if(cancellation){

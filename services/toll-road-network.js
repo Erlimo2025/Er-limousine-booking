@@ -222,7 +222,7 @@ function priceRoutes(routes,profile,env,eligibility,context={}){
   const c=coverage(env),seen=new Map(),legs=[],proofs=[];let previousEnd=null;
   for(const [index,route]of routes.entries()){
     if(route.origin!==(index?eligibility.dropoffPlaceId:eligibility.pickupPlaceId)||route.destination!==(index?eligibility.pickupPlaceId:eligibility.dropoffPlaceId))fail('route_endpoint_unverified');
-    const g=geo.geometry(route.data),first=tariff.instant(route.departure),last=tariff.instant(geo.windowAt(g,g.segments.length-1,route.departure,profile).latest);
+    const g=geo.geometry(route.data,route.stopWaitSeconds),first=tariff.instant(route.departure),last=tariff.instant(geo.windowAt(g,g.segments.length-1,route.departure,profile).latest);
     if(previousEnd!==null&&first<previousEnd)fail('route_time_order_unverified');previousEnd=last;
     if(!covers(c,first,last))fail('coverage_expired');tariff.verifiedFleet(profile.official.fleet,last);
     const path=matchRoute(g,c,first,last),start=path[0].edge,end=path.at(-1).edge;

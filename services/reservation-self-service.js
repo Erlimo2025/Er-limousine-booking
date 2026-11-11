@@ -95,6 +95,8 @@ function amendmentTerms(record, proposed, now, parseDateTime) {
     key.endsWith('Terminal') ? t[key.replace('Terminal', 'PlaceId')] !== terminalKeys[value] : t[key] !== value));
   if (!Object.keys(changes).length) throw new ManagementError(400, 'Change at least one reservation detail.');
   const body = {...t, ...record.customer, ...changes, promoCode: '', offerCode: record.quote.fixedOffer?.code || ''};
+  const stops = require('./booking-stops').template(record.quote);
+  if (stops) body.stops = stops;
   delete body.pickupTerminal;
   delete body.dropoffTerminal;
   for (const end of ['pickup', 'dropoff']) {

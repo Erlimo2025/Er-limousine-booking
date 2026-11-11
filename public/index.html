@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="/booking-stops.css">
 
   <title>New Jersey Car &amp; Limousine Service | ER Limousine Service</title>
 
@@ -317,6 +318,12 @@
 
         </div>
 
+
+        <div class="field full">
+          <div id="bookingStopEditor"></div>
+          <p id="bookingStopOfferNote" class="booking-stops-note" role="status" hidden>The $150 EWR to Manhattan special is nonstop only. With stops, regular pricing applies.</p>
+          <p id="bookingStopUnsupported" class="booking-stops-note" hidden>Use a one-way or airport booking to schedule stops online. Contact Dispatch for round-trip or hourly stop arrangements.</p>
+        </div>
 
         <div class="two-fields">
 
@@ -723,7 +730,8 @@
         </div>
 
         <div class="summary-row"><span>Pickup</span><strong id="sumPickup">—</strong></div>
-        <div class="summary-row"><span>Destination</span><strong id="sumDestination">—</strong></div>
+        <div id="summaryStops" hidden></div>
+        <div class="summary-row"><span id="sumDestinationLabel">Destination</span><strong id="sumDestination">—</strong></div>
         <div class="summary-row"><span>Pickup Date &amp; Time</span><strong id="sumPickupTime">—</strong></div>
         <div class="summary-row" id="summaryReturnRow" hidden><span>Return Date &amp; Time</span><strong id="sumReturnTime">—</strong></div>
 
@@ -773,6 +781,8 @@
       </div>
 
 
+
+      <p id="summaryStopNotice" class="summary-stop-notice" hidden></p>
 
       <!-- PROMOTION SUMMARY -->
       <div
@@ -1265,7 +1275,8 @@
 <script src="/trip-date-format.js"></script>
 <script src="/booking-date-controls.js"></script>
 <script src="/pickup-location.js"></script>
-<script src="/app.js"></script>
+<script src="/booking-stops.js"></script>
+<script src="/app.js?v=booking-stops-1"></script>
 <script src="/customer-reviews.js"></script>
 
 </body>

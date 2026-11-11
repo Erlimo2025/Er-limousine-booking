@@ -178,6 +178,12 @@ async function logout() {
 
 function renderBooking(b) {
   const total = Number(b.quote && b.quote.total || 0).toFixed(2);
+  const waiting = b.trip.stopSummary;
+  const stops = (waiting?.stops || []).map(stop => `<div class="dispatch-stop">
+    <span class="dispatch-label">Stop ${esc(stop.sequence)}</span><p>${esc(stop.address)}</p>
+    <p class="dispatch-stop-wait">${esc(stop.plannedMinutes)} min expected · ${esc(stop.freeMinutes)} min free · ${esc(String(stop.billableMinutes))} min billable</p>
+  </div>`).join('');
+  const waitingCharge = waiting ? new Intl.NumberFormat('en-US',{style:'currency',currency:b.quote.currency || 'usd'}).format(waiting.chargeCents/100) : '';
   const d = b.dispatch || {};
   const trip=b.trip;
   const location=value=>String(value || '').replace(/\b(Terminal\s+([ABC]|[1-9][0-9]?))(?:\s*,\s*Terminal\s+\2(?=\s*(?:,|$)))+/gi,'$1');
@@ -217,7 +223,12 @@ function renderBooking(b) {
       ${cancelled?'<p class="dispatch-cancelled-notice">CANCELLED — DO NOT DISPATCH</p>':''}
       ${b.archived?`<p class="dispatch-archive-meta"><strong>Archived — hidden from dispatch.</strong> Reservation and payment records are retained.<br>Archived ${esc(b.archivedAt)} · Admin session ${esc(b.archivedBy)}</p>`:''}
       ${airports?`<div class="dispatch-airports">${airports}</div>`:''}
-      <div class="dispatch-route"><div><span class="dispatch-label">Pickup</span><p>${esc(location(trip.pickup))}</p></div><span class="dispatch-route-arrow" aria-hidden="true">→</span><div><span class="dispatch-label">Destination</span><p>${esc(location(trip.dropoff))}</p></div></div>
+      <div class="dispatch-route${waiting?' dispatch-route-stops':''}">
+        <div><span class="dispatch-label">Pickup</span><p>${esc(location(trip.pickup))}</p></div>
+        ${waiting?stops:'<span class="dispatch-route-arrow" aria-hidden="true">→</span>'}
+        <div><span class="dispatch-label">${waiting?'Final Destination':'Destination'}</span><p>${esc(location(trip.dropoff))}</p></div>
+        ${waiting?`<div><span class="dispatch-label">Additional Stop Waiting</span><p>${esc(waitingCharge)}</p></div>`:''}
+      </div>
       <div class="dispatch-contact"><h3>${esc(b.customer.firstName)} ${esc(b.customer.lastName)}</h3><div>${contact(phone,phoneTarget,'dispatch-phone')}${contact(email,emailSafe?'mailto:'+encodeURIComponent(email):null,'dispatch-email')}</div></div>
       <dl class="dispatch-facts"><div><dt>Vehicle</dt><dd>${esc(trip.vehicle==='suv'?'Luxury SUV / Suburban':b.quote.vehicle)}</dd></div><div><dt>Passengers</dt><dd>${esc(trip.passengers)}</dd></div><div><dt>Fare</dt><dd class="dispatch-fare">$${total}</dd></div><div><dt>Trip type</dt><dd>${esc(tripTypes[trip.tripType] || 'Other')}${trip.tripType==='hourly' && trip.hours?' · '+esc(trip.hours)+' hours':''}</dd></div></dl>
       ${trip.tripType==='roundtrip' && trip.returnDate && trip.returnTime?`<p class="dispatch-secondary"><span class="dispatch-label">Return · New York time</span> ${esc(date(trip.returnDate))} · ${esc(time(trip.returnTime))}</p>`:''}

@@ -58,16 +58,22 @@ function bookingMessage(record,kind,contact,myTripsUrl=null,event=null){
  const amount=new Intl.NumberFormat('en-US',{style:'currency',currency:q.currency}).format(q.total);
  const timezone=admin?'America/New_York':'New York time';
  const schedule=(date,time)=>admin?date+' '+time+' ('+timezone+')':TripDateFormat.trip(date,time);
- const rows=[referenceRow(record),['Pickup',admin?t.pickup:customerPickup(t.pickup)],['Destination',t.dropoff],['Pickup date/time',schedule(t.date,t.time)],['Vehicle',vehicle]];
+ const {WAIT_LABEL,publicSummary}=require('./booking-stops');
+ const waiting=publicSummary(q).stopSummary;
+ const stops=(waiting?.stops || []).map(stop=>['Stop '+stop.sequence,stop.address+' · '+stop.plannedMinutes+
+   ' min expected, '+stop.freeMinutes+' min free, '+stop.billableMinutes+' min billable']);
+ const rows=[referenceRow(record),['Pickup',admin?t.pickup:customerPickup(t.pickup)],...stops,
+  [waiting?'Final destination':'Destination',t.dropoff],['Pickup date/time',schedule(t.date,t.time)],['Vehicle',vehicle]];
+ const price=value=>new Intl.NumberFormat('en-US',{style:'currency',currency:q.currency}).format(value/100);
+ const waitingCents=waiting?.chargeCents || 0;
  if(t.returnDate)rows.push(['Return pickup',schedule(t.returnDate,t.returnTime)]);
  const p=q.pricingBreakdown;
  if(p?.version===1){
-  const price=value=>new Intl.NumberFormat('en-US',{style:'currency',currency:q.currency}).format(value/100);
   if(!admin){
-   rows.push(['Trip Fare',price(p.totalCents-(p.tollsCents||0))],['Tolls',p.tollsIncluded||q.tolls.status==='absorbed'?'Included':price(p.tollsCents||0)]);
+   rows.push(['Trip Fare',price(p.totalCents-(p.tollsCents||0)-waitingCents)],['Tolls',p.tollsIncluded||q.tolls.status==='absorbed'?'Included':price(p.tollsCents||0)]);
   }else{
   rows.push([p.tollsIncluded?'EWR → Manhattan Special':'Trip Fare',price(p.tripFareCents)]);
-  for(const item of p.surcharges)rows.push([item.label,price(item.amountCents)]);
+  for(const item of p.surcharges)if(!waiting || item.label!==WAIT_LABEL)rows.push([item.label,price(item.amountCents)]);
   if(Array.isArray(p.tollComponents)&&!p.tollsIncluded){
    for(const c of p.tollComponents)rows.push([c.label,price(c.amountCents)]);
    for(const note of p.tollAssumptions||[])rows.push(['Toll estimate policy',note]);
@@ -76,6 +82,10 @@ function bookingMessage(record,kind,contact,myTripsUrl=null,event=null){
   if(p.discountCents)rows.push(['Eligible Discount','−'+price(p.discountCents)]);
   if(p.gratuityCents)rows.push(['Gratuity',price(p.gratuityCents)]);
   }
+ }
+ if(waiting){
+  if(!p)rows.push(['Trip Fare',price(Math.round(q.total*100)-waitingCents)],['Tolls','Included']);
+  rows.push([WAIT_LABEL,price(waitingCents)]);
  }
  if(reservation || admin){
   if(admin)rows.splice(1,0,['Customer name',customer.firstName+' '+customer.lastName],['Customer email',customer.email],['Customer phone',customer.phone]);

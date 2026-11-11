@@ -3,7 +3,7 @@
 const {
   UUID, GRANT_MINUTES, LINK_MESSAGE, REQUEST_STATUSES, ManagementError, exactKeys,
   normalizeGuestEmail, guestToken, guestTokenHash, verificationEmail, parseRequest,
-  checkProposedChange, requestView, reservationView
+  checkProposedChange, requestView, reservationView, tripFingerprint
 } = require('../services/reservation-management');
 const {normalizeBookingReference} = require('../services/booking-reference');
 
@@ -34,7 +34,7 @@ function queueOptions(query) {
 
 function installReservationManagement(app, options) {
   const {store, route, rateLimit, customerAuth, requireAdmin, siteUrl, secure, emailProvider,
-    parseDateTime, now = Date.now, reportFailure = () => {}, selfService} = options;
+    parseDateTime, now = Date.now, reportFailure = () => {}, verifyRequestedStops, selfService} = options;
   const origin = new URL(siteUrl).origin;
   const name = (secure ? '__Secure-' : '') + 'er_reservation_management';
   // The status and Pay Later routes need the same verified grant after a Stripe return.
@@ -150,7 +150,7 @@ function installReservationManagement(app, options) {
       const result = await store.reservationManagementView(authority, reference, now());
       if (!result) throw new ManagementError(404, UNAVAILABLE);
       res.json({
-        reservation: reservationView(result.record, now(), parseDateTime, result.bookingReference),
+        reservation: reservationView(result.record, now(), parseDateTime, result.bookingReference, true),
         requests: result.requests.map(requestView),
         ...await automation.customerView(result.record, result.requests)
       });
@@ -159,9 +159,28 @@ function installReservationManagement(app, options) {
     app.post(path + '/requests', mutation, rateLimit('reservation-manage-request', 15), handle(async (req, res) => {
       const {authority, reference} = await authorization(req, res);
       const input = parseRequest(req.body);
+      let routeRevision;
+      if (input.details.stops) {
+        const current = await store.reservationManagementView(authority, reference, now());
+        if (!current) throw new ManagementError(404, UNAVAILABLE);
+        const previous = current.requests.find(request => request.client_request_id === input.requestId);
+        if (!previous) checkProposedChange(current.record, input, now(), parseDateTime);
+        routeRevision = tripFingerprint(current.record);
+        if (input.details.stops.length) {
+          try {
+            const verified = await verifyRequestedStops(current.record,input.details,req);
+            input.details.stops = Array.from(verified, ({address,placeId,waitMinutes}) => ({address,placeId,waitMinutes}));
+          }
+          catch (error) { throw new ManagementError(400,error.message); }
+        }
+      }
       const at = now();
-      const saved = await store.submitReservationRequest(authority, reference, input, at,
-        record => checkProposedChange(record, input, at, parseDateTime));
+      const saved = await store.submitReservationRequest(authority, reference, input, at, record => {
+        if (routeRevision && routeRevision !== tripFingerprint(record)) {
+          throw new ManagementError(409, 'This reservation changed. Refresh it before submitting a request.');
+        }
+        checkProposedChange(record, input, at, parseDateTime);
+      });
       res.json({request: requestView(saved)});
     }));
 

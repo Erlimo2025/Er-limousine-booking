@@ -52,23 +52,31 @@ function convex(poly){let sign=0;for(let i=0;i<poly.length;i++){
 // must supply the actual corridors and excluded-road geometry before activation.
 const envelopes={lincoln:[-74.04,40.748,-73.99,40.78],holland:[-74.06,40.712,-73.998,40.74],gwb:[-73.98,40.835,-73.925,40.87]};
 const inEnvelope=(p,b)=>p[0]>=b[0]&&p[0]<=b[2]&&p[1]>=b[1]&&p[1]<=b[3];
-function geometry(route){
-  if(!route||!Array.isArray(route.legs)||route.legs.length<1||route.legs.length>3)fail('geometry_missing');
-  const points=[],segments=[];let elapsed=0,count=0,stepResolution=0;
-  for(const leg of route.legs){
+function geometry(route,stopWaitSeconds=[]){
+  if(!Array.isArray(stopWaitSeconds)||stopWaitSeconds.length>3||
+     stopWaitSeconds.some(wait=>![300,600,900,1200,1800].includes(wait)))fail('timing_missing');
+  if(!route||!Array.isArray(route.legs)||route.legs.length<1||
+     (stopWaitSeconds.length?route.legs.length!==stopWaitSeconds.length+1:route.legs.length>3))fail('geometry_missing');
+  const points=[],segments=[],priorWaiting=[];let elapsed=0,count=0,stepResolution=0,waiting=0;
+  const addSegment=(start,end)=>{
+    segments.push({start:start+waiting,end:end+waiting});
+    priorWaiting.push(waiting);
+  };
+  for(const [index,leg] of route.legs.entries()){
     if(!Array.isArray(leg.steps)||!leg.steps.length)fail('geometry_missing');
     for(const step of leg.steps){
       if(++count>600)fail('geometry_too_large');const path=decode(step.polyline?.encodedPolyline),duration=seconds(step.staticDuration);
       if(!Number.isFinite(duration)||duration<0||duration>21600)fail('timing_missing');
       stepResolution+=durationResolution(step.staticDuration);
       if(points.length&&distance(points.at(-1),path[0])>25)fail('geometry_disconnected');
-      if(!points.length)points.push(path[0]);else if(distance(points.at(-1),path[0])>.01){segments.push({start:elapsed,end:elapsed});points.push(path[0]);}
+      if(!points.length)points.push(path[0]);else if(distance(points.at(-1),path[0])>.01){addSegment(elapsed,elapsed);points.push(path[0]);}
       for(let i=1;i<path.length;i++){
         if(points.length>=6000||distance(points.at(-1),path[i])>5000)fail('geometry_invalid');
-        segments.push({start:elapsed,end:elapsed+duration});points.push(path[i]);
+        addSegment(elapsed,elapsed+duration);points.push(path[i]);
       }
       elapsed+=duration;
     }
+    waiting+=stopWaitSeconds[index] || 0;
   }
   const staticTime=seconds(route.staticDuration),travel=seconds(route.duration);
   if(!Number.isFinite(staticTime)||staticTime<=0)fail('timing_static_invalid');
@@ -88,11 +96,14 @@ function geometry(route){
     // crossing/entry is bounded by departure and the longest provider ETA.
     // Existing tariff-window/day checks still decide whether pricing is safe.
     const end=Math.max(staticTime,travel,elapsed);
-    for(const segment of segments){segment.start=0;segment.end=end;}
+    for(const [index,segment] of segments.entries()){
+      segment.start=priorWaiting[index];
+      segment.end=end+priorWaiting[index];
+    }
   }
   const length=points.reduce((n,p,i)=>n+(i?distance(points[i-1],p):0),0);
   if(!Number.isFinite(route.distanceMeters)||route.distanceMeters<=0||length>route.distanceMeters*1.1+100)fail('geometry_distance_inconsistent');
-  return {points,segments,hash:digest(points),traffic:routeBounds?0:Math.max(0,travel-staticTime),travel,
+  return {points,segments,hash:digest(points),traffic:routeBounds?0:Math.max(0,travel-staticTime),travel:travel+waiting,
     timingBasis:routeBounds?'provider_route_bounds':'provider_step_bounds'};
 }
 function validateGeography(c){

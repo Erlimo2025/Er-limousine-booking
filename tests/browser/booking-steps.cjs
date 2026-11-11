@@ -108,7 +108,11 @@ for(const width of [320,390,1440])test('validation, editing, fresh quotes and ea
  await page.locator('#bookingEditTrip').click();assert.equal(await s.state(),'1');assert.equal(await page.locator('#pickup').inputValue(),s.input.pickup);await page.locator('#time').fill('13:00');await page.locator('#bookingContinue').click();assert.equal(await page.locator('#email').inputValue(),s.input.email);await quote(s);assert.match(await page.locator('#sumPickupTime').innerText(),/1:00 PM/);
  // A silent programmatic edit must also fail the local quote/input comparison.
  await page.evaluate(()=>document.getElementById('notes').value='Changed without an input event');await page.locator('#payBtn').click();assert.equal(await s.state(),'2');assert.equal(h.records().length,0);assert.equal(h.state.creates.length,0);assert.match(await page.locator('#notice').innerText(),/updated quote/);await quote(s);await layout(s);
- const resizedWidth=width===1440?320:1440;await page.setViewportSize({width:resizedWidth,height:1000});assert.equal(await s.state(),'3');assert.equal(await page.locator('#payBtn').isEnabled(),true);await layout(s);
+ const resizedWidth=width===1440?320:1440;
+ await page.setViewportSize({width:resizedWidth,height:1000});
+ // WebKit can briefly report the old layout after changing the viewport.
+ await page.waitForFunction(width=>innerWidth===width && document.documentElement.scrollWidth<=width,resizedWidth);
+ assert.equal(await s.state(),'3');assert.equal(await page.locator('#payBtn').isEnabled(),true);await layout(s);
  results.push({scenario:'navigation_and_guards',width,resizedWidth,passed:true});
 });
 

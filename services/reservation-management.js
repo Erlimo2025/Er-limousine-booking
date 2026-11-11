@@ -3,6 +3,7 @@
 const crypto = require('node:crypto');
 const {hashToken} = require('../auth/customers');
 const {tripDto} = require('../storage/customer-trips');
+const bookingStops = require('./booking-stops');
 
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const TOKEN = /^[A-Za-z0-9_-]{43}$/;
@@ -54,6 +55,7 @@ function verificationEmail(siteOrigin, to, token) {
 function parseRequest(body) {
   const base = ['requestId', 'kind', 'confirmed'];
   const extra = {pickup_schedule: ['date', 'time'], locations: ['pickup', 'dropoff'], cancellation: []};
+  if (body?.kind === 'locations' && Object.hasOwn(body, 'stops')) extra.locations.push('stops');
   if (!body || typeof body.kind !== 'string' || !Object.hasOwn(extra, body.kind) || !exactKeys(body, [...base, ...extra[body.kind]]) ||
       typeof body.requestId !== 'string' || !UUID.test(body.requestId) || body.confirmed !== true) {
     throw new ManagementError(400, 'Invalid reservation request.');
@@ -76,6 +78,10 @@ function parseRequest(body) {
         throw new ManagementError(400, 'Enter a valid pickup or destination address.');
       }
       if (value) details[name] = value;
+    }
+    if (Object.hasOwn(body,'stops')) {
+      try { details.stops = bookingStops.parseStops(body.stops,'oneway'); }
+      catch (error) { throw new ManagementError(400,error.message); }
     }
     if (!Object.keys(details).length) throw new ManagementError(400, 'Enter a pickup or destination address.');
   }
@@ -116,15 +122,25 @@ function checkProposedChange(record, request, now, parseDateTime) {
       throw new ManagementError(400, 'Choose a future pickup before the return trip, if applicable.');
     }
   }
-  if (request.kind === 'locations' && !Object.entries(request.details).some(([name, value]) => value !== t[name])) {
-    throw new ManagementError(400, 'Enter a different pickup or destination address.');
+  if (request.kind === 'locations') {
+    const {stops, pickup, dropoff} = request.details;
+    const stopKeys = values => values.map(({placeId,waitMinutes})=>[placeId,waitMinutes]);
+    if (stops && !bookingStops.supports(t.tripType)) throw new ManagementError(400,bookingStops.errors.unsupported);
+    const differentStops = stops && JSON.stringify(stopKeys(stops)) !==
+      JSON.stringify(stopKeys(bookingStops.template(record.quote) || []));
+    if (!(pickup && pickup !== t.pickup) && !(dropoff && dropoff !== t.dropoff) && !differentStops) {
+      throw new ManagementError(400, stops ? 'Request a different pickup, destination, or stop itinerary.' :
+        'Enter a different pickup or destination address.');
+    }
   }
 }
 
 function tripFingerprint(record) {
   const t = record.trip;
-  return hashToken(JSON.stringify([t.pickup, t.pickupPlaceId, t.dropoff, t.dropoffPlaceId,
-    t.date, t.time, t.returnDate, t.returnTime, t.tripType, t.vehicle, t.passengers]));
+  const fields = [t.pickup, t.pickupPlaceId, t.dropoff, t.dropoffPlaceId,
+    t.date, t.time, t.returnDate, t.returnTime, t.tripType, t.vehicle, t.passengers];
+  if (record.quote?.stopPlan) fields.push(bookingStops.template(record.quote));
+  return hashToken(JSON.stringify(fields));
 }
 
 function requestView(row) {
@@ -140,8 +156,9 @@ function requestView(row) {
   };
 }
 
-function reservationView(record, now, parseDateTime, bookingReference = null) {
+function reservationView(record, now, parseDateTime, bookingReference = null, editable = false) {
   const trip = tripDto(record);
+  const canEdit = canRequest(record, now, parseDateTime);
   return {
     reference: trip.reference,
     bookingReference,
@@ -159,7 +176,10 @@ function reservationView(record, now, parseDateTime, bookingReference = null) {
     paymentStatus: trip.paymentStatus,
     paymentVerificationPending: trip.paymentVerificationPending,
     refundStatus: trip.refundStatus,
-    canRequest: canRequest(record, now, parseDateTime),
+    ...bookingStops.publicSummary(record.quote),
+    ...(editable && canEdit && bookingStops.supports(trip.tripType) ?
+      {stopTemplate:bookingStops.template(record.quote) || []} : {}),
+    canRequest: canEdit,
     canRequestCancellation: record.status !== 'cancelled',
     canPay: trip.paymentStatus !== 'paid' && !['cancelled', 'completed'].includes(trip.status) &&
       !trip.paymentVerificationPending

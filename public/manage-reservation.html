@@ -12,7 +12,9 @@
   <script src="/booking-reference.js" defer></script>
   <script src="/trip-date-format.js" defer></script>
   <script src="/reservation-self-service.js?v=recovery-1" defer></script>
-  <script src="/reservation-management.js?v=recovery-1" defer></script>
+  <link rel="stylesheet" href="/booking-stops.css">
+  <script src="/booking-stops.js" defer></script>
+  <script src="/reservation-management.js?v=booking-stops-1" defer></script>
 </head>
 <body>
   <nav class="nav" aria-label="Main navigation">
@@ -123,6 +125,10 @@
             <div id="manageLocations" hidden>
               <div class="field"><label for="managePickup">Requested pickup (optional)</label><input id="managePickup" maxlength="200" autocomplete="off"></div>
               <div class="field"><label for="manageDropoff">Requested destination (optional)</label><input id="manageDropoff" maxlength="200" autocomplete="off"></div>
+              <div id="manageStopsControls" hidden>
+                <button id="manageEditStops" class="booking-stop-add" type="button">Request stop changes</button>
+                <div id="manageStopEditor" hidden></div>
+              </div>
             </div>
             <label class="manage-confirm">
               <input id="manageConfirmed" type="checkbox" required>
