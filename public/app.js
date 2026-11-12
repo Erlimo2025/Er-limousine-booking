@@ -342,6 +342,7 @@ const ewrManhattanSpecialBtn =
   document.getElementById("ewrManhattanSpecialBtn");
 
 let currentQuote = null;
+let replacementQuote = null;
 let suggestionTimers = {};
 let hourlyVehicles = {};
 
@@ -594,6 +595,7 @@ function resetQuote() {
   quoteController = null;
   quotedFormKey = null;
   currentQuote = null;
+  replacementQuote = null;
   renderBookingPolicy(null);
   quoteArea.classList.remove("has-completed-quote");
 
@@ -1191,6 +1193,89 @@ function renderFareBreakdown(data, review = false) {
   container.hidden=false;
 }
 
+function displayQuoteForReview(data, bookingData, requestKey) {
+  if(tollQuoteUnavailable(data)){
+    sumTotal.textContent='Contact us';sumTotalLabel.textContent='Final quote required';
+    renderFareBreakdown(null,true);
+    throw new Error('Toll estimate unavailable — contact us for a final quote');
+  }
+  if (!Number.isFinite(data.total) || data.total <= 0) throw new Error("Unable to calculate quote. Please try again.");
+  if (bookingData.stops?.length && (data.stopSummary?.stops?.length !== bookingData.stops.length ||
+      !/^[a-f0-9]{64}$/.test(data.quoteRevision || ""))) {
+    throw new Error("The route through your stops could not be verified. Please request a new quote.");
+  }
+
+  if (typeof data.quoteApproval !== "string" || !data.quoteApproval) {
+    throw new Error("Unable to verify this quote. Please request a new quote.");
+  }
+  currentQuote = data;
+  quotedFormKey = requestKey;
+  renderBookingPolicy(data.cancellationPolicy);
+
+  sumVehicle.textContent =
+    data.vehicleKey === "suv" ? "Luxury SUV" : data.vehicle;
+
+  if (
+    data.miles === null ||
+    data.miles === undefined
+  ) {
+
+    sumMiles.textContent = "As directed";
+
+  } else {
+
+    sumMiles.textContent =
+      `${data.miles} mi`;
+  }
+
+  if (
+    data.minutes === null ||
+    data.minutes === undefined
+  ) {
+
+    sumMinutes.textContent = `${data.hours || hours.value} hours reserved`;
+
+  } else {
+
+    sumMinutes.textContent =
+      `${data.minutes} min`;
+  }
+
+  sumTotal.textContent =
+    formatMoney(
+      data.total,
+      data.currency
+    );
+
+  sumMilesLabel.textContent = data.roundTrip ? "Distance (round trip)" : "Distance";
+  sumMinutesLabel.textContent = data.roundTrip ? "Estimated Drive Time (round trip)" : "Estimated Drive Time";
+  sumTotalLabel.textContent = "Total";
+  const stopSummary = data.stopSummary;
+  document.getElementById("sumPickup").textContent = stopSummary?.pickup || bookingData.pickup;
+  document.getElementById("sumDestination").textContent = stopSummary?.dropoff || bookingData.dropoff;
+  const destinationLabel = document.getElementById("sumDestinationLabel");
+  if (destinationLabel) destinationLabel.textContent = stopSummary ? "Final Destination" : "Destination";
+  globalThis.BookingStops?.renderSummary(document.getElementById("summaryStops"),stopSummary);
+  const stopNotice = document.getElementById("summaryStopNotice");
+  if (stopNotice) {
+    stopNotice.hidden = !stopSummary;
+    const rate = stopSummary?.rateCentsPerMinute;
+    const waitingPrice = Number.isSafeInteger(rate) && rate > 0 ?
+      stopSummary.billableMinutes + " billable minutes at " + formatMoney(rate/100,data.currency) + " per minute. " : "";
+    stopNotice.textContent = (data.nonstopOfferExcluded ? "The $150 EWR to Manhattan special is nonstop only. This trip uses regular pricing. " : "") +
+      waitingPrice + "Waiting times are estimates. Any extra waiting charge requires your authorization and a separate payment.";
+  }
+  document.getElementById("sumPickupTime").textContent = TripDateFormat.trip(bookingData.date,bookingData.time);
+  document.getElementById("summaryReturnRow").hidden = bookingData.tripType !== "roundtrip";
+  document.getElementById("sumReturnTime").textContent = bookingData.tripType === "roundtrip"
+    ? TripDateFormat.trip(bookingData.returnDate,bookingData.returnTime) : "—";
+
+  showPromoResult(data);
+  if(typeof renderFareBreakdown==='function')renderFareBreakdown(data);
+  if(promoSummary)promoSummary.hidden=true;
+  quoteArea.classList.add("has-completed-quote");
+}
+
 async function requestQuote(event) {
   if (reservationBusy || quoteController) return null;
   const goToSummary = event?.currentTarget === quoteBtn;
@@ -1264,84 +1349,7 @@ async function requestQuote(event) {
       );
     }
 
-    if(tollQuoteUnavailable(data)){
-      sumTotal.textContent='Contact us';sumTotalLabel.textContent='Final quote required';
-      renderFareBreakdown(null,true);
-      throw new Error('Toll estimate unavailable — contact us for a final quote');
-    }
-    if (!Number.isFinite(data.total) || data.total <= 0) throw new Error("Unable to calculate quote. Please try again.");
-    if (bookingData.stops?.length && (data.stopSummary?.stops?.length !== bookingData.stops.length ||
-        !/^[a-f0-9]{64}$/.test(data.quoteRevision || ""))) {
-      throw new Error("The route through your stops could not be verified. Please request a new quote.");
-    }
-
-    currentQuote =
-      data;
-    quotedFormKey = requestKey;
-    renderBookingPolicy(data.cancellationPolicy);
-
-    sumVehicle.textContent =
-      data.vehicleKey === "suv" ? "Luxury SUV" : data.vehicle;
-
-    if (
-      data.miles === null ||
-      data.miles === undefined
-    ) {
-
-      sumMiles.textContent = "As directed";
-
-    } else {
-
-      sumMiles.textContent =
-        `${data.miles} mi`;
-    }
-
-    if (
-      data.minutes === null ||
-      data.minutes === undefined
-    ) {
-
-      sumMinutes.textContent = `${data.hours || hours.value} hours reserved`;
-
-    } else {
-
-      sumMinutes.textContent =
-        `${data.minutes} min`;
-    }
-
-    sumTotal.textContent =
-      formatMoney(
-        data.total,
-        data.currency
-      );
-
-    sumMilesLabel.textContent = data.roundTrip ? "Distance (round trip)" : "Distance";
-    sumMinutesLabel.textContent = data.roundTrip ? "Estimated Drive Time (round trip)" : "Estimated Drive Time";
-    sumTotalLabel.textContent = "Total";
-    const stopSummary = data.stopSummary;
-    document.getElementById("sumPickup").textContent = stopSummary?.pickup || bookingData.pickup;
-    document.getElementById("sumDestination").textContent = stopSummary?.dropoff || bookingData.dropoff;
-    const destinationLabel = document.getElementById("sumDestinationLabel");
-    if (destinationLabel) destinationLabel.textContent = stopSummary ? "Final Destination" : "Destination";
-    globalThis.BookingStops?.renderSummary(document.getElementById("summaryStops"),stopSummary);
-    const stopNotice = document.getElementById("summaryStopNotice");
-    if (stopNotice) {
-      stopNotice.hidden = !stopSummary;
-      const rate = stopSummary?.rateCentsPerMinute;
-      const waitingPrice = Number.isSafeInteger(rate) && rate > 0 ?
-        stopSummary.billableMinutes + " billable minutes at " + formatMoney(rate/100,data.currency) + " per minute. " : "";
-      stopNotice.textContent = (data.nonstopOfferExcluded ? "The $150 EWR to Manhattan special is nonstop only. This trip uses regular pricing. " : "") +
-        waitingPrice + "Waiting times are estimates. Any extra waiting charge requires your authorization and a separate payment.";
-    }
-    document.getElementById("sumPickupTime").textContent = TripDateFormat.trip(bookingData.date,bookingData.time);
-    document.getElementById("summaryReturnRow").hidden = bookingData.tripType !== "roundtrip";
-    document.getElementById("sumReturnTime").textContent = bookingData.tripType === "roundtrip"
-      ? TripDateFormat.trip(bookingData.returnDate,bookingData.returnTime) : "—";
-
-    showPromoResult(data);
-    if(typeof renderFareBreakdown==='function')renderFareBreakdown(data);
-    if(promoSummary)promoSummary.hidden=true;
-    quoteArea.classList.add("has-completed-quote");
+    displayQuoteForReview(data, bookingData, requestKey);
     if (goToSummary) {
       if (saveContact) bookingContactMemory.save(bookingData);
       showBookingStep(3, true);
@@ -1516,6 +1524,13 @@ form.addEventListener("change", event => {
    STRIPE CHECKOUT
 ========================================= */
 
+// A double-click must not confirm a replacement quote returned by the first click.
+for (const button of [payBtn, payLaterBtn]) {
+  button?.addEventListener("click", event => {
+    if (replacementQuote && currentQuote === replacementQuote && event.detail > 1) event.preventDefault();
+  });
+}
+
 form.addEventListener(
   "submit",
   async (event) => {
@@ -1536,6 +1551,7 @@ form.addEventListener(
     reservationBusy=true;
     updatePaymentControls();
     const paymentQuote = currentQuote;
+    let updatedReview = false;
 
     payBtn.disabled =
       true;
@@ -1557,6 +1573,7 @@ form.addEventListener(
       vehicle.disabled =
         wasDisabled;
 
+      const submittedFormKey = JSON.stringify(bookingData);
       const response =
         await fetch(
           "/api/checkout",
@@ -1570,7 +1587,7 @@ form.addEventListener(
 
             body:
               JSON.stringify(
-                {...bookingData,paymentChoice,
+                {...bookingData,paymentChoice,quoteApproval:paymentQuote.quoteApproval,
                   ...(paymentQuote.quoteRevision?{quoteRevision:paymentQuote.quoteRevision}:{})}
               )
           }
@@ -1580,6 +1597,20 @@ form.addEventListener(
         await response.json();
 
       if (!response.ok) {
+        if (response.status === 409 && data.code === "QUOTE_CHANGED") {
+          resetQuote();
+          if (submittedFormKey !== JSON.stringify(getFormData()) || !data.quote) {
+            throw new Error("Continue to Trip Summary for an updated quote.");
+          }
+          displayQuoteForReview(data.quote, bookingData, submittedFormKey);
+          replacementQuote = currentQuote;
+          updatedReview = true;
+          const changed = data.quote.total !== paymentQuote.total || data.quote.currency !== paymentQuote.currency;
+          const message = changed ? "Your trip price has changed." : "Your trip quote has been updated.";
+          const reason = data.reason === "route" ? " The estimated driving distance or time changed." :
+            data.reason === "expired" ? " Your previous quote expired." : "";
+          throw new Error(message + reason + " Review the updated total and choose a payment option again.");
+        }
         if(response.status===409 && data.error==='Your quote changed. Please get a new quote before reserving.')resetQuote();
         if(data.code==='TOLL_ESTIMATE_UNAVAILABLE'){
           resetQuote();sumTotal.textContent='Contact us';sumTotalLabel.textContent='Final quote required';
@@ -1613,6 +1644,7 @@ form.addEventListener(
         "RESERVE & PAY NOW";
       reservationBusy=false;
       if (!hasCurrentQuote()) showBookingStep(2, true);
+      else if (updatedReview) showBookingStep(3, true);
       updatePaymentControls();
     }
   }

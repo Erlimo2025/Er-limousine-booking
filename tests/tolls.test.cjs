@@ -288,10 +288,10 @@ test('normal airport pricing retains surcharges/discount/gratuity order, credits
 test('hourly route unknown preserves the exact existing quote, discounts and both payment choices without invented tolls or route calls',async t=>{
  for(const promoCode of ['', 'FIRST15']){
   const trip={...normal,tripType:'hourly',hours:3,promoCode},legacy=await fixture(t,1375,{}),expected=await legacy.request('/api/quote',trip);assert.equal(expected.status,200);assert.equal(expected.body.total,promoCode?331.50:390);
-  const {cancellationPolicy,...acceptedFare}=expected.body;
+  const {cancellationPolicy,quoteApproval:_expectedApproval,...acceptedFare}=expected.body;
   assert.equal(cancellationPolicy.version,require('../services/cancellation-policy').currentPolicy.version);
   for(const paymentChoice of ['now','later']){
-   const h=await fixture(t,null,{ROUTE_TOLLS_ENABLED:'true'}),q=await h.request('/api/quote',trip);assert.equal(q.status,200);assert.deepEqual(q.body,expected.body);assert.equal(q.body.tolls,undefined);assert.equal(q.body.pricingBreakdown,undefined);
+   const h=await fixture(t,null,{ROUTE_TOLLS_ENABLED:'true'}),q=await h.request('/api/quote',trip);assert.equal(q.status,200);assert.deepEqual(h.fareTerms(q.body),legacy.fareTerms(expected.body));assert.equal(q.body.tolls,undefined);assert.equal(q.body.pricingBreakdown,undefined);
    const reserved=await h.request('/api/checkout',{...trip,paymentChoice,total:1,tollAmount:99999});assert.equal(reserved.status,200);assert.deepEqual(h.records()[0].quote,acceptedFare);assert.equal(h.state.creates.length,paymentChoice==='later'?0:1);
    const paid=await h.request('/api/booking/'+reserved.body.bookingId+'/checkout',{}, {...origin,cookie:access(reserved)});assert.equal(paid.status,200);assert.equal(h.state.creates.length,1);assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount,Math.round(expected.body.total*100));assert.equal(h.state.routes.length,0);assert.equal(h.state.googleCalls,0);assert.deepEqual(h.records()[0].quote,acceptedFare);
   }
@@ -345,7 +345,7 @@ test('JSONB key reordering is deterministic; corrupt toll totals are rejected wh
 
 test('authenticated owner receipt and guest status expose the same safe breakdown and preserve existing ownership denial',async t=>{
  const h=await fixture(t),account={fullName:'Toll Owner',email:'toll-owner@example.test',phone:'2025550181',password:'Synthetic toll owner password'},a=await h.request('/api/customer/register',account),b=await h.request('/api/customer/register',{...account,email:'toll-other@example.test',phone:'2035550181'}),auth={cookie:cookie(a)};
- const q=await h.request('/api/quote',normal),r=await h.request('/api/checkout',{...normal,paymentChoice:'later',quoteRevision:q.body.quoteRevision},auth),id=r.body.bookingId;
+ const q=await h.request('/api/quote',normal,auth),r=await h.request('/api/checkout',{...normal,paymentChoice:'later',quoteRevision:q.body.quoteRevision},auth),id=r.body.bookingId;
  const owned=await h.request('/api/customer/trips/'+id,undefined,auth);assert.equal(owned.status,200);assert.equal(owned.body.trip.pricingBreakdown.totalCents,10079);assert.equal(owned.body.trip.pricingBreakdown.tollsCents,2079);
  assert.equal((await h.request('/api/customer/trips/'+id,undefined,{cookie:cookie(b)})).status,404);
  const guest=await h.request('/api/booking/'+id,undefined,{cookie:access(r)});assert.equal(guest.body.quote.pricingBreakdown.totalCents,10079);assert.equal(guest.body.quote.total,100.79);assert.ok(!JSON.stringify(guest.body).includes('commercialRatesVerified'));
@@ -368,7 +368,7 @@ test('Trip Summary uses server cents, shows inclusive $150 without a lower inven
 });
 
 test('full refunds use the captured total including accepted tolls and never reprice the cancelled reservation',async t=>{
- const h=await fixture(t,1375),account={fullName:'Toll Refund',email:'toll-refund@example.test',phone:'2025550183',password:'Synthetic toll refund password'},c=cookie(await h.request('/api/customer/register',account)),q=await h.request('/api/quote',normal),r=await h.request('/api/checkout',{...normal,paymentChoice:'later',quoteRevision:q.body.quoteRevision},{cookie:c}),id=r.body.bookingId;
+ const h=await fixture(t,1375),account={fullName:'Toll Refund',email:'toll-refund@example.test',phone:'2025550183',password:'Synthetic toll refund password'},c=cookie(await h.request('/api/customer/register',account)),q=await h.request('/api/quote',normal,{cookie:c}),r=await h.request('/api/checkout',{...normal,paymentChoice:'later',quoteRevision:q.body.quoteRevision},{cookie:c}),id=r.body.bookingId;
  assert.equal((await h.request('/api/customer/trips/'+id+'/payment',{}, {...origin,cookie:c})).status,200);
  const session=[...h.state.sessions.values()][0];session.status='complete';session.payment_status='paid';assert.equal((await h.webhook(session)).status,200);
  const before=h.records()[0].quote,trip=(await h.request('/api/customer/trips/'+id,undefined,{cookie:c})).body.trip,calls=h.state.googleCalls;
@@ -458,7 +458,7 @@ test('PostgreSQL toll snapshots survive JSONB/restart, preserve owner payment am
  await admin.query('CREATE SCHEMA '+schema);schemaCreated=true;
  const {createStore}=require('../storage/postgres'),store=createStore({},pool),second=createStore({},secondPool);await store.migrate();
  const h=configureLocations(await harness(t,enabled,'[]',store));h.state.routeResult=()=>googleRoute(1375);
- const account={fullName:'PG Toll Owner',email:'pg-toll-owner@example.test',phone:'2025550185',password:'Synthetic PostgreSQL toll owner'},c=cookie(await h.request('/api/customer/register',account)),q=await h.request('/api/quote',normal),r=await h.request('/api/checkout',{...normal,paymentChoice:'later',quoteRevision:q.body.quoteRevision},{cookie:c}),id=r.body.bookingId;
+ const account={fullName:'PG Toll Owner',email:'pg-toll-owner@example.test',phone:'2025550185',password:'Synthetic PostgreSQL toll owner'},c=cookie(await h.request('/api/customer/register',account)),q=await h.request('/api/quote',normal,{cookie:c}),r=await h.request('/api/checkout',{...normal,paymentChoice:'later',quoteRevision:q.body.quoteRevision},{cookie:c}),id=r.body.bookingId;
  assert.equal(r.status,200);const owner=await store.reservationOwner(id),stored=await store.get(id);assert.equal(stored.quote.totalCents,10079);assert.equal(stored.quote.tolls.eligibility.pickupState,'NJ');assert.equal(stored.quote.tolls.eligibility.dropoffState,'NY');assert.ok(tolls.validQuote(stored.quote));
  const restarted=await harness(t,{ROUTE_TOLLS_ENABLED:'true'},'[]',second);restarted.state.routeResult=()=>{throw Error('cannot recalculate accepted tolls');};
  const payment=await restarted.request('/api/customer/trips/'+id+'/payment',{}, {...origin,cookie:c});assert.equal(payment.status,200);assert.equal(restarted.state.googleCalls,0);assert.equal(restarted.state.creates[0].params.line_items[0].price_data.unit_amount,10079);assert.equal(await second.reservationOwner(id),owner);

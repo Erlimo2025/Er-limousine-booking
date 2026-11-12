@@ -43,10 +43,10 @@ for(const failure of ['http','timeout','invalid_json','fallback','empty','null']
 });
 for(const choice of ['now','later'])test('repeated quotes preserve cents; a later unavailable estimate blocks '+choice+' before acceptance',async t=>{
  const {h,input,c}=await create(t),first=await h.request('/api/quote',input),again=await h.request('/api/quote',input);
- assert.equal(first.status,200);assert.deepEqual(first.body,again.body);
+ assert.equal(first.status,200);assert.deepEqual(h.fareTerms(first.body),h.fareTerms(again.body));
  h.state.routeResult=()=>route(c,null);
  assert.equal((await h.request('/api/checkout',{...input,paymentChoice:choice,quoteRevision:first.body.quoteRevision})).status,422);assert.equal(h.records().length,0);assert.equal(h.state.creates.length,0);
- h.state.routeResult=()=>route(c,2500);const recovered=await h.request('/api/quote',input);assert.deepEqual(recovered.body,first.body);
+ h.state.routeResult=()=>route(c,2500);const recovered=await h.request('/api/quote',input);assert.deepEqual(h.fareTerms(recovered.body),h.fareTerms(first.body));
  const accepted=await h.request('/api/checkout',{...input,paymentChoice:choice,quoteRevision:recovered.body.quoteRevision});assert.equal(accepted.status,200);assert.equal(h.records()[0].quote.totalCents,first.body.totalCents);
  const pay=await h.request('/api/booking/'+accepted.body.bookingId+'/checkout',{}, {...origin(h),cookie:access(accepted)});assert.equal(pay.status,200);assert.equal(h.state.creates.length,1);assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount,first.body.totalCents);
 });

@@ -165,10 +165,11 @@ test('isolated PostgreSQL integration: transactions, concurrent workers, import 
  await t.test('ambiguous Stripe failure retains a durable attempt for another worker retry',async()=>{
   const body={...factory.booking,email:'retry@example.test',phone:'2015550188'};
   h.state.fail=new Error('mock provider failure');
+  const reviewed=(await h.request('/api/quote',body)).body.quoteApproval;
   assert.equal((await h.request('/api/checkout',body)).status,503);
   const records=await store.list(),pending=records.find(r=>r.customer.email===body.email);assert.ok(pending.checkoutAttempt.key);assert.equal(pending.stripeSessionId,null);
   const failedKey=h.state.creates.at(-1).options.idempotencyKey;
-  const retry=await other.request('/api/checkout',body,{cookie:h.checkoutCookies()});assert.equal(retry.status,200);
+  const retry=await other.request('/api/checkout',{...body,quoteApproval:reviewed},{cookie:h.checkoutCookies()});assert.equal(retry.status,200);
   assert.equal(other.state.creates.at(-1).options.idempotencyKey,failedKey);
   assert.equal((await store.list()).filter(r=>r.customer.email===body.email).length,1);
  });
@@ -202,19 +203,21 @@ test('isolated PostgreSQL integration: transactions, concurrent workers, import 
   assert.equal((await h.request('/api/checkout',body)).status,503);
   assert.equal((await other.request('/api/checkout',{...body,time:'13:00'})).status,200);
   const ambiguous={...body,email:'ambiguous-first@example.test',phone:'2015550132'};
+  const reviewed=(await h.request('/api/quote',ambiguous)).body.quoteApproval;
   h.state.fail=new Error('mock ambiguous failure');assert.equal((await h.request('/api/checkout',ambiguous)).status,503);
   const key=h.state.creates.at(-1).options.idempotencyKey;
   assert.equal((await other.request('/api/checkout',{...ambiguous,time:'13:00'})).status,409);
-  assert.equal((await other.request('/api/checkout',ambiguous,{cookie:h.checkoutCookies()})).status,200);
+  assert.equal((await other.request('/api/checkout',{...ambiguous,quoteApproval:reviewed},{cookie:h.checkoutCookies()})).status,200);
   assert.equal(other.state.creates.at(-1).options.idempotencyKey,key);
  });
  await t.test('expired ambiguous FIRST15 requires reconciliation; a later error cannot release its claim',async()=>{
   h.advance(31*60*1000);other.advance(31*60*1000);
   const body={...factory.booking,email:'old-ambiguous@example.test',phone:'2015550139',promoCode:'FIRST15'};
+  const reviewed=(await h.request('/api/quote',body)).body.quoteApproval;
   h.state.fail=new Error('mock ambiguous creation');assert.equal((await h.request('/api/checkout',body)).status,503);
   const key=h.state.creates.at(-1).options.idempotencyKey;
   h.advance(25*60*60*1000);other.advance(25*60*60*1000);
-  assert.equal((await other.request('/api/checkout',body,{cookie:h.checkoutCookies()})).status,503);
+  assert.equal((await other.request('/api/checkout',{...body,quoteApproval:reviewed},{cookie:h.checkoutCookies()})).status,503);
   assert.equal(other.state.creates.some(x=>x.options.idempotencyKey===key),false);
   assert.equal((await h.request('/api/checkout',{...body,time:'13:00'})).status,409);
   assert.equal((await store.list()).find(r=>r.customer.email===body.email && r.trip.time==='12:00').checkoutAttempt.state,'review_required');
@@ -332,9 +335,10 @@ test('isolated PostgreSQL integration: transactions, concurrent workers, import 
   const c='ChIJMYEleJSwokRawcDBeH8NVg',general=factory.booking.pickupPlaceId;
   const body={...factory.booking,pickup:'Newark Liberty International Airport Terminal C',pickupPlaceId:c,pickupTerminal:'c',vehicle:'suv',offerCode:'EWR_MANHATTAN_SUV',promoCode:'FIRST15'};
   const fresh=await factory.harness(t,{},'[]',store),worker=await factory.harness(t,{},'[]',second);fresh.state.rejectTerminalCDetails=true;worker.state.rejectTerminalCDetails=true;
+  const reviewed=(await fresh.request('/api/quote',body)).body.quoteApproval;
   const out=await fresh.request('/api/checkout',body);assert.equal(out.status,200);const record=await second.get(out.body.bookingId);
-  assert.equal(record.trip.pickupPlaceId,c);assert.equal(record.trip.pickup,'Newark Liberty International Airport (Terminal C), 3 Brewster Rd, Newark, NJ');assert.equal(record.trip.vehicle,'suv');assert.equal(record.quote.total,150);assert.equal(record.quote.discount,0);assert.equal(record.quote.promotion,null);assert.deepEqual(fresh.state.detailsRequests,[general]);assert.equal(fresh.state.routes[0].origin.placeId,general);
-  worker.state.sessions=fresh.state.sessions;const retry=await worker.request('/api/checkout',body,{cookie:fresh.checkoutCookies()});assert.equal(retry.status,200);assert.equal(worker.state.creates.length,0);assert.deepEqual(worker.state.detailsRequests,[general]);assert.deepEqual(await store.get(record.id),record);
+  assert.equal(record.trip.pickupPlaceId,c);assert.equal(record.trip.pickup,'Newark Liberty International Airport (Terminal C), 3 Brewster Rd, Newark, NJ');assert.equal(record.trip.vehicle,'suv');assert.equal(record.quote.total,150);assert.equal(record.quote.discount,0);assert.equal(record.quote.promotion,null);assert.deepEqual(fresh.state.detailsRequests,[general,general]);assert.equal(fresh.state.routes[0].origin.placeId,general);
+  worker.state.sessions=fresh.state.sessions;const retry=await worker.request('/api/checkout',{...body,quoteApproval:reviewed},{cookie:fresh.checkoutCookies()});assert.equal(retry.status,200);assert.equal(worker.state.creates.length,0);assert.deepEqual(worker.state.detailsRequests,[general]);assert.deepEqual(await store.get(record.id),record);
   const session=[...fresh.state.sessions.values()][0];assert.equal((await worker.webhook({...session,payment_status:'paid'})).status,200);const paid=await store.get(record.id);assert.equal(paid.paymentStatus,'paid');assert.deepEqual(paid.trip,record.trip);
  });
 

@@ -119,9 +119,30 @@ for(const width of [320,390,1440])test('validation, editing, fresh quotes and ea
 test('quote errors, late responses, revision changes and browser restoration preserve inputs',{timeout:30000},async t=>{
  const s=await setup(t,390),{page,h}=s;await details(s);await customer(s);
  h.state.googleError=true;const failed=page.waitForResponse(r=>r.url()===h.url+'/api/quote');await page.locator('#quoteBtn').click();assert.ok((await failed).status()>=400);await page.waitForFunction(()=>!document.getElementById('quoteBtn').disabled);assert.equal(await s.state(),'2');assert.equal(await page.locator('#notes').inputValue(),s.input.notes);h.state.googleError=false;
- h.state.googleDelay=250;const started=page.waitForRequest(r=>r.url()===h.url+'/api/quote');await page.locator('#quoteBtn').click();await started;await page.locator('#bookingBack').click();await page.locator('#time').fill('14:00');h.state.googleDelay=0;await page.locator('#bookingContinue').click();await quote(s);assert.match(await page.locator('#sumPickupTime').innerText(),/2:00 PM/);
+ const provider = h.context.fetch;
+ let routeStarted, releaseOldRoute;
+ const started = new Promise(resolve => {routeStarted = resolve;});
+ const pending = new Promise(resolve => {releaseOldRoute = resolve;});
+ h.context.fetch = async (url, options) => {
+   if (url.includes('computeRoutes')) {routeStarted(); await pending;}
+   return provider(url, options);
+ };
+ try {
+   await page.locator('#quoteBtn').click();
+   await started;
+   await page.locator('#bookingBack').click();
+   assert.equal(await s.state(), '1');
+   await page.locator('#time').fill('14:00');
+   h.context.fetch = provider;
+   await page.locator('#bookingContinue').click();
+   await quote(s);
+ } finally {
+   h.context.fetch = provider;
+   releaseOldRoute();
+ }
+ assert.match(await page.locator('#sumPickupTime').innerText(),/2:00 PM/);
  // Backend recalculation still rejects changed prices before reservation creation.
- const original=h.state.routeResult;h.state.routeResult=r=>({...original(r),distanceMeters:200000});const rejected=page.waitForResponse(r=>r.url()===h.url+'/api/checkout');await page.locator('#payLaterBtn').click();assert.equal((await rejected).status(),409);await page.waitForFunction(()=>document.getElementById('book').dataset.bookingStep==='2');assert.equal(h.records().length,0);assert.equal(h.state.creates.length,0);assert.match(await page.locator('#notice').innerText(),/quote changed/);await quote(s);
+ const original=h.state.routeResult;h.state.routeResult=r=>({...original(r),distanceMeters:200000});const rejected=page.waitForResponse(r=>r.url()===h.url+'/api/checkout');await page.locator('#payLaterBtn').click();assert.equal((await rejected).status(),409);await page.waitForFunction(()=>document.getElementById('notice').textContent.includes('Review the updated total'));assert.equal(await s.state(),'3');assert.equal(h.records().length,0);assert.equal(h.state.creates.length,0);assert.match(await page.locator('#notice').innerText(),/price has changed/);
  await page.evaluate(()=>dispatchEvent(new PageTransitionEvent('pageshow',{persisted:true})));assert.equal(await s.state(),'2');assert.equal(await page.locator('#notes').inputValue(),s.input.notes);assert.equal(await page.locator('#payBtn').isEnabled(),false);await quote(s);await layout(s);results.push({scenario:'errors_stale_quote_revision_restore',width:390,passed:true});
 });
 
@@ -163,3 +184,62 @@ test('a successful HTTP response carrying the old absorbed fallback cannot enabl
  await page.route('**/api/quote',r=>r.fulfill({status:200,contentType:'application/json',body:JSON.stringify({...q,tolls:{status:'absorbed',amountCents:0},pricingBreakdown:{...q.pricingBreakdown,tollsCents:0}})}));
  await page.locator('#quoteBtn').click();await page.waitForFunction(()=>!document.getElementById('quoteBtn').disabled);assert.equal(await s.state(),'2');assert.equal(await page.locator('#notice').innerText(),'Toll estimate unavailable — contact us for a final quote');assert.equal(await page.locator('#payBtn').isEnabled(),false);assert.equal(await page.locator('#payLaterBtn').isEnabled(),false);assert.equal(h.records().length,0);assert.equal(h.state.creates.length,0);results.push({scenario:'legacy_fallback_response_denied',width:390,passed:true});
 });
+
+
+for (const [width, choice] of [[320, 'now'], [390, 'later'], [430, 'decline'], [1440, 'now']]) {
+  test('a changed toll-off fare needs a new payment choice at ' + width + 'px (' + choice + ')', {timeout: 45000}, async t => {
+    const scenario = {...cases.find(item => item.id === 'flag_off'), vehicle: 'escalade'};
+    const fixture = await setup(t, width, scenario);
+    const {page, h} = fixture;
+    const providerRoute = duration => ({distanceMeters: 16093.44, duration});
+    h.state.routeResult = () => providerRoute('1200s');
+    await details(fixture);
+    await customer(fixture);
+    const original = await quote(fixture);
+    assert.equal(original.total, 100);
+    assert.equal(await page.locator('#sumTotal').innerText(), '$100.00');
+
+    h.state.routeResult = () => providerRoute('1800s');
+    const checkoutResponse = () => page.waitForResponse(response =>
+      response.url() === h.url + '/api/checkout' && response.request().method() === 'POST');
+    const action = page.locator(choice === 'now' ? '#payBtn' : '#payLaterBtn');
+    const first = checkoutResponse();
+    await action.dblclick();
+    const response = await first;
+    assert.equal(response.status(), 409);
+    const {quote: updated} = await response.json();
+    assert.equal(updated.total, 112.5);
+    assert.notEqual(updated.quoteApproval, original.quoteApproval);
+    await page.waitForFunction(() => document.getElementById('sumTotal').textContent === '$112.50' &&
+      document.getElementById('notice').textContent.includes('Your trip price has changed.') &&
+      !document.getElementById('payBtn').disabled);
+    assert.equal(await fixture.state(), '3');
+    assert.match(await page.locator('#notice').innerText(), /estimated driving distance or time changed/);
+    await layout(fixture);
+    assert.equal(h.records().length, 0);
+    assert.equal(h.state.creates.length, 0);
+
+    const screenshots = process.env.ER_TEST_QUOTE_SCREENSHOTS_DIR;
+    if (screenshots) {
+      const engine = process.env.ER_TEST_BOOKING_ENGINE || 'chromium';
+      await page.locator('#book').screenshot({path: path.join(screenshots, 'quote-review-' + engine + '-' + width + '.png'), animations: 'disabled'});
+    }
+    if (choice === 'decline') {
+      await page.locator('#bookingEditTrip').click();
+      assert.notEqual(await fixture.state(), '3');
+      assert.equal(h.records().length, 0);
+      assert.equal(h.state.creates.length, 0);
+      return;
+    }
+
+    const second = checkoutResponse();
+    await action.click();
+    const accepted = await second;
+    assert.equal(accepted.status(), 200);
+    assert.equal(accepted.request().postDataJSON().quoteApproval, updated.quoteApproval);
+    assert.equal(h.records().length, 1);
+    assert.equal(h.records()[0].quote.total, 112.5);
+    assert.equal(h.state.creates.length, choice === 'now' ? 1 : 0);
+    if (choice === 'now') assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount, 11250);
+  });
+}

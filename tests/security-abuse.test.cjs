@@ -133,6 +133,7 @@ async function harness(t, env = {}, saved = "[]", injectedStore, startedAt = Dat
       if (name === "./services/email") return {createEmailProvider:options=>{if(env.TEST_VALIDATE_EMAIL_CONFIG)require('../services/email').createEmailProvider(options);if(env.TEST_RECOVERY_CONFIG_FAILURE)throw new Error('synthetic provider configuration');return {enabled:options.enabled,sendBookingEmail:async message=>{if(state.bookingOnCall)await state.bookingOnCall();state.bookingCalls.push({...message});if(state.emailFail)throw new Error('synthetic email secret marker');if(!state.bookingKeys.has(message.idempotencyKey)){state.bookingKeys.add(message.idempotencyKey);state.bookingMessages.push({...message});}if(state.bookingLoseResponse){state.bookingLoseResponse=false;throw new Error('synthetic lost email response');}},sendResetLink:async message=>{if(state.emailFail)throw new Error('synthetic email secret marker');state.emailMessages.push({...message});}};}};
       if (name === "./services/booking-emails") return require("../services/booking-emails");
       if (name === "./services/booking-stops") return require("../services/booking-stops");
+      if (name === "./services/quote-approval") return require("../services/quote-approval");
       if (name === "./services/admin-payment-links") return require("../services/admin-payment-links");
       if (name === "./services/customer-reviews") return require("../services/customer-reviews");
       if (name === "./routes/customer-reviews") return require("../routes/customer-reviews");
@@ -167,13 +168,20 @@ async function harness(t, env = {}, saved = "[]", injectedStore, startedAt = Dat
   t.after(() => new Promise(resolve => {server.closeAllConnections(); server.close(resolve);}));
   const url = `http://127.0.0.1:${server.address().port}`;
   const checkoutJar=new Map();
-  return {
-    state, app, context, signatureSdk, url, testStore, storageFailures,
-    checkoutCookies: () => [...checkoutJar.values()].join("; "),
-    get data() { return JSON.stringify(testStore.shared.records); },
-    records: () => JSON.parse(JSON.stringify(testStore.shared.records)),
-    advance: ms => {clock += ms;},
-    async request(route, body, headers = {}, method = body === undefined ? "GET" : "POST") {
+  let quoteBrowserCookie = "";
+  const previews = new Map();
+  const approvalFields = ["pickup", "dropoff", "pickupPlaceId", "dropoffPlaceId", "pickupTerminal", "dropoffTerminal",
+    "date", "time", "returnDate", "returnTime", "vehicle", "passengers", "tripType", "hours", "stops",
+    "firstName", "lastName", "email", "phone", "flightNumber", "notes", "promoCode", "offerCode", "bookingFlow"];
+  const approvalKey = (body, headers) => JSON.stringify([
+    String(headers.cookie || "").split(";").map(cookie => cookie.trim()).find(cookie => /^(?:__Host-)?er_customer_session=/.test(cookie)),
+    ...approvalFields.map(field => body?.[field])
+  ]);
+  function withQuoteCookie(headers) {
+    const cookies = headers.cookie ?? [...checkoutJar.values()].join("; ");
+    return {...headers, cookie: [cookies, quoteBrowserCookie].filter(Boolean).join("; ")};
+  }
+  async function requestRaw(route, body, headers = {}, method = body === undefined ? "GET" : "POST") {
       const response = await fetch(url + route, {
         method, headers: {"content-type": "application/json", ...(route === "/api/checkout" ? {cookie:[...checkoutJar.values()].join("; ")} : {}), ...(production ? {"x-forwarded-proto": "https"} : {}), ...headers},
         body: body === undefined ? undefined : typeof body === "string" ? body : JSON.stringify(body)
@@ -185,7 +193,36 @@ async function harness(t, env = {}, saved = "[]", injectedStore, startedAt = Dat
       const text = await response.text();
       let result; try {result = JSON.parse(text);} catch (_) {result = text;}
       return {status: response.status, body: result, headers: response.headers};
-    },
+    }
+  async function preview(body, headers) {
+    const result = await requestRaw("/api/quote", body, withQuoteCookie(headers));
+    const cookie = result.headers.getSetCookie().find(value => /^(?:__Host-)?er_quote_browser=/.test(value));
+    if (cookie) quoteBrowserCookie = cookie.split(";")[0];
+    previews.set(approvalKey(body, headers), result.status === 200 ? result.body.quoteApproval : null);
+    return result;
+  }
+
+  async function request(route, body, headers = {}, method) {
+    if (route === "/api/quote" && method === undefined) return preview(body, headers);
+    if (route !== "/api/checkout" || (method && method !== "POST")) return requestRaw(route, body, headers, method);
+    // Existing workflow tests model a customer who has reviewed a quote.
+    // Use requestRaw for endpoint rejection and explicit approval tests.
+    if (body && typeof body === "object" && !Array.isArray(body) && !Object.hasOwn(body, "quoteApproval")) {
+      const key = approvalKey(body, headers);
+      if (!previews.has(key) && body.quoteRevision === undefined) await preview(body, headers);
+      const approval = previews.get(key);
+      if (approval) body = {...body, quoteApproval: approval};
+    }
+    return requestRaw(route, body, withQuoteCookie(headers), method);
+  }
+  return {
+    state, app, context, signatureSdk, url, testStore, storageFailures,
+    checkoutCookies: () => [...checkoutJar.values()].join("; "),
+    get data() { return JSON.stringify(testStore.shared.records); },
+    records: () => JSON.parse(JSON.stringify(testStore.shared.records)),
+    advance: ms => {clock += ms;},
+    request, requestRaw,
+    fareTerms: ({quoteApproval: _approval, ...fare}) => fare,
     async webhook(session, type = "checkout.session.completed", invalid = false) {
       const payload = JSON.stringify({id: "evt_mock", type, data: {object: session}});
       const signature = signatureSdk.webhooks.generateTestHeaderString({payload, secret: "whsec_local_mock"});
@@ -266,6 +303,7 @@ test("Google timeout and provider errors return generic responses with no leaked
 
 test("concurrent/sequential duplicate Checkout reuses session and reservation; expiry permits retry", async t => {
   const h = await harness(t); h.state.createDelay = 20;
+  assert.equal((await h.request("/api/quote", booking)).status, 200);
   const results = await Promise.all(Array.from({length: 5}, () => h.request("/api/checkout", booking)));
   assert.equal(results.filter(result=>result.status===200).length,1);
   assert.ok(results.filter(result=>result.status!==200).every(result=>result.status===503));
@@ -292,9 +330,10 @@ test("ambiguous Stripe failure retries same key, including restart; definitive f
   assert.deepEqual(JSON.parse(JSON.stringify(h.state.creates[0].params)), JSON.parse(JSON.stringify(h.state.creates[1].params)));
   assert.equal(h.records().length, 1);
   const failure = await harness(t); failure.state.fail = new Error("mock network timeout");
+  const approved = (await failure.request("/api/quote", booking)).body;
   await failure.request("/api/checkout", booking);
   const restarted = await harness(t, {}, failure.data);
-  await restarted.request("/api/checkout", booking,{cookie:failure.checkoutCookies()});
+  await restarted.request("/api/checkout", {...booking, quoteApproval:approved.quoteApproval},{cookie:failure.checkoutCookies()});
   assert.equal(restarted.state.creates[0].options.idempotencyKey, failure.state.creates[0].options.idempotencyKey);
   assert.equal(restarted.records().length, 1);
   const rejected = await harness(t);
@@ -1746,12 +1785,12 @@ test('Trip Summary displays Luxury SUV while quote/request keep the internal suv
   vehicle:{value:'suv',disabled:false,options:[{textContent:'Cadillac Escalade ESV'}],selectedIndex:0},form:{reportValidity:()=>true},
   clearNotice(){},showNotice(){},showPromoResult(){},formatMoney:value=>String(value),getFormData(){return {vehicle:this.vehicle.value};}};
  context.getFormData=()=>({vehicle:context.vehicle.value});
- let sent;const data={vehicle:'Black SUV',vehicleKey:'suv',miles:10,minutes:20,total:150,currency:'usd',fixedOffer:{}};
+ let sent;const data={vehicle:'Black SUV',vehicleKey:'suv',miles:10,minutes:20,total:150,currency:'usd',fixedOffer:{},quoteApproval:'reviewed-quote-token'};
  context.fetch=async(url,options)=>{sent=JSON.parse(options.body);return {ok:true,json:async()=>data};};vm.createContext(context);
  context.bookingPolicyDetails=null;context.bookingPolicyDialog=null;
  vm.runInContext(app.slice(app.indexOf('function renderBookingPolicy('),app.indexOf('/* =========================================',app.indexOf('function resetQuote()'))),context);
  context.resetQuote();assert.equal(context.sumVehicle.textContent,'Luxury SUV');assert.equal(context.vehicle.value,'suv');
- vm.runInContext(app.slice(app.indexOf('async function requestQuote('),app.indexOf('quoteBtn.addEventListener(',app.indexOf('async function requestQuote('))),context);
+ vm.runInContext(app.slice(app.indexOf('function displayQuoteForReview('),app.indexOf('quoteBtn.addEventListener(',app.indexOf('async function requestQuote('))),context);
  const quote=await context.requestQuote();assert.equal(context.sumVehicle.textContent,'Luxury SUV');assert.equal(sent.vehicle,'suv');assert.equal(quote.vehicleKey,'suv');assert.equal(quote.vehicle,'Black SUV');assert.equal(quote.total,150);
  data.vehicleKey='escalade';data.vehicle='Cadillac Escalade ESV';context.vehicle.value='escalade';await context.requestQuote();assert.equal(context.sumVehicle.textContent,'Cadillac Escalade ESV');
 });
@@ -1793,7 +1832,7 @@ test('Terminal C fallback retains every General EWR identity, classification, ge
   {googleError:true,providerStatus:400,googleBody:{error:{status:'INVALID_ARGUMENT'}}},{providerTimeout:true},{providerNetworkFailure:true},{providerInvalidJson:true}
  ]){
   const h=await harness(t);Object.assign(h.state,change);
-  for(const endpoint of ['/api/quote','/api/checkout'])assert.equal((await h.request(endpoint,body)).status,400);
+  for(const endpoint of ['/api/quote','/api/checkout'])assert.equal((await h.requestRaw(endpoint,body)).status,400);
   assert.deepEqual(h.state.detailsRequests,[booking.pickupPlaceId,booking.pickupPlaceId]);assert.equal(h.state.creates.length,0);assert.equal(h.records().length,0);
  }
  for(const change of [{pickupPlaceId:undefined},{pickupPlaceId:'forged'},{pickup:'Terminal A'},{pickup:'EWR'},{pickup:'Newark Airport'},{pickup:'Newark Liberty International Airport Hotel'},{pickup:'Hotel'}]){
