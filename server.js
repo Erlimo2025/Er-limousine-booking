@@ -10,6 +10,7 @@ const pricing = require("./pricing");
 const ewrPickups = require("./ewr-pickups");
 const routeTollPricing = require('./services/route-tolls');
 const bookingStops = require('./services/booking-stops');
+const {createQuoteApproval, approvalHash} = require('./services/quote-approval');
 const cancellationPolicy=require('./services/cancellation-policy');
 const tollPricingEnabled = process.env.ROUTE_TOLLS_ENABLED === 'true';
 const tollEstimateMode = process.env.ROUTE_TOLLS_MODE !== 'verified';
@@ -206,6 +207,7 @@ const MINUTE = 60 * 1000;
 const ADMIN_SESSION_ABSOLUTE_MS = 8 * 60 * MINUTE;
 const ADMIN_SESSION_IDLE_MS = 30 * MINUTE;
 const adminCookieSecure = process.env.NODE_ENV === "production" || process.env.RENDER === "true";
+const quoteApproval = createQuoteApproval({secure: adminCookieSecure, now: () => Date.now()});
 const adminCookieName = adminCookieSecure ? "__Host-er_admin_session" : "er_admin_session";
 const adminCookieOptions = {httpOnly: true, secure: adminCookieSecure, sameSite: "strict", path: "/"};
 
@@ -1890,7 +1892,7 @@ app.post(
 
 app.use("/api/address-suggestions", rateLimit("address", 120));
 app.use('/api/reverse-geocode',customerPrivateResponse,rateLimit('reverse-geocode',20),rateLimit('reverse-geocode-long',100,60*MINUTE));
-app.use("/api/quote", rateLimit("quote", 30));
+app.use("/api/quote", customerPrivateResponse, rateLimit("quote", 30));
 app.use("/api/checkout", customerPrivateResponse, rateLimit("checkout", 15), rateLimit("checkout-long", 60, 30 * MINUTE));
 app.use("/api/booking", customerPrivateResponse, rateLimit("booking-status", 120));
 app.use("/success.html", customerPrivateResponse);
@@ -2215,28 +2217,26 @@ app.get(
    GET QUOTE
 ========================================= */
 
-app.post(
-  "/api/quote",
+function quoteForReview(req, res, fingerprint, quote) {
+  const {stopPlan: _privateStopPlan, stopQuoteRevision, ...displayQuote} = routeTollPricing.customerQuote(quote);
+  return {...displayQuote, ...bookingStops.publicSummary(quote),
+    ...(stopQuoteRevision ? {quoteRevision: stopQuoteRevision} : {}),
+    ...(quote.nonstopOfferExcluded ? {nonstopOfferExcluded: true} : {}),
+    cancellationPolicy: cancellationPolicy.currentPolicy,
+    quoteApproval: quoteApproval.issue(req, res, fingerprint, quote)};
+}
 
-  async (req, res) => {
-    try {
-      const quote =
-        await calculateQuote(
-          req.body,req
-        );
-
-      const {stopPlan: _privateStopPlan, stopQuoteRevision, ...displayQuote} = routeTollPricing.customerQuote(quote);
-      res.json({...displayQuote,...bookingStops.publicSummary(quote),
-        // The existing wire revision must also reject stale stopped quotes on the previous build.
-        ...(stopQuoteRevision ? {quoteRevision:stopQuoteRevision} : {}),
-        ...(quote.nonstopOfferExcluded ? {nonstopOfferExcluded:true} : {}),cancellationPolicy:cancellationPolicy.currentPolicy});
-
-    } catch (error) {
-      sendSafeError(req,res,error,400);
-    }
+app.post("/api/quote", async (req, res) => {
+  try {
+    await storageReady;
+    await customerAuth.resolve(req, res);
+    const flow = verifiedBookingFlow(req);
+    const quote = await calculateQuote(req.body, req);
+    res.json(quoteForReview(req, res, checkoutFingerprint(req.body, flow), quote));
+  } catch (error) {
+    sendSafeError(req, res, error, 400);
   }
-);
-
+});
 
 /* =========================================
    STRIPE CHECKOUT
@@ -2244,6 +2244,17 @@ app.post(
 
 function checkoutHash(value) {
   return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+function verifiedBookingFlow(req) {
+  let flow=null;
+  if(req.body.bookingFlow!==undefined){
+    const candidate=req.body.bookingFlow;
+    if(!req.customer || typeof candidate!=='string' || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\.[a-f0-9]{64}$/.test(candidate) ||
+      !crypto.timingSafeEqual(Buffer.from(candidate),Buffer.from(bookAgainFlow(req,candidate.slice(0,36)))))throw new Error('Invalid booking flow.');
+    flow=candidate;
+  }
+  return flow;
 }
 
 function checkoutFingerprint(body,flow=null) {
@@ -2457,93 +2468,69 @@ async function createCheckout(body, ip, fingerprint, req, res) {
     throw Object.assign(new Error("Stripe is not configured. Add STRIPE_SECRET_KEY before accepting payments."), {status: 503});
   }
 
-  let booking = (await readBookings()).find(item =>
-    item.checkoutFingerprint === fingerprint && item.status !== "cancelled");
-  // Matching booking data is only a lookup key, never an ownership credential.
-  // This check runs under the database action lock, before provider calls or mutations.
-  if (booking && !hasCustomerAccess(req,booking,true)) {
-    throw Object.assign(new Error("Checkout is temporarily unavailable. Please try again."),{status:503});
+  const bookings = await readBookings();
+  const prior = bookings.find(item => item.checkoutFingerprint === fingerprint && item.status !== "cancelled");
+  const reviewed = approvalHash(body.quoteApproval);
+  if (prior) {
+    // A fingerprint or quote token is never a reservation credential.
+    if (!hasCustomerAccess(req, prior, true)) {
+      throw Object.assign(new Error("Checkout is temporarily unavailable. Please try again."), {status: 503});
+    }
+    req.paymentCredentialRequired = true;
+    if (req.customer) {
+      const owner = await reservationStore.reservationOwner(prior.id);
+      if (owner && owner !== req.customer.id) {
+        throw Object.assign(new Error("Checkout is temporarily unavailable. Please try again."), {status: 503});
+      }
+    }
+    if (prior.deferredPayment && await expireDeferredUnderLock(prior)) {
+      throw Object.assign(new Error("Reservation unavailable."), {status: 409});
+    }
+    // Preserve the offer/terminal checks on form retries and the stored fare.
+    await verifyBookingLocations(body, req);
+    if (prior.paymentStatus === "paid") {
+      throw Object.assign(new Error("This reservation has already been paid."), {status: 409});
+    }
+    if (payLater || !reviewed || reviewed !== prior.quoteApprovalHash) {
+      if (!payLater) await verifyPaymentAuthority(req, prior);
+      // A new preview or an older record may differ from the accepted fare.
+      return checkoutCustomerResult(SITE_URL + "/success.html?booking=" + prior.id, prior.id);
+    }
+    return checkoutStoredBooking(prior.trip, prior, req);
   }
 
-  if(booking)req.paymentCredentialRequired=true;
-  if(booking && req.customer){
-    const owner=await reservationStore.reservationOwner(booking.id);
-    if(owner && owner!==req.customer.id)throw Object.assign(new Error('Checkout is temporarily unavailable. Please try again.'),{status:503});
-  }
-
-  if(booking?.deferredPayment && await expireDeferredUnderLock(booking))throw Object.assign(new Error('Reservation unavailable.'),{status:409});
-  // Recheck the original offer/terminal protections before every owned form
-  // retry shortcut. Verification never replaces the accepted fare or session.
-  if(booking)await verifyBookingLocations(body,req);
-  // An accepted trip can predate toll activation or carry a different frozen fare.
-  // Show that owned reservation before payment rather than charging an amount
-  // different from the new form quote, repricing it, or requiring endless requotes.
-  if(booking && (((tollPricingEnabled || booking.quote.stopPlan) && body.quoteRevision===undefined) ||
-    (body.quoteRevision!==undefined && body.quoteRevision!==bookingStops.checkoutRevision(booking.quote)))){
-    return {url:`${SITE_URL}/success.html?booking=${booking.id}`,bookingId:booking.id};
-  }
-
-  if(booking?.deferredPayment){
-    if(payLater){if(booking.paymentStatus==='paid')throw Object.assign(new Error('Reservation unavailable.'),{status:409});return {url:`${SITE_URL}/success.html?booking=${booking.id}`,bookingId:booking.id};}
-    return checkoutStoredBooking(booking.trip,booking,req);
-  }
-  /*
-    IMPORTANT:
-    The price is calculated again
-    on the server.
-
-    The browser cannot choose the
-    Stripe payment amount.
-  */
-
-  const staleQuote = () => Object.assign(new Error('Your quote changed. Please get a new quote before reserving.'),{status:409});
-  if (!booking && body.stops?.length && (typeof body.quoteRevision!=='string' || !/^[a-f0-9]{64}$/.test(body.quoteRevision))) {
-    throw staleQuote();
-  }
-  // Accepted reservations retain their frozen fare and original cancellation terms.
-  const quote = booking ? booking.quote : await calculateQuote(body,req);
-  if (!booking && tollPricingEnabled && body.tripType!=='hourly' && !quote.fixedOffer && body.quoteRevision===undefined) {
-    throw staleQuote();
-  }
-  if (body.quoteRevision!==undefined && (typeof body.quoteRevision!=='string' || !/^[a-f0-9]{64}$/.test(body.quoteRevision) ||
-      body.quoteRevision!==bookingStops.checkoutRevision(quote))) throw staleQuote();
-  // Independently validate the final server quote before storing a booking
-  // or creating a Stripe session, even if quote calculation changes later.
+  const quote = await calculateQuote(body, req);
   await validateCheckoutQuote(body, quote);
-  if (quote.vehicleKey !== body.vehicle) {
-    throw new Error("Calculated fare does not match the selected vehicle.");
-  }
-  const checkoutAmount = Math.round(quote.total * 100);
-  if (!Number.isSafeInteger(checkoutAmount) || checkoutAmount <= 0) {
-    throw new Error("Calculated Checkout amount is invalid.");
-  }
-
+  if (req.customer) await customerAuth.resolve(req, res);
+  // Provider calls can run long enough for the requested pickup to pass.
   validateBookingInput(body);
-  if(booking?.paymentStatus==='paid')throw Object.assign(new Error('This reservation has already been paid.'),{status:409});
-  if (!booking) {
-    booking = createBookingRecord(body, quote);
-    booking.cancellationPolicyAtBooking={policy:cancellationPolicy.currentPolicy,recordedAt:booking.createdAt};
-    if(payLater)booking.deferredPayment=true;
-    const token=crypto.randomBytes(32).toString("base64url");
-    booking.customerAccess = newCustomerAccess(body,token);
-    booking.checkoutFingerprint = fingerprint;
-    booking.checkoutClientHash = checkoutHash(ip);
-    const start=parseServiceDateTime(body.date,body.time,'pickup');
-    const end=body.tripType==='roundtrip'?parseServiceDateTime(body.returnDate,body.returnTime,'return'):
-      start+(body.tripType==='hourly'?Number(body.hours)*60*MINUTE:0);
-    await reservationStore.createWithBudget(booking, bookings => enforceBookingBudget(bookings, body, ip),{
-      customerId:req.customer?.id || null,sessionHash:req.customerSessionHash,
-      now:Date.now(),start:new Date(start),end:new Date(end)
-    });
-    // Also delivered on a safe error response, allowing ownership-proven ambiguous retries.
-    issueCustomerAccessCookies(res,booking,token);
-  }
+  const legacyRevision = bookingStops.checkoutRevision(quote);
+  const needsRevision = !!quote.stopPlan || tollPricingEnabled && body.tripType !== "hourly" && !quote.fixedOffer;
+  const mismatchedRevision = (needsRevision || body.quoteRevision !== undefined) && body.quoteRevision !== legacyRevision;
+  const change = quoteApproval.changeReason(req, fingerprint, quote) ||
+    (mismatchedRevision ? "fare" : null) ||
+    (reviewed && bookings.some(item => item.quoteApprovalHash === reviewed) ? "review_required" : null);
+  if (change) return {change, quote: quoteForReview(req, res, fingerprint, quote)};
 
-  if(payLater){
-    if(booking.paymentStatus==='paid' || booking.status==='cancelled')throw Object.assign(new Error('Reservation unavailable.'),{status:409});
-    return {url:`${SITE_URL}/success.html?booking=${booking.id}`,bookingId:booking.id};
-  }
-  return checkoutStoredBooking(body,booking,req,false);
+  const booking = createBookingRecord(body, quote);
+  booking.quoteApprovalHash = reviewed;
+  booking.cancellationPolicyAtBooking = {policy: cancellationPolicy.currentPolicy, recordedAt: booking.createdAt};
+  if (payLater) booking.deferredPayment = true;
+  const token = crypto.randomBytes(32).toString("base64url");
+  booking.customerAccess = newCustomerAccess(body, token);
+  booking.checkoutFingerprint = fingerprint;
+  booking.checkoutClientHash = checkoutHash(ip);
+  const start = parseServiceDateTime(body.date, body.time, "pickup");
+  const end = body.tripType === "roundtrip" ? parseServiceDateTime(body.returnDate, body.returnTime, "return") :
+    start + (body.tripType === "hourly" ? Number(body.hours) * 60 * MINUTE : 0);
+  await reservationStore.createWithBudget(booking, records => enforceBookingBudget(records, body, ip), {
+    customerId: req.customer?.id || null, sessionHash: req.customerSessionHash,
+    now: Date.now(), start: new Date(start), end: new Date(end)
+  });
+  // Also delivered on a safe error response for ownership-proven retries.
+  issueCustomerAccessCookies(res, booking, token);
+  if (payLater) return checkoutCustomerResult(SITE_URL + "/success.html?booking=" + booking.id, booking.id);
+  return checkoutStoredBooking(body, booking, req, false);
 }
 async function verifyPaymentAuthority(req,booking){
   if(req.customer){const active=await reservationStore.resolveCustomerSession(req.customerSessionHash,Date.now());if(!active || active.id!==req.customer.id)throw Object.assign(new Error('Please log in to continue.'),{status:401});}
@@ -2802,13 +2789,7 @@ app.post("/api/checkout", async (req, res) => {
         consumeLimit(`checkout-${kind}-daily`, key, 100, 24 * 60 * MINUTE);
       if (retryAfter) return tooManyRequests(res, retryAfter);
     }
-    let flow=null;
-    if(req.body.bookingFlow!==undefined){
-      const candidate=req.body.bookingFlow;
-      if(!req.customer || typeof candidate!=='string' || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\.[a-f0-9]{64}$/.test(candidate) ||
-        !crypto.timingSafeEqual(Buffer.from(candidate),Buffer.from(bookAgainFlow(req,candidate.slice(0,36)))))throw new Error('Invalid booking flow.');
-      flow=candidate;
-    }
+    const flow = verifiedBookingFlow(req);
     const fingerprint = checkoutFingerprint(req.body,flow);
     // Do not share authenticated results with overlapping anonymous requests.
     if (checkoutActions.size >= 1000) return tooManyRequests(res);
@@ -2819,6 +2800,10 @@ app.post("/api/checkout", async (req, res) => {
       result=await storageReady.then(() => reservationStore.withActionLock(fingerprint,
         () => createCheckout(req.body,clientKey(req),fingerprint,req,res)));
     } finally {checkoutActions.delete(actionKey);void runBookingEmails().catch(reportBookingEmailFailure);}
+    if (result.change) {
+      return res.status(409).json({code: "QUOTE_CHANGED", reason: result.change,
+        error: "Your quote changed. Please review the updated total before reserving.", quote: result.quote});
+    }
     res.json({url: result.url, bookingId: result.bookingId});
   } catch (error) {
     if (error.status === 429) return tooManyRequests(res, 30 * 60);

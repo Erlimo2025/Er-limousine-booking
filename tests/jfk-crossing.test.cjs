@@ -42,7 +42,7 @@ for(const id of ['jfk_lincoln','jfk_holland'])for(const choice of ['now','later'
  assert.equal(q.status,200);assert.equal(q.body.tolls.status,'estimated');assert.equal(q.body.pricingBreakdown.tollsCents,mockTollCents);
  assert.equal(q.body.pricingBreakdown.totalCents,q.body.totalCents);
  assert.equal(q.body.tolls.legs,undefined);assert.doesNotMatch(JSON.stringify(q.body),/encodedPolyline|geometryHash|crossingMatchCount/);
- const repeat=await h.request('/api/quote',input);assert.deepEqual(repeat.body,q.body);
+ const repeat=await h.request('/api/quote',input);assert.deepEqual(h.fareTerms(repeat.body),h.fareTerms(q.body));
  const accepted=await h.request('/api/checkout',{...input,paymentChoice:choice,quoteRevision:q.body.quoteRevision,total:1,tolls:{amountCents:1}});
  assert.equal(accepted.status,200);assert.equal(h.records().length,1);assert.equal(h.records()[0].quote.totalCents,q.body.totalCents);
  assert.equal(h.records()[0].quote.tolls.legs[0].crossing,fixture(id).crossing);assert.ok(tolls.validQuote(h.records()[0].quote));

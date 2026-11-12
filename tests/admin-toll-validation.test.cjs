@@ -128,9 +128,9 @@ test('estimate-only mode leaves normal, same-state, hourly and inclusive EWR quo
   const h=await fixture(t),c=await login(h),normal={...booking,vehicle:'suv',pickup:'Newark Penn Station',dropoff:'Times Square Manhattan'};
   const stored=await h.request('/api/checkout',{...normal,paymentChoice:'later'});assert.equal(stored.status,200);const before=h.records();
   const variants=[normal,{...normal,dropoff:'Trenton Transit Center'},{...normal,tripType:'hourly',hours:3}];
-  const expected=[];for(const trip of variants)expected.push((await h.request('/api/quote',trip)).body);
+  const expected=[];for(const trip of variants)expected.push(h.fareTerms((await h.request('/api/quote',trip)).body));
   await estimate(h,c,input({dropoff:'Trenton Transit Center'}));assert.deepEqual(h.records(),before);
-  for(let i=0;i<variants.length;i++)assert.deepEqual((await h.request('/api/quote',variants[i])).body,expected[i]);
+  for(let i=0;i<variants.length;i++)assert.deepEqual(h.fareTerms((await h.request('/api/quote',variants[i])).body),expected[i]);
   assert.ok(expected.every(q=>q.tolls===undefined));assert.equal(expected[2].total,390);
   h.state.searchResults.Manhattan=[{addressComponents:[{types:['administrative_area_level_2'],longText:'New York County'}]}];
   const special=await h.request('/api/quote',{...booking,vehicle:'suv',offerCode:'EWR_MANHATTAN_SUV',promoCode:'FIRST15'});

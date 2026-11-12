@@ -55,7 +55,7 @@ test('whole-route timing cannot invent peak congestion credit across an MTA peri
 
 for(const timing of ['faster_traffic','rounded_steps'])for(const vehicle of ['suv','escalade'])for(const choice of ['now','later'])test(timing+' '+vehicle+' '+choice+' matches quote, stored fare and Checkout without double counting',async t=>{
  const fixture={...cases[0],id:'timing_'+timing,timing}, {h,input}=await create(t,fixture),trip={...input,vehicle};
- const q=await h.request('/api/quote',trip),again=await h.request('/api/quote',trip);assert.equal(q.status,200);assert.deepEqual(q.body,again.body);assert.equal(q.body.pricingBreakdown.tollsCents,2500);
+ const q=await h.request('/api/quote',trip),again=await h.request('/api/quote',trip);assert.equal(q.status,200);assert.deepEqual(h.fareTerms(q.body),h.fareTerms(again.body));assert.equal(q.body.pricingBreakdown.tollsCents,2500);
  const accepted=await h.request('/api/checkout',{...trip,paymentChoice:choice,quoteRevision:q.body.quoteRevision});assert.equal(accepted.status,200);assert.equal(h.records()[0].quote.totalCents,q.body.totalCents);assert.ok(tolls.validQuote(h.records()[0].quote));
  const cookie=accepted.headers.getSetCookie().find(s=>s.includes('er_booking_access_')).split(';')[0],before=h.state.googleCalls;h.state.routeResult=()=>{throw Error('No repricing of accepted test fare');};
  for(let i=0;i<2;i++)assert.equal((await h.request('/api/booking/'+accepted.body.bookingId+'/checkout',{}, {origin:h.url,'sec-fetch-site':'same-origin',cookie})).status,200);

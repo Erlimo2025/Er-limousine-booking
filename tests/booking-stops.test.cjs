@@ -306,7 +306,8 @@ test('PostgreSQL stores the ordered accepted plan, dispatches confirmation email
  configure(f.h);
  const owner=await f.register({email:trip.email,phone:trip.phone});
  const input={...trip,stops:[requested('first',15),requested('second')]};
- const quoted=await quote(f.h,input);
+ const preview=await f.post('/api/quote',input,owner);assertOK(preview);
+ const quoted=preview.body;
  const accepted=await f.post('/api/checkout',checkout(input,quoted),owner);
  assertOK(accepted);
  const id=accepted.body.bookingId;
@@ -361,7 +362,8 @@ test('isolated PostgreSQL retains a historical accepted waiting rate after the d
  configure(f.h);
  const owner=await f.register({email:trip.email,phone:trip.phone});
  const input={...trip,stops:[requested('first',10)]};
- const historical=await quote(f.h,input);
+ const preview=await f.post('/api/quote',input,owner);assertOK(preview);
+ const historical=preview.body;
  const accepted=await f.post('/api/checkout',checkout(input,historical),owner);
  assertOK(accepted);
  const id=accepted.body.bookingId;

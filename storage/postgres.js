@@ -36,6 +36,7 @@ function validateRecord(r) {
   if(r.trip.tripType==='hourly' && ![3,3.5,4,4.5,5,5.5,6,7,8].includes(Number(r.trip.hours)))fail();
   if(r.customerAccess !== undefined && (!plain(r.customerAccess) || typeof r.customerAccess.tokenHash !== 'string' || !/^[a-f0-9]{64}$/.test(r.customerAccess.tokenHash) || !Number.isFinite(r.customerAccess.expiresAt) || Object.keys(r.customerAccess).some(key=>!['tokenHash','expiresAt'].includes(key)))) fail();
   if(r.stripeSessionId !== null && r.stripeSessionId !== undefined && (typeof r.stripeSessionId !== 'string' || !/^cs_[A-Za-z0-9_]+$/.test(r.stripeSessionId))) fail();
+  if (r.quoteApprovalHash !== undefined && (typeof r.quoteApprovalHash !== 'string' || !/^[a-f0-9]{64}$/.test(r.quoteApprovalHash))) fail();
   if(r.deferredPayment!==undefined && typeof r.deferredPayment!=='boolean')fail();
   if(r.refundStatus!==undefined && (!['processing','review_required','confirmed','failed'].includes(r.refundStatus) || r.status!=='cancelled' || r.paymentStatus!=='paid'))fail();
   if(r.refundConfirmedAt!==undefined && (r.refundStatus!=='confirmed' || !Number.isFinite(Date.parse(r.refundConfirmedAt))))fail();

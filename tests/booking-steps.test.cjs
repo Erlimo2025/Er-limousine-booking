@@ -10,20 +10,20 @@ function ui(){
  for(const id of ['bookingBack','bookingEditTrip','bookingContinue','bookingStepLabel','bookingSummaryHeading','sumPickup','sumDestination','sumPickupTime','summaryReturnRow','sumReturnTime','bookingPolicyDetails','bookingPolicyDialog','bookingPolicySummary','bookingPolicyTiers'])fields[id]=element();
  const tripKeys=['pickup','dropoff','date','time','vehicle','passengers'],customerKeys=['firstName','lastName','email','phone','notes','promoCode'];
  const tripStep={querySelectorAll:()=>tripKeys.map(k=>fields[k]),contains:e=>tripKeys.some(k=>fields[k]===e)},customerStep={querySelectorAll:()=>customerKeys.map(k=>fields[k])};
- const ctx={TripDateFormat:require('../public/trip-date-format'),AbortController,JSON,Number,...fields,tripStep,customerStep,summaryStep:element(),activeBookingStep:1,bookingPanel:element(),reservationBusy:false,quoteRequestGeneration:0,quoteController:null,quotedFormKey:null,currentQuote:null,
+ const ctx={TripDateFormat:require('../public/trip-date-format'),AbortController,JSON,Number,...fields,tripStep,customerStep,summaryStep:element(),activeBookingStep:1,bookingPanel:element(),reservationBusy:false,quoteRequestGeneration:0,quoteController:null,quotedFormKey:null,currentQuote:null,replacementQuote:null,
   document:{getElementById:id=>fields[id],createElement:()=>element()},form:{addEventListener:(name,fn)=>events[name]=fn},quoteBtn:element(),payBtn:element(),payLaterBtn:element(),quoteArea:element(),promoSummary:element(),hours:element('3'),
   bookingContactMemory:{restore(){},isOptedIn:()=>false},bookingStopEditor:null,
   clearNotice(){messages.length=0;},showNotice(text){messages.push(text);},showPromoResult(){},renderFareBreakdown(){},formatMoney:n=>'$'+n.toFixed(2),
   getFormData:()=>Object.fromEntries([...tripKeys,...customerKeys].map(k=>[k,fields[k].value])),window:{location:{},addEventListener:(name,fn)=>events[name]=fn}};
  for(const name of ['sumVehicle','sumMiles','sumMinutes','sumTotal','sumMilesLabel','sumMinutesLabel','sumTotalLabel'])ctx[name]=element();
  ctx.vehicle.options=[{textContent:'Luxury SUV'}];ctx.vehicle.selectedIndex=0;
- const quote={vehicle:'Black SUV',vehicleKey:'suv',miles:10,minutes:20,total:80,currency:'usd',quoteRevision:'a'.repeat(64),
+ const quote={vehicle:'Black SUV',vehicleKey:'suv',miles:10,minutes:20,total:80,currency:'usd',quoteRevision:'a'.repeat(64),quoteApproval:'reviewed-quote-token',
   cancellationPolicy:require('../services/cancellation-policy').currentPolicy};
  ctx.fetch=async(url,options)=>{requests.push({url,body:JSON.parse(options.body),options});return {ok:true,json:async()=>url==='/api/quote'?{...quote}:{url:'https://checkout.example.test/mock'}};};
  vm.createContext(ctx);
  vm.runInContext(source.slice(source.indexOf('function showBookingStep('),source.indexOf('const flightField')),ctx);
  vm.runInContext(source.slice(source.indexOf('function renderBookingPolicy('),source.indexOf('/* =========================================\n   SPECIAL OFFER')),ctx);
- vm.runInContext(source.slice(source.indexOf('async function requestQuote('),source.indexOf('quoteBtn.addEventListener(',source.indexOf('async function requestQuote('))),ctx);
+ vm.runInContext(source.slice(source.indexOf('function displayQuoteForReview('),source.indexOf('quoteBtn.addEventListener(',source.indexOf('async function requestQuote('))),ctx);
  const start=source.indexOf('form.addEventListener(\n  "input"');
  vm.runInContext(source.slice(start,source.indexOf('/* =========================================\n   FLEET BOOK BUTTONS',start)),ctx);
  vm.runInContext(source.slice(source.indexOf('// Restore booking controls after browser Back;')),ctx);
@@ -85,4 +85,37 @@ for(const status of ['absorbed','unknown','review_required'])test('an unavailabl
  const h=ui();h.quote.tolls={status,amountCents:null};h.ctx.continueBooking();assert.equal(await h.continue(),null);
  assert.equal(h.ctx.activeBookingStep,2);assert.equal(h.ctx.currentQuote,null);assert.equal(h.ctx.payBtn.disabled,true);assert.equal(h.ctx.payLaterBtn.disabled,true);assert.equal(h.fields.notes.value,'Keep these notes');assert.match(h.messages.at(-1),/Toll estimate unavailable/);
  await h.submit('now');await h.submit('later');assert.equal(h.requests.filter(r=>r.url==='/api/checkout').length,0);
+});
+
+
+test('a replacement quote stays in Trip Summary and only the next explicit payment choice submits it', async () => {
+  const h = ui();
+  h.ctx.continueBooking();
+  await h.continue();
+  const originalFetch = h.ctx.fetch;
+  let prevented = false;
+  const multiClick = {detail: 2, preventDefault() {prevented = true;}};
+  h.ctx.payBtn.click(multiClick);
+  assert.equal(prevented, false);
+  let calls = 0;
+  h.ctx.fetch = async (url, options) => {
+    calls++;
+    assert.equal(JSON.parse(options.body).quoteApproval, h.quote.quoteApproval);
+    return {ok: false, status: 409, json: async () => ({
+      code: 'QUOTE_CHANGED', reason: 'route', quote: {...h.quote, total: 92.5, minutes: 30, quoteApproval: 'updated-review-token'}
+    })};
+  };
+  await h.submit('now');
+  assert.equal(calls, 1);
+  assert.equal(h.ctx.window.location.href, undefined);
+  assert.equal(h.ctx.activeBookingStep, 3);
+  assert.equal(h.ctx.sumTotal.textContent, '$92.50');
+  assert.match(h.messages.at(-1), /Your trip price has changed/);
+  h.ctx.payBtn.click(multiClick);
+  assert.equal(prevented, true);
+  h.ctx.fetch = originalFetch;
+  await h.submit('later');
+  const sent = h.requests.filter(request => request.url === '/api/checkout').at(-1);
+  assert.equal(sent.body.quoteApproval, 'updated-review-token');
+  assert.equal(sent.body.paymentChoice, 'later');
 });
