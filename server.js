@@ -62,7 +62,9 @@ app.use((req,res,next)=>{
 });
 
 // Explicit customer-safe message allowlist. HTTP status alone never grants trust.
+const ONLINE_PAYMENT_UNAVAILABLE = "Online payment is temporarily unavailable. Please try again later or contact ER Limousine Service.";
 const customerErrorMessages=new Map();
+customerErrorMessages.set(ONLINE_PAYMENT_UNAVAILABLE,{message:ONLINE_PAYMENT_UNAVAILABLE,status:503});
 for(const message of [
   'Unknown vehicle type.','A valid vehicle is required.','A valid trip type is required.',
   'Pickup must be scheduled in the future (New York time).','Return must be later than pickup (New York time).',
@@ -115,8 +117,8 @@ function sendSafeError(req,res,error,fallbackStatus=500) {
   else if(['Address and route lookup is temporarily unavailable. Please try again.','Route estimate is temporarily unavailable. Please try again.'].includes(error?.message)) {
     message='Address and route lookup is temporarily unavailable. Please try again.';category='provider_error';provider='google';
   }
-  else if(error?.message==='Stripe is not configured. Add STRIPE_SECRET_KEY before accepting payments.') {
-    message='Checkout is temporarily unavailable. Please try again.';category='configuration_unavailable';provider='stripe';
+  else if(error?.message===ONLINE_PAYMENT_UNAVAILABLE) {
+    category='configuration_unavailable';provider='stripe';
   }
   else if(error?.message==='Checkout is temporarily unavailable. Please try again.') {
     message='Checkout is temporarily unavailable. Please try again.';category='provider_error';provider='stripe';
@@ -344,9 +346,18 @@ const route = handler => async (req, res, next) => {
   }
 };
 
-const stripe = process.env.STRIPE_SECRET_KEY
-  ? new Stripe(process.env.STRIPE_SECRET_KEY)
-  : null;
+const stripeApiKey = process.env.STRIPE_SECRET_KEY;
+const stripe = stripeApiKey?.trim() ? new Stripe(stripeApiKey) : null;
+const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET || "";
+const stripePaymentConfigured = !!stripe &&
+  /^whsec_[A-Za-z0-9_-]+$/.test(stripeWebhookSecret) &&
+  stripeWebhookSecret === stripeWebhookSecret.trim();
+
+function requireStripePaymentConfiguration() {
+  if (!stripePaymentConfigured) {
+    throw Object.assign(new Error(ONLINE_PAYMENT_UNAVAILABLE), {status: 503});
+  }
+}
 
 
 /* =========================================
@@ -1786,11 +1797,7 @@ app.post(
   }),
 
   route(async (req, res) => {
-    if (
-      !stripe ||
-      !process.env
-        .STRIPE_WEBHOOK_SECRET
-    ) {
+    if (!stripePaymentConfigured) {
       req.diagnosticCategory='configuration_unavailable';req.diagnosticProvider='stripe';
       return res.status(503).json({error:`Service temporarily unavailable. Please try again. Reference: ${req.referenceId}`});
     }
@@ -1808,8 +1815,7 @@ app.post(
           .constructEvent(
             req.body,
             sig,
-            process.env
-              .STRIPE_WEBHOOK_SECRET
+            stripeWebhookSecret
           );
 
     } catch (error) {
@@ -2464,9 +2470,7 @@ async function expireDeferredUnderLock(booking){
 }
 async function createCheckout(body, ip, fingerprint, req, res) {
   const payLater=body.paymentChoice==='later';
-  if (!stripe && !payLater) {
-    throw Object.assign(new Error("Stripe is not configured. Add STRIPE_SECRET_KEY before accepting payments."), {status: 503});
-  }
+  if (!payLater) requireStripePaymentConfiguration();
 
   const bookings = await readBookings();
   const prior = bookings.find(item => item.checkoutFingerprint === fingerprint && item.status !== "cancelled");
@@ -2550,9 +2554,14 @@ function adminPaymentLinkResult(session,booking){
  if(!Number.isSafeInteger(session.expires_at) || session.expires_at*1000<=Date.now())throw Object.assign(new Error('Checkout is temporarily unavailable. Please try again.'),{status:503});
  return {...checkoutCustomerResult(url,booking.id),expiresAt:new Date(session.expires_at*1000).toISOString()};
 }
+const stripeCheckoutVehicleNames = {
+  suv: "Luxury SUV — Chevrolet Suburban Premier",
+  escalade: "Luxury SUV — Cadillac Escalade ESV"
+};
+
 async function checkoutStoredBooking(body,booking,req,storedOnly=true,adminPaymentLink=false){
+  requireStripePaymentConfiguration();
   if(await expireDeferredUnderLock(booking))throw Object.assign(new Error('Reservation unavailable.'),{status:409});
-  if(!stripe)throw Object.assign(new Error('Checkout is temporarily unavailable. Please try again.'),{status:503});
   if(booking.status==='cancelled')throw Object.assign(new Error('Reservation unavailable.'),{status:409});
   let quote=booking.quote;
   // Google work may have taken long enough for a near-term pickup to pass.
@@ -2664,10 +2673,7 @@ async function checkoutStoredBooking(body,booking,req,storedOnly=true,adminPayme
                 Math.round(quote.total * 100),
 
               product_data: {
-                name:
-                  quote.fixedOffer
-                    ? "ER Limousine Service — EWR to Manhattan Black SUV"
-                    : `ER Limousine Service — ${quote.vehicle}`,
+                name: stripeCheckoutVehicleNames[booking.trip.vehicle],
 
                 description
               }

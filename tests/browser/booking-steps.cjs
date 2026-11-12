@@ -153,6 +153,41 @@ test('temporary checkout failure permits retry without losing the reviewed fare'
  await page.unroute('**/api/checkout',fail);await page.locator('#payLaterBtn').click();await page.waitForURL(url=>url.pathname==='/success.html');assert.equal(h.records().length,1);assert.equal(h.records()[0].quote.total,q.total);assert.equal(h.state.creates.length,0);results.push({scenario:'checkout_retry',width:390,passed:true});
 });
 
+for (const width of [320, 390, 430, 1440]) {
+  test('Pay Later remains available when webhook verification is unavailable at ' + width + 'px', {timeout: 30000}, async t => {
+    const scenario = {...cases.find(item => item.id === 'flag_off'), webhookUnavailable: true};
+    const s = await setup(t, width, scenario);
+    const {page, h} = s;
+    await details(s);
+    await customer(s);
+    const reviewed = await quote(s);
+    const checkout = () => page.waitForResponse(response =>
+      response.url() === h.url + '/api/checkout' && response.request().method() === 'POST');
+    const first = checkout();
+    await page.locator('#payBtn').click();
+    const blocked = await first;
+    assert.equal(blocked.status(), 503);
+    const expected = 'Online payment is temporarily unavailable. Please try again later or contact ER Limousine Service.';
+    assert.equal((await blocked.json()).error, expected);
+    await page.waitForFunction(message => document.getElementById('notice').textContent.includes(message) &&
+      !document.getElementById('payLaterBtn').disabled, expected);
+    assert.equal(await s.state(), '3');
+    assert.equal(h.records().length, 0);
+    assert.equal(h.state.creates.length, 0);
+    await layout(s);
+
+    const second = checkout();
+    await page.locator('#payLaterBtn').click();
+    assert.equal((await second).status(), 200);
+    await page.waitForURL(url => url.pathname === '/success.html');
+    assert.equal(h.records().length, 1);
+    assert.equal(h.records()[0].quote.total, reviewed.total);
+    assert.equal(h.records()[0].paymentStatus, 'unpaid');
+    assert.equal(h.state.creates.length, 0);
+    results.push({scenario:'webhook_configuration_unavailable_pay_later',width,passed:true});
+  });
+}
+
 test('invalid promo is recoverable and selecting the $150 special excludes FIRST15',{timeout:30000},async t=>{
  const s=await setup(t,390),{page,h}=s;await details(s);await customer(s);await page.locator('#promoCode').fill('INVALID');const rejected=page.waitForResponse(r=>r.url()===h.url+'/api/quote');await page.locator('#quoteBtn').click();assert.equal((await rejected).status(),400);await page.waitForFunction(()=>!document.getElementById('quoteBtn').disabled);assert.equal(await s.state(),'2');assert.equal(h.records().length,0);assert.equal(await page.locator('#email').inputValue(),s.input.email);
  await page.locator('#promoCode').fill('FIRST15');assert.equal((await quote(s)).promotion.code,'FIRST15');await page.locator('#ewrManhattanSpecialBtn').click();assert.equal(await s.state(),'1');assert.equal(await page.locator('#promoCode').inputValue(),'');assert.equal(await page.locator('#promoCode').isEnabled(),false);await page.locator('#dropoff').fill('Manhattan');await page.locator('#bookingContinue').click();const special=await quote(s);assert.equal(special.totalCents,15000);assert.equal(special.discount,0);assert.equal(special.promotion,null);assert.equal(special.tolls.status,'included');results.push({scenario:'promo_and_special_restriction',width:390,passed:true});

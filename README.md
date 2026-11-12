@@ -79,9 +79,11 @@ For production, create a webhook endpoint in Stripe for:
 
 `https://YOUR-DOMAIN.com/api/stripe-webhook`
 
-Listen for:
+Listen for `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`, `refund.created`, `refund.updated`, and `refund.failed`.
 
-`checkout.session.completed`
+Online payment requires a configured Stripe API key and a well-formed `whsec_` signing secret for the endpoint. A missing API key or a missing or malformed signing secret blocks Checkout. Eligible Pay Later reservations remain available. After configuration is restored and the service restarts, existing reservations can use their saved payment attempts.
+
+The local configuration check verifies the signing secret’s format. Before enabling live Checkout, verify the endpoint and event subscriptions in Stripe Workbench and confirm successful signed deliveries for payment and refund events. Keep the signing secret private. See [Stripe’s webhook delivery guide](https://docs.stripe.com/webhooks).
 
 ## 4. Google Routes API
 
