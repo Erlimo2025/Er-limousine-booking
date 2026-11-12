@@ -31,19 +31,18 @@ under their original authentication rules.
 
 ## Homepage metadata and schema
 
-Title: **New Jersey Car & Limousine Service | ER Limousine Service**
+Title: **New Jersey Private Car Service | ER Limousine Service**
 
-Description: **Private car and limousine transportation from New Jersey to New York
-City, plus supported EWR airport service. Book ER Limousine Service online.**
+Description: **Book a private chauffeur and luxury SUV for New Jersey pickups, including Newark Airport (EWR), and rides to New York City. Review your quote online.**
 
 Canonical, Open Graph and Twitter metadata all describe the same homepage. The
 sharing image is the existing public `/suburban-premier-2025.png` fleet photograph;
 no new image, fabricated social profile or external script is required.
 
 JSON-LD contains linked **Organization**, **WebSite** and **Service** nodes with
-stable IDs on the canonical origin. The service area is New Jersey and the
-description accurately limits marketing to NJ-origin rides and supported EWR
-operations. No physical address, business hours, reviews/ratings, awards or schema
+stable IDs on the canonical origin. The service areas are New Jersey and New York
+City. The descriptions specify New Jersey pickups, including EWR, and rides to
+New York City. No physical address, business hours, reviews/ratings, awards or schema
 prices are invented. Organization is used rather than claiming address-based
 LocalBusiness rich-result eligibility without an authoritative physical address.
 
@@ -92,7 +91,8 @@ canonicals or social-sharing metadata.
 The approved clean URL is `/new-jersey-to-nyc-car-service`. The `.html` file URL
 redirects permanently to it; a trailing slash or query variant declares the same
 clean canonical. This is an indexable public page with unique title/description,
-Open Graph/Twitter metadata and linked Organization, WebPage and Service JSON-LD.
+Open Graph/Twitter metadata and linked Organization, WebSite, WebPage and Service
+JSON-LD. The WebSite identity and publisher match the homepage.
 The schema describes New Jersey-origin transportation to NYC and uses the same
 validated public telephone handling as the homepage. FAQ answers are visible
 native disclosure elements; no FAQ rich-result claims or FAQ schema are added.
@@ -101,15 +101,16 @@ The page reuses the existing navy/gold/white design and Suburban/Escalade fleet
 assets. Its dedicated CSS is scoped to landing-page components. There is no
 executable JavaScript, additional font, tracking script, new booking form or
 external dependency. Images have intrinsic dimensions; below-fold vehicle
-images are lazy-loaded. Check the rendered page at 320px, 390px and 1440px after
+images are lazy-loaded. Check the rendered page at 320px, 390px, 430px and 1440px after
 visual changes, including keyboard focus, FAQ expansion and booking navigation.
 
 Sections cover the one-way NJ-origin service, supported booking/account features,
 NYC destinations, existing vehicles, booking steps, five FAQs and booking CTAs.
 Manhattan, Midtown, Times Square and Lower Manhattan are destinations, never
 advertised pickup locations. No NYC-origin return/round-trip service or JFK/LGA
-pickup service is advertised. No rates, ratings, years, availability guarantees
-or operating-authority claims are added.
+pickup service is advertised. An existing FAQ explains the approved scheduled
+stop terms for eligible one-way and airport rides within New Jersey and NYC. No
+ratings, availability guarantees or operating-authority claims are added.
 
 Every booking CTA points to `/#book`. The current booking flow has no general
 marketing-route prefill mechanism, so no route, Place ID, offer, fare, passenger
@@ -123,8 +124,11 @@ naturally to this new service page. No application/business behavior is changed.
 
 `/newark-airport-ewr-car-service` markets pickups originating at Newark Liberty
 International Airport, New Jersey, to Manhattan/New York City, New Jersey,
-Connecticut and Pennsylvania. Its title is **Newark Airport Car Service | ER
-Limousine Service**. Canonical/social URLs use the extensionless production URL;
+Connecticut and Pennsylvania. The CT and PA FAQs ask customers to confirm route
+availability when an online quote is unavailable. Metadata and schema describe
+Newark Airport pickups and core New Jersey/NYC service. Its title is **Newark
+Airport (EWR) Car Service | ER Limousine Service**. Canonical/social URLs use the
+extensionless production URL;
 the `.html` alias redirects to it. The sitemap includes this third public page,
 and existing robots/private-page noindex behavior remains unchanged.
 
@@ -132,16 +136,17 @@ It shares the landing-page CSS and real Suburban/Escalade photographs; EWR-only
 styles live in `public/ewr-car-service.css`. There is no executable script on the
 landing page. It has one H1, a prominent Manhattan offer, four destination cards,
 terminal/pickup guidance, the current two-vehicle fleet, six booking steps and
-eight native, keyboard-accessible FAQs. Organization/WebPage/Service JSON-LD uses
-the same validated public phone and exact page-specific CSP hash. General-service
+eight native, keyboard-accessible FAQs. Organization, WebSite, WebPage and Service
+JSON-LD use the same validated public phone and exact page-specific CSP hash. The
+WebSite identity and publisher match the homepage. General-service
 metadata/schema intentionally has no price or Offer node implying a flat fare for
 all destinations. No FAQ rich-result claims are added.
 
 The **$150 flat rate** is existing public display information only: qualifying
-one-way **EWR → Manhattan**, **Chevrolet Suburban Premier / Luxury SUV / `suv`**,
-up to six passengers. The offer does not cover all NYC destinations, NJ/CT/PA,
-Escalade, reverse trips or other airports. FIRST15 stays excluded. NJ/CT/PA cards
-link to normal quoting and contain no flat/city-specific prices.
+nonstop one-way **EWR → Manhattan**, **Chevrolet Suburban Premier / Luxury SUV / `suv`**,
+up to six passengers. Trips with stops use a normal quote. The special is limited
+to the eligible route and vehicle, and FIRST15 stays excluded. NJ/CT/PA cards link
+to normal quoting and contain no flat/city-specific prices.
 
 General CTAs use `/#book`. Special CTAs use `/#ewr-manhattan-special`. A small
 homepage initialization hook recognizes only that fragment and invokes the
@@ -161,8 +166,10 @@ still clear identity. No pricing, FIRST15, vehicle, payment or ownership code ch
 
 Pickup copy reflects the current Airport form: Terminal A/B/C or Not sure / EWR
 General, date/time, optional flight number and notes, and eligible time changes
-in My Trips when signed in. No automatic flight tracking, meet-and-greet, waiting
-time, baggage-help or availability guarantees are invented. No JFK/LGA or NYC-origin
+in My Trips when signed in. An existing FAQ explains up to three stops, five free
+minutes per stop, $1.50 per additional scheduled minute and a maximum of 30 minutes
+per stop on eligible NJ/NYC trips. No flight tracking, meet-and-greet or availability
+guarantees are added. No JFK/LGA or NYC-origin
 pickup marketing is added. The homepage EWR service banner links to this page;
 both public landing-page footers link to one another with their origin direction
 clearly named. No private URLs are linked from either landing page.
