@@ -14,16 +14,39 @@ const origin = 'https://erlimousineservice.com';
 const servicePath = '/new-jersey-to-nyc-car-service';
 const serviceFile = 'new-jersey-to-nyc-car-service.html';
 const serviceTitle = 'New Jersey to NYC Car Service | ER Limousine Service';
-const serviceDescription = 'Book private car service from New Jersey to New York City with ER Limousine Service. Choose a luxury SUV, review your quote, and reserve online.';
+const serviceDescription = 'Book private luxury SUV service from New Jersey to Manhattan and the other NYC boroughs. Review your trip quote online and choose Pay Now or Pay Later.';
 const ewrPath = '/newark-airport-ewr-car-service';
 const ewrFile = 'newark-airport-ewr-car-service.html';
-const ewrTitle = 'Newark Airport Car Service | ER Limousine Service';
-const ewrDescription = 'Private car service from Newark Airport (EWR) to Manhattan, New Jersey, Connecticut and Pennsylvania. Book your trip with ER Limousine Service.';
-const title = 'New Jersey Car &amp; Limousine Service | ER Limousine Service';
-const description = 'Private car and limousine transportation from New Jersey to New York City, plus supported EWR airport service. Book ER Limousine Service online.';
+const ewrTitle = 'Newark Airport (EWR) Car Service | ER Limousine Service';
+const ewrDescription = 'Book a private luxury SUV pickup at Newark Airport (EWR). Select your terminal, review your quote, and reserve online with Pay Now or Pay Later.';
+const title = 'New Jersey Private Car Service | ER Limousine Service';
+const description = 'Book a private chauffeur and luxury SUV for New Jersey pickups, including Newark Airport (EWR), and rides to New York City. Review your quote online.';
 const read = file => fs.readFileSync(path.join(publicDirectory, file), 'utf8');
 const schemaText = html => html.match(/<script type="application\/ld\+json" id="business-schema">([\s\S]*?)<\/script>/)[1];
 const graph = html => JSON.parse(schemaText(html))['@graph'];
+const serviceAreas = [
+  {'@type': 'State', name: 'New Jersey'},
+  {'@type': 'City', name: 'New York City'}
+];
+
+function assertLandingGraph(nodes, landingPath) {
+  assert.deepEqual(nodes.map(node => node['@type']), ['Organization', 'WebSite', 'WebPage', 'Service']);
+  const [organization, website, page, service] = nodes;
+  const canonical = origin + landingPath;
+  assert.equal(organization['@id'], origin + '/#business');
+  assert.deepEqual(website, graph(read('index.html')).find(node => node['@type'] === 'WebSite'));
+  assert.equal(website.publisher['@id'], organization['@id']);
+  assert.equal(page.isPartOf['@id'], website['@id']);
+  assert.equal(page.about['@id'], service['@id']);
+  assert.equal(service.provider['@id'], organization['@id']);
+  assert.equal(page['@id'], canonical + '#webpage');
+  assert.equal(service['@id'], canonical + '#service');
+  assert.equal(page.url, canonical);
+  assert.equal(service.url, canonical);
+  assert.deepEqual(organization.areaServed, serviceAreas);
+  assert.deepEqual(service.areaServed, serviceAreas);
+}
+
 const privatePages = ['account.html', 'admin.html', 'manage-reservation.html', 'payment-methods.html', 'payment-link-result.html', 'review.html', 'success.html', 'reset-password.html'];
 
 test('homepage has a concise NJ-origin title/description, root canonical and matching social metadata', async t => {
@@ -43,6 +66,8 @@ test('homepage has a concise NJ-origin title/description, root canonical and mat
     assert.ok(r.body.includes(`property="og:description" content="${description}"`));
     assert.match(r.body, /property="og:site_name" content="ER Limousine Service"/);
     assert.match(r.body, /name="twitter:card" content="summary_large_image"/);
+    assert.ok(r.body.includes(`name="twitter:title" content="${title}"`));
+    assert.ok(r.body.includes(`name="twitter:description" content="${description}"`));
     assert.ok(!r.body.includes('unrelated.example.test'));
   }
 });
@@ -72,7 +97,7 @@ test('structured data is valid, linked and limited to truthful business/site/NJ 
     assert.equal(node.url, origin + '/');
     assert.ok(node['@id'].startsWith(origin + '/#'));
   }
-  for (const node of [nodes[0], nodes[2]]) assert.deepEqual(node.areaServed, {'@type': 'State', name: 'New Jersey'});
+  for (const node of [nodes[0], nodes[2]]) assert.deepEqual(node.areaServed, serviceAreas);
   for (const field of ['aggregateRating', 'review', 'address', 'openingHours', 'openingHoursSpecification', 'award', 'sameAs', 'priceRange', 'offers']) {
     assert.ok(!JSON.stringify(schema).includes('"' + field + '"'), field);
   }
@@ -224,6 +249,7 @@ test('NJ-to-NYC landing page is public/indexable with unique consistent metadata
     assert.ok(r.body.includes(`property="og:title" content="${serviceTitle}"`));
     assert.ok(r.body.includes(`name="twitter:title" content="${serviceTitle}"`));
     assert.ok(r.body.includes(`property="og:description" content="${serviceDescription}"`));
+    assert.ok(r.body.includes(`name="twitter:description" content="${serviceDescription}"`));
     assert.match(r.body, /property="og:site_name" content="ER Limousine Service"/);
   }
 });
@@ -256,7 +282,7 @@ test('landing copy has a single semantic H1, NJ-origin wording only and no unsup
   assert.match(html, /<h1 id="route-title">Private Car Service from New Jersey to <span>New York City<\/span><\/h1>/);
   assert.match(html, /<main id="main">/);
   for (const id of ['why-title', 'area-title', 'vehicles-title', 'process-title', 'faq-title', 'ready-title']) assert.match(html, new RegExp('<h2 id="' + id + '">'));
-  assert.match(html, /pickup in New Jersey and a destination in New York City/);
+  assert.match(html, /starts at your pickup in New Jersey and takes you to your chosen New York City destination/);
   assert.match(html, /New Jersey pickup\. New York City destination\./);
   assert.doesNotMatch(html, /JFK|LGA|LaGuardia|to and from|NYC\s*(?:→|to|[-–—])\s*New Jersey|New York City\s*(?:→|to)\s*New Jersey|round.trip|pickup (?:in|from) (?:NYC|New York City|Manhattan|Midtown|Times Square)|#1|\bbest\b|\bcheapest\b|guarantee|licensed|licensing|certified|award|years in business|\d+.?star|reviews/i);
 });
@@ -265,15 +291,10 @@ test('landing structured data links truthful service and page nodes without FAQ/
   const h = await harness(t, {COMPANY_PHONE: '(201) 555-0199', STRIPE_SECRET_KEY: 'synthetic-private-stripe-marker'}), r = await h.request(servicePath);
   const schema = JSON.parse(schemaText(r.body)), nodes = schema['@graph'];
   assert.equal(schema['@context'], 'https://schema.org');
-  assert.deepEqual(nodes.map(node => node['@type']), ['Organization', 'WebPage', 'Service']);
+  assertLandingGraph(nodes, servicePath);
   assert.equal(nodes[0].telephone, '+12015550199');
-  assert.equal(nodes[0]['@id'], origin + '/#business');
-  assert.equal(nodes[1].url, origin + servicePath);
-  assert.equal(nodes[1].about['@id'], nodes[2]['@id']);
-  assert.equal(nodes[1].isPartOf['@id'], origin + '/#website');
-  assert.equal(nodes[2].provider['@id'], nodes[0]['@id']);
-  assert.deepEqual(nodes[2].areaServed, {'@type': 'State', name: 'New Jersey'});
-  assert.equal(nodes[1].description, serviceDescription);
+  assert.equal(nodes[2].name, serviceTitle);
+  assert.equal(nodes[2].description, serviceDescription);
   for (const field of ['aggregateRating', 'review', 'openingHours', 'address', 'price', 'offers']) assert.ok(!JSON.stringify(schema).includes('"' + field + '":'), field);
   assert.doesNotMatch(JSON.stringify(schema), /FAQPage|synthetic.private|JFK|LGA|LaGuardia/);
   const unconfigured = await harness(t, {COMPANY_PHONE: '</script><script>private</script>'});
@@ -306,7 +327,7 @@ test('landing fleet uses actual existing assets/vehicles and FAQ/steps match sup
   assert.match(html, /Chevrolet Suburban Premier/);
   assert.match(html, /Cadillac Escalade ESV/);
   assert.equal((html.match(/<details>/g) || []).length, 5);
-  for (const question of ['Can I book from New Jersey to Manhattan?', 'Can I reserve now and pay later?', 'Can I change my pickup time?', 'What vehicles are available?', 'How do I complete payment later?']) assert.ok(html.includes('<summary>' + question + '</summary>'));
+  for (const question of ['Can I add a stop on a New Jersey to NYC ride?', 'Can I reserve now and pay later?', 'Can I change my pickup time?', 'What vehicles are available?', 'How do I complete payment later?']) assert.ok(html.includes('<summary>' + question + '</summary>'));
   assert.match(html, /reserved as Unpaid, and payment is still required/);
   assert.match(html, /cancelled or completed trips cannot be changed/);
   assert.match(html, /Signed-in customers can open My Trips and select Complete Payment for an eligible unpaid reservation/);
@@ -346,13 +367,15 @@ test('EWR public page has unique indexable metadata, clean canonical, schema and
     assert.equal(r.body.match(/property="og:url" content="([^"]+)"/)[1], origin + ewrPath);
     assert.ok(r.body.includes(`property="og:title" content="${ewrTitle}"`));
     assert.ok(r.body.includes(`property="og:description" content="${ewrDescription}"`));
+    assert.ok(r.body.includes(`name="twitter:title" content="${ewrTitle}"`));
+    assert.ok(r.body.includes(`name="twitter:description" content="${ewrDescription}"`));
     const nodes = graph(r.body);
-    assert.deepEqual(nodes.map(node => node['@type']), ['Organization', 'WebPage', 'Service']);
+    assertLandingGraph(nodes, ewrPath);
     assert.equal(nodes[0].telephone, '+12015550199');
-    assert.equal(nodes[1].about['@id'], nodes[2]['@id']);
-    assert.equal(nodes[2].provider['@id'], origin + '/#business');
-    assert.equal(nodes[1].url, origin + ewrPath);
-    assert.match(nodes[2].description, /Pickups originating at Newark Liberty/);
+    assert.equal(nodes[2].name, ewrTitle);
+    assert.equal(nodes[2].description, ewrDescription);
+    assert.match(nodes[3].description, /Pickups originating at Newark Liberty/);
+    assert.doesNotMatch(nodes[3].description, /Connecticut|Pennsylvania/);
     assert.doesNotMatch(JSON.stringify(nodes), /150|price|"Offer"|FAQPage|aggregateRating|"review"/);
     const hash = crypto.createHash('sha256').update(schemaText(r.body)).digest('base64');
     const api = await h.request('/api/public-config');
@@ -406,15 +429,33 @@ test('EWR page shows only project fleet/terminals and truthful optional airport 
   assert.doesNotMatch(html, /pickup (?:in|from) (?:NYC|New York City|Manhattan)|NYC\s*→\s*(?:EWR|New Jersey)|New York City\s*→\s*(?:EWR|New Jersey)/i);
 });
 
+test('existing FAQs disclose the supported stop policy and the nonstop offer restriction', () => {
+  for (const file of [serviceFile, ewrFile]) {
+    const html = read(file);
+    const answer = html.match(/<summary>Can I add a stop[^<]+<\/summary><p>([^<]+)<\/p>/)?.[1];
+    assert.ok(answer, file);
+    for (const text of ['Eligible one-way and airport trips', 'New Jersey and New York City', 'up to 3 intermediate stops',
+      'up to 30 minutes per stop', 'first 5 minutes at each stop are free', '$1.50 per minute']) assert.ok(answer.includes(text), text);
+  }
+  const ewr = read(ewrFile);
+  assert.match(ewr, /review the normal quote instead of the \$150 nonstop offer/);
+  assert.match(ewr, /qualifying nonstop, one-way EWR → Manhattan trips in the Chevrolet Suburban Premier/);
+  for (const destination of ['Connecticut','Pennsylvania']) {
+    assert.ok(ewr.includes('Can I book EWR transportation to ' + destination +
+      '?</summary><p>Enter your exact destination to check the route. Contact Dispatch to confirm availability'));
+  }
+});
+
 test('EWR internal links stay public and both special/general CTAs lead to existing booking without creating a reservation', async t => {
   const h = await harness(t), r = await h.request(ewrPath);
   const links = [...r.body.matchAll(/href="([^"]+)"/g)].map(match => match[1]);
   for (const link of links.filter(link => !link.startsWith(origin) && !link.endsWith('.css'))) assert.ok(['/', '/#book', '/#ewr-manhattan-special', '/#contact', servicePath, '#destinations', '#main'].includes(link), link);
   assert.match(r.body, /href="\/#ewr-manhattan-special">Book This Ride/);
   assert.match(r.body, /href="\/#book">Book Your Ride/);
-  assert.match(read('index.html'), /href="\/newark-airport-ewr-car-service">Newark Liberty \(EWR\)/);
-  assert.ok(read(serviceFile).includes(`href="${ewrPath}"`));
-  assert.ok(r.body.includes(`href="${servicePath}"`));
+  assert.match(read('index.html'), /href="\/newark-airport-ewr-car-service">Newark Airport \(EWR\)<\/a>/);
+  assert.ok(read(serviceFile).includes(`href="${ewrPath}">Newark (EWR) Car Service</a>`));
+  assert.ok(r.body.includes(`href="${servicePath}">New Jersey to NYC Car Service</a>`));
+  for (const page of [r.body, read(serviceFile)]) assert.match(page, /<footer[\s\S]*?<a href="\/">Homepage<\/a>/);
   assert.doesNotMatch(r.body, /<form|<input|<script\s+src=|\/account|\/admin|\/api\/|customer_id|pickupPlaceId|stripeSessionId/);
   assert.equal(h.records().length, 0);
   assert.equal(h.state.googleCalls, 0);
