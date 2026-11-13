@@ -7,6 +7,7 @@ const {enqueueBookingEmail,bookingEmailStorage}=require('./booking-emails');
 const {validQuote}=require('../services/route-tolls');
 const {policyAtBooking}=require('../services/cancellation-policy');
 const {generateBookingReference}=require('../services/booking-reference');
+const {validReview}=require('../services/payment-confirmation-recovery');
 const BOOKING_REFERENCE_ATTEMPTS = 32;
 class StorageError extends Error {
   constructor() { super('Reservation service temporarily unavailable. Please try again.'); this.status = 503; this.storageFailure = true; }
@@ -41,6 +42,7 @@ function validateRecord(r) {
   if(r.refundStatus!==undefined && (!['processing','review_required','confirmed','failed'].includes(r.refundStatus) || r.status!=='cancelled' || r.paymentStatus!=='paid'))fail();
   if(r.refundConfirmedAt!==undefined && (r.refundStatus!=='confirmed' || !Number.isFinite(Date.parse(r.refundConfirmedAt))))fail();
   if(r.checkoutAttempt !== null && r.checkoutAttempt !== undefined && (!plain(r.checkoutAttempt) || typeof r.checkoutAttempt.key !== 'string' || !Number.isFinite(r.checkoutAttempt.expiresAt) || !plain(r.checkoutAttempt.quote) || !Number.isFinite(r.checkoutAttempt.quote.total) || r.checkoutAttempt.quote.total<=0)) fail();
+  if(r.paymentConfirmationReview !== undefined && !validReview(r.paymentConfirmationReview))fail();
   if(r.checkoutAttempt && ((r.checkoutAttempt.firstSubmittedAt!==undefined && r.checkoutAttempt.firstSubmittedAt!==null && !Number.isFinite(r.checkoutAttempt.firstSubmittedAt)) || (r.checkoutAttempt.submissionCount!==undefined && (!Number.isSafeInteger(r.checkoutAttempt.submissionCount)||r.checkoutAttempt.submissionCount<0))))fail();
   if(r.checkoutAttempt?.version !== undefined) {
     const a=r.checkoutAttempt;
@@ -198,10 +200,15 @@ function createStore(env = process.env, suppliedPool) {
       const priorPayment=record.paymentStatus;
       const acceptedStopRevision=record.quote.stopQuoteRevision;
       const result=await fn(record,client);
+      if(options.paymentConfirmationReviewOnly) {
+        if(result===false)return false;
+        if(priorPayment==='paid' || record.paymentStatus!==priorPayment || record.status!==priorStatus)throw new StorageError();
+      }
       if(record.quote.stopQuoteRevision !== acceptedStopRevision)throw new StorageError();
       if(priorStatus!=='cancelled' && record.status==='cancelled' && actionScope.getStore()!==(record.checkoutFingerprint || 'reservation:'+record.id))throw Object.assign(new Error('Checkout is already processing. Please try again.'),{status:409});
       validateRecord(record);
       await client.query('UPDATE er_reservations SET record = $2::jsonb, version = version + 1, updated_at = now() WHERE id = $1',[id,JSON.stringify(record)]);
+      if(options.paymentConfirmationReviewOnly)return result;
       await recordPaid(client,record);
       if(options.paymentEmail===true && priorPayment!=='paid' && record.paymentStatus==='paid'){await enqueueBookingEmail(client,record,'payment_confirmed');await enqueueBookingEmail(client,record,'admin_payment_confirmed');}
       if(options.reviewCompletion && !['completed','cancelled'].includes(priorStatus) && record.status==='completed')await require('./customer-reviews').enqueueReviewInvitation(client,record,options.reviewCompletion.authority,options.reviewCompletion.now);
@@ -257,6 +264,26 @@ function createStore(env = process.env, suppliedPool) {
   }
   async function reconciliationCandidates(limit=10) {
     return safe(async()=>decode((await pool.query("SELECT r.id,r.record FROM er_reservations r WHERE r.record->>'paymentStatus'<>'paid' AND (NOT COALESCE((r.record->>'deferredPayment')::boolean,false) OR r.record->>'stripeSessionId' IS NOT NULL OR r.record #>> '{checkoutAttempt,firstSubmittedAt}' IS NOT NULL) AND EXISTS (SELECT 1 FROM er_first_ride_claims c WHERE c.booking_id=r.id) ORDER BY (r.record #>> '{checkoutAttempt,lastReconciledAt}')::bigint NULLS FIRST,r.created_at LIMIT $1",[limit])).rows));
+  }
+  async function paymentConfirmationPage(before,cursor,limit) {
+    // Page through the existing created_at index, before inspecting payment JSON.
+    // A timestamp tie may span pages. Keep the database's microseconds in the cursor.
+    const predicate=cursor ? 'AND created_at <= $3::timestamptz AND (created_at,id) < ($3::timestamptz,$4::uuid)' : '';
+    const values=cursor ? [before,limit,cursor.at,cursor.id] : [before,limit];
+    return safe(async()=> (await pool.query(`
+      WITH page AS MATERIALIZED (
+        SELECT id,created_at FROM er_reservations
+        WHERE created_at <= $1 ${predicate}
+        ORDER BY created_at DESC,id DESC LIMIT $2
+      )
+      SELECT p.id,p.created_at::text AS "cursorAt",p.created_at AS "createdAt",
+        r.record->>'paymentStatus' AS "paymentStatus",
+        r.record #>> '{quote,promotion,code}' AS "promotionCode",
+        r.record->>'stripeSessionId' AS "stripeSessionId",
+        r.record #>> '{checkoutAttempt,key}' AS "attemptKey",
+        r.record #> '{checkoutAttempt,firstSubmittedAt}' AS "firstSubmittedAt",
+        r.record->'paymentConfirmationReview' AS review
+      FROM page p JOIN er_reservations r ON r.id=p.id ORDER BY p.created_at DESC,p.id DESC`,values)).rows);
   }
   async function abandonedDeferredCandidates(now,limit=10){
     return safe(async()=>decode((await pool.query("SELECT id,record FROM er_reservations WHERE record->>'deferredPayment'='true' AND record->>'paymentStatus'<>'paid' AND record->>'status'<>'cancelled' AND record #>> '{quote,promotion,code}'='FIRST15' AND (record #>> '{checkoutAttempt,state}'='confirmed_unpaid' OR (record->>'stripeSessionId' IS NULL AND (record->>'checkoutAttempt' IS NULL OR (record #>> '{checkoutAttempt,firstSubmittedAt}' IS NULL AND record #>> '{checkoutAttempt,submissionCount}'='0')))) AND created_at <= $1 ORDER BY created_at,id LIMIT $2",[new Date(now-24*3600000),limit])).rows));
@@ -319,6 +346,6 @@ function createStore(env = process.env, suppliedPool) {
   }
   const assertActionLock=key=>{if(actionScope.getStore()!==key)throw Object.assign(new Error('Reservation action is already processing. Please try again.'),{status:409});};
   const adminSearch={...require('./admin-reservations').adminReservationStorage(pool,transaction,validateRecord),...require('./admin-archives').adminArchiveStorage(transaction,validateRecord,assertActionLock),...require('./customer-reviews').customerReviewStorage(pool,transaction,safe)};
-  return {...adminSearch,...require('./dispatch-analytics').dispatchAnalyticsStorage(transaction),...require('./reservation-management').reservationManagementStorage(transaction,safe,validateRecord,()=>scope.getStore() || pool,assertActionLock),...require('./admin-payment-links').adminPaymentLinkStorage(pool,transaction,safe,validateRecord,assertActionLock),...require('./refunds').refundStorage(pool,transaction,validateRecord,assertActionLock,()=>scope.getStore() || pool),...require('./trip-management').tripManagementStorage(pool,transaction,validateRecord,assertActionLock,()=>scope.getStore() || pool),...bookingEmailStorage(pool,transaction,safe),...require('./customer-payments').customerPaymentStorage(pool,transaction,safe),...require('./customer-trips').customerTripsStorage(pool,safe,validateRecord),...require('./recovery').recoveryStorage(pool,transaction,safe),...require('./customers').customerStorage(pool,transaction,safe),list,get,getForDisplay,backfillBookingReferences,hasPaidRide,update,createWithBudget,withActionLock,firstRideConflicts,claimFirstRide,releaseExpiredFirstRide,reconciliationCandidates,abandonedDeferredCandidates,finalizeReconciliation,migrate,importLegacy,close:()=>pool.end()};
+  return {...adminSearch,...require('./dispatch-analytics').dispatchAnalyticsStorage(transaction),...require('./reservation-management').reservationManagementStorage(transaction,safe,validateRecord,()=>scope.getStore() || pool,assertActionLock),...require('./admin-payment-links').adminPaymentLinkStorage(pool,transaction,safe,validateRecord,assertActionLock),...require('./refunds').refundStorage(pool,transaction,validateRecord,assertActionLock,()=>scope.getStore() || pool),...require('./trip-management').tripManagementStorage(pool,transaction,validateRecord,assertActionLock,()=>scope.getStore() || pool),...bookingEmailStorage(pool,transaction,safe),...require('./customer-payments').customerPaymentStorage(pool,transaction,safe),...require('./customer-trips').customerTripsStorage(pool,safe,validateRecord),...require('./recovery').recoveryStorage(pool,transaction,safe),...require('./customers').customerStorage(pool,transaction,safe),list,get,getForDisplay,backfillBookingReferences,hasPaidRide,update,createWithBudget,withActionLock,firstRideConflicts,claimFirstRide,releaseExpiredFirstRide,reconciliationCandidates,paymentConfirmationPage,abandonedDeferredCandidates,finalizeReconciliation,migrate,importLegacy,close:()=>pool.end()};
 }
 module.exports={createStore,StorageError,validateRecord,validateRecords,connectionOptions};

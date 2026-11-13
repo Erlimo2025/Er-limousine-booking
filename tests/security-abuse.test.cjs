@@ -134,6 +134,7 @@ async function harness(t, env = {}, saved = "[]", injectedStore, startedAt = Dat
       if (name === "./services/booking-emails") return require("../services/booking-emails");
       if (name === "./services/booking-stops") return require("../services/booking-stops");
       if (name === "./services/quote-approval") return require("../services/quote-approval");
+      if (name === "./services/payment-confirmation-recovery") return require("../services/payment-confirmation-recovery");
       if (name === "./services/admin-payment-links") return require("../services/admin-payment-links");
       if (name === "./services/customer-reviews") return require("../services/customer-reviews");
       if (name === "./routes/customer-reviews") return require("../routes/customer-reviews");
@@ -1349,7 +1350,7 @@ test('New audit 2: customer data/cookies cannot invoke admin recovery; admin see
   for(const headers of [{},{cookie:h.checkoutCookies()}])assert.equal((await h.request(route,body,headers)).status,401);
   const before=h.state.creates.length;
   const login=await h.request('/api/admin/login',{token:'local-test-token'}),cookie=login.headers.getSetCookie()[0].split(';')[0];
-  const result=await h.request(route,{}, {cookie});assert.equal(result.status,200);assert.deepEqual(result.body,{ok:true});
+  const result=await h.request(route,{}, {cookie,origin:'http://localhost:3000'});assert.equal(result.status,200);assert.deepEqual(result.body,{ok:true});
   const list=await h.request('/api/bookings',undefined,{cookie});assert.equal(list.body[0].checkoutAttempt.state,'review_required');
   assert.equal(h.testStore.shared.claims.size,2);assert.equal(h.state.creates.length,before);
   assert.equal((await h.request(route,{}, {cookie,origin:'https://attacker.example'})).status,403);
@@ -1808,7 +1809,7 @@ test('Terminal C-only fallback verifies and routes General EWR, preserves pickup
   const record=h.records()[0];assert.equal(record.trip.pickupPlaceId,c);assert.match(record.trip.pickup,/Newark Liberty International Airport \(Terminal C\)/);
   const {tripDto}=require('../storage/customer-trips');assert.equal(tripDto(record).pickupTerminal,'Terminal C');
   const admin=fs.readFileSync(path.join(root,'public/admin.js'),'utf8'),context={esc:value=>String(value||'').replaceAll('<','&lt;')};vm.createContext(context);
-  vm.runInContext(admin.slice(admin.indexOf('function renderBooking('),admin.indexOf('bookingsEl.addEventListener("click"')),context);assert.ok(context.renderBooking(record).includes(record.trip.pickup));
+  vm.runInContext(admin.slice(admin.indexOf('const paymentConfirmationLabels'),admin.indexOf('bookingsEl.addEventListener("click"')),context);assert.ok(context.renderBooking(record).includes(record.trip.pickup));
   const session=[...h.state.sessions.values()][0];assert.equal((await h.webhook({...session,payment_status:'paid'})).status,200);assert.equal(h.records()[0].trip.pickup,record.trip.pickup);assert.equal(h.records()[0].trip.pickupPlaceId,c);
   assert.doesNotMatch(h.state.logs.join(' '),/EWR_TERMINAL_C_SEARCH|EWR_VERIFY_ID_ONLY/);
  }

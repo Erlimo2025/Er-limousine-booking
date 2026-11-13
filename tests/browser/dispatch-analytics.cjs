@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const {analyticsFixture, endpoint} = require('../helpers/dispatch-analytics.cjs');
+const {guestBooking} = require('../helpers/reservation-management.cjs');
 
 const engine = process.env.ER_TEST_ANALYTICS_ENGINE || 'chromium';
 const pg = {skip: !process.env.ER_TEST_DATABASE_URL && 'Requires isolated PostgreSQL', timeout: 90000};
@@ -39,12 +40,12 @@ async function open(t, fixture, width) {
   return {context, page, errors};
 }
 
-async function login(page) {
+async function login(page, openAnalytics = true) {
   const panel = page.locator('#businessAnalytics');
   assert.equal(await panel.isVisible(), false);
   await page.getByLabel('Admin credential').fill('local-test-token');
   await page.getByRole('button', {name: 'Admin login'}).click();
-  await panel.locator(':scope > summary').click();
+  if (openAnalytics) await panel.locator(':scope > summary').click();
 }
 
 async function layout(page) {
@@ -218,6 +219,41 @@ for (const width of [320, 390, 430, 1440]) {
     await page.locator('#businessAnalytics').waitFor({state: 'hidden'});
     assert.equal(await page.locator('[data-metric]').count(), 0);
     assert.equal(await report.locator('tbody tr').count(), 0);
+    assert.deepEqual(errors, []);
+  });
+}
+
+for (const width of [320, 390, 430, 1440]) {
+  test(engine + ' Dispatch payment review and signed confirmation at ' + width + 'px', pg, async t => {
+    const fixture = await analyticsFixture(t);
+    const {h, store} = fixture;
+    const booking = await fixture.post('/api/checkout', {...guestBooking, paymentChoice: 'now'});
+    assert.equal(booking.status, 200);
+    const id = booking.body.bookingId;
+    const session = [...h.state.sessions.values()][0];
+    Object.assign(session, {status: 'complete', payment_status: 'paid'});
+    h.advance(31 * 60_000);
+    await h.context.runPaymentConfirmationRecovery();
+
+    const {page, errors} = await open(t, fixture, width);
+    await login(page, false);
+    await page.locator('#filterPayment').selectOption('review');
+    await page.locator('#filterTiming').selectOption('all');
+    await page.locator('#applyFilters').click();
+    const card = page.locator('.dispatch-card');
+    await card.getByText('Payment Review', {exact: true}).waitFor();
+    await card.getByText(/ER-\d{6}/).waitFor();
+    await card.getByText('Manage Dispatch', {exact: true}).click();
+    await card.getByText(/Stripe reports payment received\. Signed confirmation needed\./).waitFor();
+    const check = page.waitForResponse(response => response.request().method() === 'POST' &&
+      new URL(response.url()).pathname === '/api/bookings/' + id + '/reconcile');
+    await card.getByRole('button', {name: 'Check Stripe payment'}).click();
+    assert.equal((await check).status(), 200);
+    assert.equal((await store.get(id)).paymentStatus, 'unpaid');
+    await layout(page);
+    assert.equal((await h.webhook(session)).status, 200);
+    await page.locator('#applyFilters').click();
+    await page.getByText('No matching reservations.').waitFor();
     assert.deepEqual(errors, []);
   });
 }
