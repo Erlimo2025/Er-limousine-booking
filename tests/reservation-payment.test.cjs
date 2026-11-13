@@ -7,6 +7,79 @@ const cookie=r=>r.headers.getSetCookie().find(x=>x.includes('er_customer_session
 const register=(h,extra={})=>h.request('/api/customer/register',{...customer,...extra});
 const reserve=(h,extra={},auth={})=>h.request('/api/checkout',{...booking,paymentChoice:'later',...extra},auth);
 const payment=(h,id,c)=>h.request('/api/customer/trips/'+id+'/payment',{}, {...headers,cookie:c});
+const stripeVehicleNames = [
+  ['suv', 'Luxury SUV — Chevrolet Suburban Premier', 9000],
+  ['escalade', 'Luxury SUV — Cadillac Escalade ESV', 11250]
+];
+
+for (const [vehicle, name, cents] of stripeVehicleNames) {
+  for (const flow of ['Pay Now', 'guest Complete Payment', 'signed-in Complete Payment']) {
+    test('Stripe Checkout vehicle name for ' + vehicle + ' via ' + flow, async t => {
+      const h = await harness(t);
+      h.state.routeResult = () => ({distanceMeters: 16093.44, duration: '1800s'});
+      const payNow = flow === 'Pay Now';
+      const account = flow === 'signed-in Complete Payment' ? await register(h) : null;
+      const auth = account ? {cookie: cookie(account)} : {};
+      const reserved = await reserve(h, {vehicle, paymentChoice: payNow ? 'now' : 'later'}, auth);
+      assert.equal(reserved.status, 200);
+      const id = reserved.body.bookingId;
+      const saved = await h.testStore.get(id);
+      assert.equal(saved.trip.vehicle, vehicle);
+      assert.equal(saved.quote.total, cents / 100);
+
+      if (!payNow) {
+        assert.equal(h.state.creates.length, 0);
+        const access = reserved.headers.getSetCookie().find(value => value.startsWith('er_booking_access_')).split(';')[0];
+        const completed = account ? await payment(h, id, cookie(account)) :
+          await h.request('/api/booking/' + id + '/checkout', {}, {...headers, cookie: access});
+        assert.equal(completed.status, 200);
+      }
+
+      assert.equal(h.state.creates.length, 1);
+      const {line_items, metadata} = h.state.creates[0].params;
+      assert.equal(line_items[0].price_data.product_data.name, name);
+      assert.equal(line_items[0].price_data.unit_amount, cents);
+      assert.equal(line_items[0].price_data.currency, 'usd');
+      assert.equal(metadata.bookingId, id);
+      assert.deepEqual((await h.testStore.get(id)).quote, saved.quote);
+    });
+  }
+}
+
+test('Stripe Checkout vehicle name leaves a submitted legacy retry intact and updates the replacement', async t => {
+  const h = await harness(t);
+  const account = await register(h);
+  const credentials = cookie(account);
+  const reserved = await reserve(h, {vehicle: 'suv'}, {cookie: credentials});
+  assert.equal(reserved.status, 200);
+  const id = reserved.body.bookingId;
+  const originalQuote = (await h.testStore.get(id)).quote;
+
+  h.state.loseResponse = true;
+  assert.equal((await payment(h, id, credentials)).status, 503);
+  const submitted = h.state.creates[0];
+  const legacy = structuredClone(submitted.params);
+  legacy.line_items[0].price_data.product_data.name = 'ER Limousine Service — Black SUV';
+  await h.testStore.update(id, record => {record.checkoutAttempt.parameters = legacy;});
+
+  assert.equal((await payment(h, id, credentials)).status, 200);
+  const retried = h.state.creates[1];
+  assert.equal(retried.options.idempotencyKey, submitted.options.idempotencyKey);
+  assert.deepEqual(retried.params, legacy);
+  assert.equal(h.state.sessions.size, 1);
+
+  const existing = [...h.state.sessions.values()][0];
+  existing.status = 'expired';
+  assert.equal((await payment(h, id, credentials)).status, 200);
+  const replacement = h.state.creates[2];
+  assert.notEqual(replacement.options.idempotencyKey, submitted.options.idempotencyKey);
+  assert.equal(replacement.params.line_items[0].price_data.product_data.name, 'Luxury SUV — Chevrolet Suburban Premier');
+  assert.equal(replacement.params.line_items[0].price_data.unit_amount, 8000);
+  assert.equal(replacement.params.metadata.bookingId, id);
+  assert.equal(h.state.sessions.size, 2);
+  assert.deepEqual((await h.testStore.get(id)).quote, originalQuote);
+});
+
 test('Pay Later stores server fare without Checkout; Pay Now uses the same fare and immutable suv identity',async t=>{
  for(const choice of ['later','now']){
  const h=await harness(t),r=await h.request('/api/checkout',{...booking,vehicle:'suv',paymentChoice:choice,amount:1,total:1,discount:100,customer_id:crypto.randomUUID()});
@@ -73,6 +146,7 @@ test('EWR special Pay Later and stored payment keep exactly $150, FIRST15 exclud
  const r=await reserve(h,{vehicle:'suv',offerCode:'EWR_MANHATTAN_SUV',promoCode:'FIRST15',pickupPlaceId:id,pickup:terminal.kind==='airport'?'Newark Liberty International Airport (EWR)':terminal.label},{cookie:cookie(a)});
  assert.equal(r.status,200);assert.equal(h.records()[0].quote.total,150);assert.equal(h.records()[0].quote.promotion,null);
  assert.equal((await payment(h,r.body.bookingId,cookie(a))).status,200);assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount,15000);
+ assert.equal(h.state.creates[0].params.line_items[0].price_data.product_data.name,'Luxury SUV — Chevrolet Suburban Premier');
  }
 });
 test('completion mutations enforce Origin, Fetch Metadata, JSON and no-store; provider failures remain sanitized',async t=>{

@@ -69,6 +69,7 @@ async function create(t,c=cases[0],store){
  const probe=http.createServer();await new Promise(r=>probe.listen(0,'127.0.0.1',r));const port=probe.address().port;await new Promise(r=>probe.close(r));
  const env={...base.env,PORT:String(port),SITE_URL:'http://127.0.0.1:'+port,ADMIN_TOLL_VALIDATION_ENABLED:'false'};
  if(c.missingProfile)env.TOLL_VEHICLE_PROFILES_JSON=undefined;if(c.disabled)env.ROUTE_TOLLS_ENABLED='false';
+ if(c.webhookUnavailable) env.STRIPE_WEBHOOK_SECRET=undefined;
  const h=base.configureLocations(await harness(t,env,'[]',store));
  if(c.missingCategory)vm.runInContext('delete pricing.tollPricingCategories.luxury_suv;',h.context);
  if(c.special)h.state.rejectTerminalCDetails=true;
