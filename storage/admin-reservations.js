@@ -1,6 +1,7 @@
 const crypto=require('node:crypto');
 const ewr=require('../ewr-pickups');
 const {paymentVerificationPending}=require('./customer-trips');
+const {dispatchPaymentConfirmation,reviewStatuses}=require('../services/payment-confirmation-recovery');
 const {normalizeBookingReference}=require('../services/booking-reference');
 const choices={view:['dispatch','archived'],status:['active','all','cancelled','completed'],payment:['all','paid','unpaid','processing','review','refunded'],timing:['upcoming','all','today','tomorrow','past'],airport:['all','ewr','jfk','lga','other'],vehicle:['all','suv','escalade']};
 const defaults={view:'dispatch',status:'active',payment:'all',timing:'upcoming',airport:'all',vehicle:'all'};
@@ -31,11 +32,15 @@ function searchSql(q){
  const status="record->>'status'",payment="record->>'paymentStatus'";
  if(q.status==='active')where.push(`${status} NOT IN ('cancelled','completed')`);else if(q.status!=='all')where.push(`${status}=${bind(q.status)}`);
  const pending=`(${payment}<>'paid' AND record->'checkoutAttempt'->>'state'='session_identified' AND record->'checkoutAttempt'->>'evidence' IN ('verified_paid_awaiting_webhook','payment_pending'))`;
- const review="(COALESCE((record->>'paymentReviewRequired')::boolean,false) OR record->'checkoutAttempt'->>'state'='review_required' OR record->>'refundStatus' IN ('review_required','failed'))";
+ const confirmationReview=()=>`(${payment}<>'paid' AND record #>> '{paymentConfirmationReview,status}'=ANY(${bind(reviewStatuses)}::text[])
+   AND (record #>> '{paymentConfirmationReview,sessionId}') IS NOT DISTINCT FROM (record->>'stripeSessionId')
+   AND (record #>> '{paymentConfirmationReview,attemptKey}') IS NOT DISTINCT FROM (record #>> '{checkoutAttempt,key}'))`;
+ const review=()=>`(COALESCE((record->>'paymentReviewRequired')::boolean,false) OR record->'checkoutAttempt'->>'state'='review_required'
+   OR record->>'refundStatus' IN ('review_required','failed') OR ${confirmationReview()})`;
  if(q.payment==='paid')where.push(`${payment}='paid'`);
- if(q.payment==='unpaid')where.push(`${payment}<>'paid' AND NOT COALESCE(${pending},false) AND NOT COALESCE(${review},false) AND COALESCE(record->'checkoutAttempt'->>'state','')<>'submitted_unknown'`);
+  if(q.payment==='unpaid')where.push(`${payment}<>'paid' AND NOT COALESCE(${pending},false) AND NOT COALESCE(${review()},false) AND COALESCE(record->'checkoutAttempt'->>'state','')<>'submitted_unknown'`);
  if(q.payment==='processing')where.push(`(${pending} OR record->'checkoutAttempt'->>'state'='submitted_unknown' OR record->>'refundStatus'='processing')`);
- if(q.payment==='review')where.push(review);if(q.payment==='refunded')where.push("record->>'refundStatus'='confirmed'");
+  if(q.payment==='review')where.push(review());if(q.payment==='refunded')where.push("record->>'refundStatus'='confirmed'");
  if(q.timing==='upcoming')where.push('finish>'+bind(q.at)+'::timestamptz');if(q.timing==='past')where.push('finish<='+bind(q.at)+'::timestamptz');
  if(['today','tomorrow'].includes(q.timing))where.push("(start AT TIME ZONE 'America/New_York')::date="+bind(q[q.timing])+'::date');
  const airportSql=key=>{const pattern=bind(airportPatterns[key]);let expression=`(record->'trip'->>'pickup' ~* ${pattern} OR record->'trip'->>'dropoff' ~* ${pattern})`;if(key==='ewr'){const ids=bind(Object.keys(ewr));expression=`(${expression} OR record->'trip'->>'pickupPlaceId'=ANY(${ids}::text[]) OR record->'trip'->>'dropoffPlaceId'=ANY(${ids}::text[]))`;}return 'COALESCE('+expression+',false)';};
@@ -66,10 +71,11 @@ function dispatchAirport(trip,side){
 }
 function adminDto(r,archive={},now=Date.now()){
  const canRequestPaymentLink=require('../services/admin-payment-links').eligible(r);
+ const paymentConfirmation=dispatchPaymentConfirmation(r,now);
  const trip={...Object.fromEntries(['pickup','dropoff','date','time','returnDate','returnTime','hours','tripType','vehicle','passengers','flightNumber'].filter(k=>r.trip[k]!==undefined).map(k=>[k,r.trip[k]])),timeZone:'America/New_York',pickupAirport:dispatchAirport(r.trip,'pickup'),dropoffAirport:dispatchAirport(r.trip,'dropoff')};
  Object.assign(trip,require('../services/booking-stops').publicSummary(r.quote));
  for(const [field,max]of [['notes',2000],['airline',120]])if(typeof r.trip[field]==='string' && r.trip[field].trim())trip[field]=r.trip[field].slice(0,max);
- return {canRequestPaymentLink,archived:!!archive.archived_at,archivedAt:archive.archived_at?new Date(archive.archived_at).toISOString():null,archivedBy:archive.archived_by || null,canArchive:!archive.archived_at&&require('./admin-archives').canArchive(r,archive.finish,now),id:r.id,bookingReference:archive.booking_reference || null,customer:{firstName:r.customer.firstName,lastName:r.customer.lastName,email:r.customer.email,phone:r.customer.phone},trip,quote:{total:r.quote.total,currency:r.quote.currency,vehicle:r.trip.vehicle==='suv'?'Luxury SUV':r.quote.vehicle},status:r.status,paymentStatus:r.paymentStatus,paymentReviewRequired:r.paymentReviewRequired===true,paymentVerificationPending:paymentVerificationPending(r),...(r.refundStatus?{refundStatus:r.refundStatus}:{}),dispatch:{...r.dispatch},...(r.checkoutAttempt?{checkoutAttempt:{state:r.checkoutAttempt.state,quote:{promotion:{code:r.checkoutAttempt.quote?.promotion?.code}}}}:{})};
+ return {canRequestPaymentLink,archived:!!archive.archived_at,archivedAt:archive.archived_at?new Date(archive.archived_at).toISOString():null,archivedBy:archive.archived_by || null,canArchive:!archive.archived_at&&require('./admin-archives').canArchive(r,archive.finish,now),id:r.id,bookingReference:archive.booking_reference || null,customer:{firstName:r.customer.firstName,lastName:r.customer.lastName,email:r.customer.email,phone:r.customer.phone},trip,quote:{total:r.quote.total,currency:r.quote.currency,vehicle:r.trip.vehicle==='suv'?'Luxury SUV':r.quote.vehicle},status:r.status,paymentStatus:r.paymentStatus,paymentReviewRequired:r.paymentReviewRequired===true,paymentVerificationPending:paymentVerificationPending(r),...(paymentConfirmation?{paymentConfirmation}:{}),...(r.refundStatus?{refundStatus:r.refundStatus}:{}),dispatch:{...r.dispatch},...(r.checkoutAttempt?{checkoutAttempt:{state:r.checkoutAttempt.state,quote:{promotion:{code:r.checkoutAttempt.quote?.promotion?.code}}}}:{})};
 }
 function page(rows,q){const subset=rows.slice(0,q.limit),last=subset.at(-1);return {bookings:subset.map(x=>adminDto(x.record,x,Date.parse(q.at))),nextCursor:rows.length>q.limit?Buffer.from(JSON.stringify({hash:q.hash,at:q.at,start:new Date(last.start).toISOString(),id:last.id})).toString('base64url'):null};}
 function adminReservationStorage(pool,transaction,validate){return {searchAdminReservations:q=>transaction(async client=>{

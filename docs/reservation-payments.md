@@ -18,6 +18,14 @@ The same fingerprint lock serializes reservation and payment creation across wor
 
 An open, unpaid Checkout session with matching reservation, mode, amount and currency is reused. Complete/processing/paid provider states block another charge. Only a verified expired/unpaid session permits replacing the Checkout session on the same reservation. Lost responses reuse the durable provider idempotency key; aged indeterminate outcomes fail closed and may require operator reconciliation.
 
+## Ordinary payment confirmation recovery
+
+The background check looks for submitted ordinary payment attempts after 30 minutes, with a five-minute sweep, 128 reservation headers per page, and up to eight attempts per sweep. It uses the existing creation-date index and keeps retry timing and evidence in the reservation JSON. Open or pending results and temporary provider failures can be rechecked after one hour. Matched paid, expired-unpaid and unidentified attempts stop automatic provider lookups for that attempt. The limits are set in the recovery service. No new environment variable or migration is required.
+
+In Dispatch, use **Payment status → Review required** and broaden the timing and reservation status filters as needed. Open **Manage Dispatch** on the reservation to see the payment confirmation status, attempt age and last provider result. **Check Stripe payment** uses the existing authenticated, same-origin admin route and a five-minute minimum between provider checks per attempt. If Stripe reports payment received, locate the matching payment in the authorized Stripe Dashboard using the reservation and saved fare, then ask Stripe to resend the original success event to the existing endpoint. Recheck the reservation in Dispatch. If signed redelivery is unavailable, escalate for review. Keep the recorded payment state as is.
+
+Provider lookups only record evidence. A delayed, duplicate or retried signed event still goes through the existing signature, session, amount and currency checks and the transactional ledger and payment email outbox. Recovery never opens Checkout, issues a refund or cancels a trip. A newly interrupted attempt can be matched by its persisted reference in Stripe metadata. If a legacy attempt lost its session ID and has no matching reference, Dispatch reports it as unidentified for manual review.
+
 ## FIRST15
 FIRST15 remains exactly 15%, with existing EWR special exclusion and formulas unchanged. A new Pay Later FIRST15 reservation and its hashed contact claims are committed atomically under the existing claim lock. Failed competing creation rolls back the reservation.
 

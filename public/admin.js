@@ -176,6 +176,32 @@ async function logout() {
   }
 }
 
+const paymentConfirmationLabels = {
+  not_checked: 'Awaiting provider check',
+  paid_awaiting_webhook: 'Stripe reports payment received. Signed confirmation needed.',
+  payment_pending: 'Stripe payment is pending.',
+  session_unidentified: 'Checkout Session could not be identified.',
+  session_mismatch: 'Stripe details need review.',
+  provider_unavailable: 'Stripe could not be reached or is unavailable.',
+  session_open: 'Checkout is open and unpaid.',
+  expired_unpaid: 'Checkout expired unpaid.'
+};
+
+function renderPaymentConfirmation(review) {
+  if (!review) return '';
+  const label = paymentConfirmationLabels[review.status] || 'Status unavailable';
+  const result = review.lastResult && review.lastResult !== review.status ? paymentConfirmationLabels[review.lastResult] : '';
+  const checked = review.checkedAt ? new Intl.DateTimeFormat('en-US', {
+    dateStyle: 'short', timeStyle: 'short', timeZone: 'America/New_York'
+  }).format(review.checkedAt) : '';
+  return `
+    <p class="dispatch-secondary"><strong>Payment confirmation</strong> ${esc(label)}
+      Attempt started ${esc(String(review.ageMinutes))} min ago.
+      ${checked ? `Last checked ${esc(checked)} ET.` : ''}
+      ${result ? `Last result: ${esc(result)}` : ''}</p>
+    <button class="btn btn-secondary reconcileBtn" type="button">Check Stripe payment</button>`;
+}
+
 function renderBooking(b) {
   const total = Number(b.quote && b.quote.total || 0).toFixed(2);
   const waiting = b.trip.stopSummary;
@@ -192,7 +218,7 @@ function renderBooking(b) {
   const badge=(text,tone)=>`<span class="badge dispatch-badge ${tone}">${esc(text)}</span>`;
   const statusLabels={awaiting_payment:'Awaiting Payment',confirmed:'Confirmed',assigned:'Assigned',driver_en_route:'Driver En Route',passenger_on_board:'Passenger On Board',completed:'Completed',cancelled:'Cancelled'};
   const cancelled=b.status==='cancelled',completed=b.status==='completed';
-  const review=b.paymentReviewRequired===true || b.checkoutAttempt?.state==='review_required';
+  const review=b.paymentReviewRequired===true || b.checkoutAttempt?.state==='review_required' || b.paymentConfirmation?.needsReview===true;
   const processing=b.paymentVerificationPending===true || b.checkoutAttempt?.state==='submitted_unknown';
   const paid=b.paymentStatus==='paid';
   const paymentLabel=paid?'Paid':review?'Payment Review':processing?'Payment Processing':b.paymentStatus==='unpaid'?'Unpaid':b.paymentStatus==='failed'?'Payment Failed':'Payment Status Unavailable';
@@ -240,6 +266,7 @@ function renderBooking(b) {
         <p class="dispatch-secondary"><strong>FIRST15 reconciliation:</strong> ${esc(({prepared:'Not submitted',submitted_unknown:'Provider response pending',session_identified:'Payment session identified',confirmed_paid:'Payment confirmed',confirmed_unpaid:'Unpaid confirmed',review_required:'Review required'})[b.checkoutAttempt.state] || 'Review required')}
         ${b.checkoutAttempt.state === "review_required" ? "— Provider verification required; eligibility remains protected." : ""}</p>
         <button class="btn btn-secondary reconcileBtn">Check FIRST15 payment state</button>` : ""}
+      ${renderPaymentConfirmation(b.paymentConfirmation)}
       <div class="admin-controls">
         <label>Reservation status<select class="status" ${b.archived?'disabled':''}>
           ${["awaiting_payment","confirmed","assigned","driver_en_route","passenger_on_board","completed","cancelled"]
@@ -319,8 +346,8 @@ bookingsEl.addEventListener("click", async (event) => {
     try {
       const id=event.target.closest('.booking-item').dataset.id;
       await adminFetch('/api/bookings/'+encodeURIComponent(id)+'/reconcile',{method:'POST',body:'{}'});
-      showNotice('Payment-state check completed. Unresolved cases require provider verification.','success');
       await loadBookings();
+      showNotice('Payment check complete. Review the latest status on the reservation.','success');
     } catch(err) {showNotice(err.message);} finally {event.target.disabled=false;}
     return;
   }

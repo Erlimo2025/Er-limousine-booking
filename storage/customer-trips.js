@@ -2,6 +2,7 @@ const ewr=require('../ewr-pickups');
 const pricing=require('../pricing');
 const {policyAtBooking}=require('../services/cancellation-policy');
 const {customerPricing}=require('../services/route-tolls');
+const {pendingConfirmation}=require('../services/payment-confirmation-recovery');
 const bookingStops=require('../services/booking-stops');
 const uuid=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const iso=value=>typeof value==='string' && Number.isFinite(Date.parse(value)) && new Date(value).toISOString()===value;
@@ -25,8 +26,9 @@ function tripQuery(query,now) {
 }
 // Display evidence only: Paid remains exclusively a signed-webhook transition.
 function paymentVerificationPending(record) {
- return record.paymentStatus!=='paid' && record.checkoutAttempt?.state==='session_identified' &&
-  ['verified_paid_awaiting_webhook','payment_pending'].includes(record.checkoutAttempt.evidence);
+ return record.paymentStatus!=='paid' && (pendingConfirmation(record) ||
+  (record.checkoutAttempt?.state==='session_identified' &&
+    ['verified_paid_awaiting_webhook','payment_pending'].includes(record.checkoutAttempt.evidence)));
 }
 // Read-only template; never carries reservation/payment/quote/customer authority.
 function reusableTrip(record){

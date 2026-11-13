@@ -9,6 +9,8 @@ const { isIP } = require("net");
 const pricing = require("./pricing");
 const ewrPickups = require("./ewr-pickups");
 const routeTollPricing = require('./services/route-tolls');
+const {createPaymentConfirmationRecovery, providerPaidAwaitingWebhook,
+  providerSessionMatchesAttempt, recoveryPolicy} = require('./services/payment-confirmation-recovery');
 const bookingStops = require('./services/booking-stops');
 const {createQuoteApproval, approvalHash} = require('./services/quote-approval');
 const cancellationPolicy=require('./services/cancellation-policy');
@@ -1847,6 +1849,8 @@ app.post(
         typeof expectedTotal !== "number" || !Number.isFinite(expectedTotal) || expectedTotal <= 0 ||
         !Number.isSafeInteger(expectedAmount) || expectedAmount <= 0 ||
         session.mode !== "payment" ||
+        (booking.paymentStatus !== 'paid' && session.payment_status === 'paid' &&
+          !providerSessionMatchesAttempt(booking, session)) ||
         !Number.isSafeInteger(session.amount_total) || session.amount_total !== expectedAmount ||
         typeof expectedCurrency !== "string" || typeof session.currency !== "string" ||
         session.currency.toLowerCase() !== expectedCurrency.toLowerCase()
@@ -1869,8 +1873,11 @@ app.post(
         ) {
           booking.paymentStatus = "failed";
           booking.paymentFailedAt = new Date().toISOString();
+          if (booking.paymentConfirmationReview?.status === 'payment_pending') delete booking.paymentConfirmationReview;
           if(booking.checkoutAttempt)booking.checkoutAttempt.evidence='verified_payment_failed';
-        } else if(event.type==='checkout.session.completed' && session.status==='complete' && session.payment_status==='unpaid' && booking.checkoutAttempt){
+         } else if(event.type==='checkout.session.completed' && session.status==='complete' &&
+           session.payment_status==='unpaid' && booking.paymentStatus!=='failed' && booking.checkoutAttempt &&
+           booking.checkoutAttempt.evidence!=='verified_paid_awaiting_webhook'){
           Object.assign(booking.checkoutAttempt,{state:'session_identified',evidence:'payment_pending'});
         }
       }
@@ -2382,7 +2389,15 @@ const reconciliationTimer=setInterval(()=>runFirstRideReconciliation().catch(()=
 reconciliationTimer.unref();
 
 app.post('/api/bookings/:id/reconcile',requireAdmin,rateLimit('admin-reconciliation',10),route(async(req,res)=>{
-  await reconcileFirstRide(req.params.id);res.json({ok:true});
+  if (req.get('origin') !== new URL(SITE_URL).origin ||
+      !req.is('application/json') || !req.body || Array.isArray(req.body) || Object.keys(req.body).length) {
+    return res.status(403).json({error:'Invalid request.'});
+  }
+  const booking = await reservationStore.get(req.params.id);
+  if (!booking) return res.status(404).json({error:'Booking not found.'});
+  if (booking.quote.promotion?.code === 'FIRST15') await reconcileFirstRide(booking.id);
+  else await paymentConfirmationRecovery.check(booking);
+  res.json({ok:true});
 }));
 
 
@@ -2393,6 +2408,20 @@ function validStoredSession(session,booking){
  return !!session && session.id===booking.stripeSessionId && session.mode==='payment' && session.metadata?.bookingId===booking.id &&
  session.amount_total===Math.round(booking.quote.total*100) && session.currency===booking.quote.currency;
 }
+
+const reportPaymentConfirmationFailure = () => logDiagnostic({
+  referenceId: crypto.randomUUID(), route: {path: '/api/bookings/:id/reconcile'}
+}, 503, 'storage_unavailable', 'postgresql');
+const paymentConfirmationRecovery = createPaymentConfirmationRecovery({
+  store: reservationStore, stripe, now: () => Date.now(), actionKey: paymentActionKey,
+  matchesSession: validStoredSession, reportFailure: reportPaymentConfirmationFailure
+});
+async function runPaymentConfirmationRecovery() {
+  await storageReady;
+  await paymentConfirmationRecovery.run();
+}
+setInterval(() => void runPaymentConfirmationRecovery().catch(reportPaymentConfirmationFailure),
+  recoveryPolicy.sweepMs).unref();
 // Shared provider verification; never marks Paid or performs a refund.
 async function cancellationPaymentProof(booking){
  if(!booking.stripeSessionId){const a=booking.checkoutAttempt;return {safe:!a || a.firstSubmittedAt===null && a.submissionCount===0,sessionId:null};}
@@ -2569,6 +2598,9 @@ async function checkoutStoredBooking(body,booking,req,storedOnly=true,adminPayme
   if (booking?.paymentStatus === "paid") {
     throw Object.assign(new Error("This reservation has already been paid."), {status: 409});
   }
+  if (providerPaidAwaitingWebhook(booking)) {
+    throw Object.assign(new Error("Checkout is already processing for this reservation."), {status: 409});
+  }
   if (booking?.stripeSessionId) {
     if(!storedOnly)await validateCheckoutQuote(body, booking.quote);
     let existing;
@@ -2577,8 +2609,9 @@ async function checkoutStoredBooking(body,booking,req,storedOnly=true,adminPayme
     } catch (_) {
       throw Object.assign(new Error("Checkout is temporarily unavailable. Please try again."), {status: 503});
     }
-    if(!existing || existing.id!==booking.stripeSessionId || existing.mode!=='payment' || existing.metadata?.bookingId!==booking.id ||
-      existing.amount_total!==Math.round(booking.quote.total*100) || existing.currency!==booking.quote.currency)throw Object.assign(new Error('Checkout is temporarily unavailable. Please try again.'),{status:503});
+    if(!validStoredSession(existing,booking) || !providerSessionMatchesAttempt(booking,existing)) {
+      throw Object.assign(new Error('Checkout is temporarily unavailable. Please try again.'),{status:503});
+    }
     if(booking.checkoutAttempt?.parameters?.customer && (existing.customer?.id || existing.customer)!==booking.checkoutAttempt.parameters.customer)throw Object.assign(new Error('Checkout is temporarily unavailable. Please try again.'),{status:503});
     if (existing.status === "open" && existing.payment_status==='unpaid' && existing.url) {
       if(adminPaymentLink)return adminPaymentLinkResult(existing,booking);
@@ -2605,8 +2638,8 @@ async function checkoutStoredBooking(body,booking,req,storedOnly=true,adminPayme
   if (!booking.checkoutAttempt || booking.checkoutAttempt.state==='confirmed_unpaid' || (booking.checkoutAttempt.expiresAt <= Math.floor(Date.now() / 1000) &&
       booking.checkoutAttempt.quote.promotion?.code !== 'FIRST15')) {
     booking.checkoutAttempt = {
-      key: crypto.randomUUID(),firstSubmittedAt:null,submissionCount:0,
-      ...(quote.promotion?.code==='FIRST15' ? {version:1,correlationId:crypto.randomUUID(),state:'prepared',
+      key: crypto.randomUUID(),correlationId:crypto.randomUUID(),firstSubmittedAt:null,submissionCount:0,
+      ...(quote.promotion?.code==='FIRST15' ? {version:1,state:'prepared',
         firstSubmittedAt:null,lastReconciledAt:null,submissionCount:0,evidence:'not_submitted'} : {}),
       // Retain Stripe's normal 24-hour Checkout window.
       expiresAt: Math.floor(Date.now() / 1000) + 24 * 60 * 60,
