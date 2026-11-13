@@ -589,6 +589,18 @@ function renderBookingPolicy(policy) {
   document.getElementById("bookingPolicyTiers").replaceChildren(...tiers);
 }
 
+function renderPayLaterDiscount(quote) {
+  const note = document.getElementById("payLaterDiscountNote");
+  if (!note) return;
+  const discount = quote?.discount;
+  const show = quote?.promotion?.code === "FIRST15" && !quote.fixedOffer &&
+    Number.isFinite(discount) && discount > 0;
+  note.hidden = !show;
+  note.textContent = show
+    ? ` Your FIRST15 discount of ${formatMoney(discount, quote.currency)} is included. Your reservation may be cancelled if you have not started payment within 24 hours of booking.`
+    : "";
+}
+
 function resetQuote() {
   quoteRequestGeneration++;
   if (quoteController) quoteController.abort();
@@ -597,6 +609,7 @@ function resetQuote() {
   currentQuote = null;
   replacementQuote = null;
   renderBookingPolicy(null);
+  renderPayLaterDiscount(null);
   quoteArea.classList.remove("has-completed-quote");
 
   updatePaymentControls();
@@ -1271,6 +1284,7 @@ function displayQuoteForReview(data, bookingData, requestKey) {
     ? TripDateFormat.trip(bookingData.returnDate,bookingData.returnTime) : "—";
 
   showPromoResult(data);
+  renderPayLaterDiscount(data);
   if(typeof renderFareBreakdown==='function')renderFareBreakdown(data);
   if(promoSummary)promoSummary.hidden=true;
   quoteArea.classList.add("has-completed-quote");

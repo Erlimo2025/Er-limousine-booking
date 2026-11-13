@@ -188,6 +188,62 @@ for (const width of [320, 390, 430, 1440]) {
   });
 }
 
+
+for (const [scenario, width, choice] of [
+  ['flag_off', 320, 'no promo'],
+  ['first15', 390, 'FIRST15 applied'],
+  ['ewr_special', 430, 'EWR special'],
+  ['first15', 1440, 'FIRST15 removed']
+]) {
+  test('Pay Later discount wording / ' + choice + ' / ' + width + 'px', {timeout: 45000}, async t => {
+    const s = await setup(t, width, cases.find(item => item.id === scenario));
+    const {page, h} = s;
+    const description = page.locator('#payLaterBtn + .payment-choice-description');
+    const standard = 'Reserve now and pay later at the total shown above.';
+    const format = (amount, currency) =>
+      new Intl.NumberFormat('en-US', {style: 'currency', currency}).format(amount);
+
+    await details(s);
+    await customer(s);
+    let reviewed = await quote(s);
+    if (scenario === 'first15') {
+      assert.equal(reviewed.promotion.code, 'FIRST15');
+      assert.ok(reviewed.discount > 0);
+      const savings = format(reviewed.discount, reviewed.currency);
+      assert.equal(await description.innerText(), standard +
+        ' Your FIRST15 discount of ' + savings + ' is included. Your reservation may be cancelled if you have not started payment within 24 hours of booking.');
+    }
+    if (choice === 'FIRST15 removed') {
+      await page.locator('#bookingBack').click();
+      await page.locator('#promoCode').fill('');
+      reviewed = await quote(s);
+    }
+    if (choice !== 'FIRST15 applied') {
+      assert.equal(reviewed.promotion, null);
+      assert.equal(reviewed.discount, 0);
+      assert.equal(await description.innerText(), standard);
+    }
+    if (scenario === 'ewr_special') assert.equal(reviewed.total, 150);
+
+    const accepted = format(reviewed.total, reviewed.currency);
+    assert.equal(await page.locator('#sumTotal').innerText(), accepted);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    await page.locator('#payLaterBtn').click();
+    await page.waitForURL(url => url.pathname === '/success.html');
+    await page.waitForFunction(() => document.getElementById('message').textContent.includes('Payment is still required'));
+    const total = page.locator('#details .summary-row').filter({has: page.getByText('Total', {exact: true})});
+    assert.equal(await total.locator('strong').innerText(), accepted);
+    assert.equal(h.records().length, 1);
+    assert.equal(h.records()[0].quote.total, reviewed.total);
+    assert.equal(h.records()[0].quote.discount, reviewed.discount);
+    assert.equal(h.state.creates.length, 0);
+
+    await page.locator('#completePayment').click();
+    await page.waitForURL('https://checkout.example.test/mock');
+    assert.equal(h.state.creates.length, 1);
+    assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount, Math.round(reviewed.total * 100));
+  });
+}
 test('invalid promo is recoverable and selecting the $150 special excludes FIRST15',{timeout:30000},async t=>{
  const s=await setup(t,390),{page,h}=s;await details(s);await customer(s);await page.locator('#promoCode').fill('INVALID');const rejected=page.waitForResponse(r=>r.url()===h.url+'/api/quote');await page.locator('#quoteBtn').click();assert.equal((await rejected).status(),400);await page.waitForFunction(()=>!document.getElementById('quoteBtn').disabled);assert.equal(await s.state(),'2');assert.equal(h.records().length,0);assert.equal(await page.locator('#email').inputValue(),s.input.email);
  await page.locator('#promoCode').fill('FIRST15');assert.equal((await quote(s)).promotion.code,'FIRST15');await page.locator('#ewrManhattanSpecialBtn').click();assert.equal(await s.state(),'1');assert.equal(await page.locator('#promoCode').inputValue(),'');assert.equal(await page.locator('#promoCode').isEnabled(),false);await page.locator('#dropoff').fill('Manhattan');await page.locator('#bookingContinue').click();const special=await quote(s);assert.equal(special.totalCents,15000);assert.equal(special.discount,0);assert.equal(special.promotion,null);assert.equal(special.tolls.status,'included');results.push({scenario:'promo_and_special_restriction',width:390,passed:true});
