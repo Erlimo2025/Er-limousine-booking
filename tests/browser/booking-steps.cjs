@@ -68,8 +68,29 @@ async function cancellationNotice(s, q, openDetails) {
    assert.equal(h.state.creates.length,0);
  }
 }
-async function layout(s){const {page}=s;assert.equal(await page.locator('.summary-card').count(),1);assert.equal(await page.locator('#bookingForm .summary-card').count(),1);assert.equal(await page.locator('#bookingTripStep').isVisible(),false);assert.equal(await page.locator('#bookingCustomerStep').isVisible(),false);assert.equal(await page.locator('#bookingSummaryStep').isVisible(),true);
- const display=await page.evaluate(()=>({rows:[...document.querySelectorAll('#fareBreakdown .fare-breakdown-row')].map(r=>[...r.children].map(e=>e.textContent)),totalLabel:document.getElementById('sumTotalLabel').textContent,overflow:Math.max(0,document.documentElement.scrollWidth-innerWidth),csp:window.cspFailures,buttonsAfterTotal:document.getElementById('sumTotal').compareDocumentPosition(document.getElementById('payBtn'))&Node.DOCUMENT_POSITION_FOLLOWING}));assert.deepEqual(display.rows.map(r=>r[0]),['Trip Fare','Tolls']);assert.equal(display.totalLabel,'Total');assert.equal(display.overflow,0);assert.deepEqual(display.csp,[]);assert.ok(display.buttonsAfterTotal);assert.equal(await page.locator('#promoSummary').isVisible(),false);return display;}
+async function layout(s, hasFirst15 = false){const {page}=s;assert.equal(await page.locator('.summary-card').count(),1);assert.equal(await page.locator('#bookingForm .summary-card').count(),1);assert.equal(await page.locator('#bookingTripStep').isVisible(),false);assert.equal(await page.locator('#bookingCustomerStep').isVisible(),false);assert.equal(await page.locator('#bookingSummaryStep').isVisible(),true);
+ const display=await page.evaluate(()=>({rows:[...document.querySelectorAll('#fareBreakdown .fare-breakdown-row')].map(r=>[...r.children].map(e=>e.textContent)),totalLabel:document.getElementById('sumTotalLabel').textContent,overflow:Math.max(0,document.documentElement.scrollWidth-innerWidth),csp:window.cspFailures,buttonsAfterTotal:document.getElementById('sumTotal').compareDocumentPosition(document.getElementById('payBtn'))&Node.DOCUMENT_POSITION_FOLLOWING}));assert.deepEqual(display.rows.map(r=>r[0]),hasFirst15?['Trip Fare','FIRST15 Discount (15%)','Tolls']:['Trip Fare','Tolls']);assert.equal(display.totalLabel,'Total');assert.equal(display.overflow,0);assert.deepEqual(display.csp,[]);assert.ok(display.buttonsAfterTotal);assert.equal(await page.locator('#promoSummary').isVisible(),false);return display;}
+function quoteMoney(cents, currency){
+ return new Intl.NumberFormat('en-US',{style:'currency',currency}).format(cents/100);
+}
+async function checkReviewedFare(s, reviewed, hasFirst15 = false){
+ const display=await layout(s,hasFirst15);
+ const totalCents=reviewed.totalCents??Math.round(reviewed.total*100);
+ const tollCents=reviewed.pricingBreakdown?.tollsCents??0;
+ const discountCents=reviewed.pricingBreakdown?.discountCents??Math.round(reviewed.discount*100);
+ const price=cents=>quoteMoney(cents,reviewed.currency);
+ assert.equal(await s.page.locator('#sumTotal').innerText(),price(totalCents));
+ assert.equal(display.rows[0][1],price(totalCents-tollCents+(hasFirst15?discountCents:0)));
+ if(hasFirst15){
+  assert.equal(reviewed.promotion.code,'FIRST15');
+  assert.equal(reviewed.promotion.percentOff,15);
+  assert.ok(discountCents>0);
+  assert.equal(display.rows[1][1],price(-discountCents));
+ }
+ const included=!reviewed.pricingBreakdown||reviewed.pricingBreakdown.tollsIncluded;
+ assert.equal(display.rows.at(-1)[1],included?'Included':price(tollCents));
+ return totalCents;
+}
 async function capture(s,width,choice,step){const dir=process.env.ER_TEST_BOOKING_SCREENSHOTS_DIR;if(!dir||!['interstate_estimate','missing_category'].includes(s.c.id)||choice!=='now')return;fs.mkdirSync(dir,{recursive:true});await s.page.locator('#book').screenshot({path:path.join(dir,'booking-'+(s.c.id==='missing_category'?'review-':'')+width+'-step-'+step+'.png')});}
 
 for(const width of [320,390,1440])for(const c of cases)for(const choice of ['now','later'])test(c.id+' / '+choice+' / '+width+'px',{timeout:30000},async t=>{
@@ -79,23 +100,18 @@ for(const width of [320,390,1440])for(const c of cases)for(const choice of ['now
   assert.equal(await page.locator('#notes').inputValue(),s.input.notes);assert.equal(await page.evaluate(()=>Math.max(0,document.documentElement.scrollWidth-innerWidth)),0);
   await capture(s,width,choice,'review');await page.evaluate(id=>document.getElementById('bookingForm').dispatchEvent(new SubmitEvent('submit',{bubbles:true,cancelable:true,submitter:document.getElementById(id)})),choice==='later'?'payLaterBtn':'payBtn');assert.equal(h.records().length,0);assert.equal(h.state.creates.length,0);assert.equal(await s.state(),'2');results.push({scenario:c.id,width,choice,passed:true});return;
  }
- const q=await quote(s),display=await layout(s);
+ const q=await quote(s),cents=await checkReviewedFare(s,q,!!c.promoCode);
  await cancellationNotice(s,q,c.id==='interstate_estimate'&&choice==='now');
  await capture(s,width,choice,3);
- const cents=Number.isSafeInteger(q.totalCents)?q.totalCents:Math.round(q.total*100),money=value=>new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(value/100);
- assert.equal(await page.locator('#sumTotal').innerText(),money(cents));
- assert.equal(display.rows[0][1],money(cents-(q.pricingBreakdown?.tollsCents||0)));
- if(q.pricingBreakdown&&!q.pricingBreakdown.tollsIncluded)assert.equal(display.rows[1][1],money(q.pricingBreakdown.tollsCents));
  assert.equal(await page.locator('#sumDestination').innerText(),s.input.dropoff);assert.match(await page.locator('#sumPickupTime').innerText(),/11\/10\/2026.*12:00 PM/);assert.equal(await page.locator('#payBtn').isEnabled(),true);assert.equal(await page.locator('#payLaterBtn').isEnabled(),true);
- if(c.expected)assert.equal(q.tolls.status,c.expected);if(c.expected==='included'||c.disabled||c.tripType==='hourly')assert.equal(display.rows[1][1],'Included');
+ if(c.expected)assert.equal(q.tolls.status,c.expected);
  if(c.special){assert.equal(q.totalCents,15000);assert.equal(q.discount,0);assert.equal(await page.locator('#sumTotal').innerText(),'$150.00');}
- if(c.promoCode){assert.equal(q.promotion.code,'FIRST15');assert.equal(q.promotion.percentOff,15);assert.ok(q.discount>0);}
  if(c.tripType==='roundtrip'){assert.equal(await page.locator('#summaryReturnRow').isVisible(),true);assert.match(await page.locator('#sumMiles').innerText(),/mi/);assert.doesNotMatch(await page.locator('#sumMiles').innerText(),/\$/);assert.equal(h.state.routes.length,2);}
  if(c.tripType==='hourly'){assert.equal(h.state.routes.length,0);assert.equal(await page.locator('#sumMinutes').innerText(),'3.5 hours reserved');}
  const response=page.waitForResponse(r=>r.url()===h.url+'/api/checkout'&&r.request().method()==='POST');await page.locator(choice==='later'?'#payLaterBtn':'#payBtn').dblclick();const reserved=await response;assert.equal(reserved.status(),200);assert.equal(h.records().length,1);const record=h.records()[0];assert.equal(record.quote.total,q.total);assert.equal(record.trip.notes,s.input.notes);assert.equal(Object.hasOwn(reserved.request().postDataJSON(),'cancellationPolicyAcceptance'),false);assert.equal(Object.hasOwn(record,'cancellationPolicyAcceptance'),false);assert.deepEqual(record.cancellationPolicyAtBooking,{policy:q.cancellationPolicy,recordedAt:record.createdAt});if(q.quoteRevision)assert.equal(record.quote.quoteRevision,q.quoteRevision);if(c.account)assert.ok(await h.testStore.reservationOwner(record.id));
  if(c.expectedSource)assert.equal(record.quote.tolls.format,c.expectedSource);
  if(choice==='later'){await page.waitForURL(url=>url.pathname==='/success.html');await page.waitForFunction(()=>document.getElementById('message').textContent.includes('Payment is still required'));assert.equal(h.state.creates.length,0);assert.equal(await page.locator('#completePayment').isVisible(),true);assert.match(await page.locator('#details').innerText(),/Cancellation policy at booking/);assert.doesNotMatch(await page.locator('#details').innerText(),/Accepted cancellation policy|Policy accepted/);if(c.expected==='included')assert.match(await page.locator('#details').innerText(),/Tolls\s+Included/);await page.locator('#completePayment').click();}
- await page.waitForURL('https://checkout.example.test/mock');assert.equal(h.state.creates.length,1);assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount,Math.round(q.total*100));
+ await page.waitForURL('https://checkout.example.test/mock');assert.equal(h.state.creates.length,1);assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount,cents);
  const session=[...h.state.sessions.values()][0];session.status='complete';session.payment_status='paid';assert.equal((await h.webhook(session)).status,200);await page.goto(h.url+'/success.html?booking='+record.id+'&paid=true');await page.waitForFunction(()=>document.getElementById('message').textContent.includes('Payment received'));assert.equal(await page.locator('#completePayment').isVisible(),false);assert.equal(h.state.creates.length,1);
  results.push({scenario:c.id,width,choice,passed:true});
 });
@@ -207,6 +223,7 @@ for (const [scenario, width, choice] of [
     await customer(s);
     let reviewed = await quote(s);
     if (scenario === 'first15') {
+      await checkReviewedFare(s, reviewed, true);
       assert.equal(reviewed.promotion.code, 'FIRST15');
       assert.ok(reviewed.discount > 0);
       const savings = format(reviewed.discount, reviewed.currency);
@@ -215,6 +232,7 @@ for (const [scenario, width, choice] of [
     }
     if (choice === 'FIRST15 removed') {
       await page.locator('#bookingBack').click();
+      assert.equal(await page.locator('#fareBreakdown').getByText('FIRST15 Discount (15%)', {exact:true}).count(), 0);
       await page.locator('#promoCode').fill('');
       reviewed = await quote(s);
     }
@@ -222,6 +240,7 @@ for (const [scenario, width, choice] of [
       assert.equal(reviewed.promotion, null);
       assert.equal(reviewed.discount, 0);
       assert.equal(await description.innerText(), standard);
+      await checkReviewedFare(s, reviewed);
     }
     if (scenario === 'ewr_special') assert.equal(reviewed.total, 150);
 
@@ -244,9 +263,106 @@ for (const [scenario, width, choice] of [
     assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount, Math.round(reviewed.total * 100));
   });
 }
+for(const [width,scenarioId,vehicle,choice] of [
+ [320,'first15','escalade','now'],
+ [375,'first15','suv','later'],
+ [390,'flag_off','escalade','later'],
+ [430,'first15','escalade','now'],
+ [1440,'hourly','suv','later']
+]){
+ test('FIRST15 summary shows server fare and exact '+choice+' amount at '+width+'px',{timeout:45000},async t=>{
+  const scenario={...cases.find(item=>item.id===scenarioId),vehicle,promoCode:'FIRST15'};
+  const s=await setup(t,width,scenario),{page,h}=s;
+  await details(s);
+  await customer(s);
+  const reviewed=await quote(s);
+  const acceptedCents=await checkReviewedFare(s,reviewed,true);
+  const discount=page.locator('#fareBreakdown .fare-breakdown-row').filter({
+   has:page.getByText('FIRST15 Discount (15%)',{exact:true})
+  });
+  const positions=await discount.evaluate(row=>{
+   const label=row.firstElementChild.getBoundingClientRect(),amount=row.lastElementChild.getBoundingClientRect();
+   return {labelRight:label.right,amountLeft:amount.left,amountRight:amount.right,viewport:innerWidth};
+  });
+  assert.ok(positions.labelRight<=positions.amountLeft && positions.amountRight<=positions.viewport);
+  const checkout=page.waitForResponse(response=>
+   response.url()===h.url+'/api/checkout' && response.request().method()==='POST');
+  await page.locator(choice==='now'?'#payBtn':'#payLaterBtn').click();
+  assert.equal((await checkout).status(),200);
+  assert.equal(h.records().length,1);
+  const saved=h.records()[0].quote;
+  assert.equal(saved.totalCents??Math.round(saved.total*100),acceptedCents);
+  assert.equal(saved.discount,reviewed.discount);
+  assert.equal(saved.promotion.code,'FIRST15');
+  assert.equal(h.state.creates.length,choice==='now'?1:0);
+  if(choice==='later'){
+   await page.waitForURL(url=>url.pathname==='/success.html');
+   await page.waitForFunction(()=>document.getElementById('message').textContent.includes('Payment is still required'));
+   await page.locator('#completePayment').click();
+  }
+  await page.waitForURL('https://checkout.example.test/mock');
+  assert.equal(h.state.creates.length,1);
+  assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount,acceptedCents);
+ });
+}
+
 test('invalid promo is recoverable and selecting the $150 special excludes FIRST15',{timeout:30000},async t=>{
- const s=await setup(t,390),{page,h}=s;await details(s);await customer(s);await page.locator('#promoCode').fill('INVALID');const rejected=page.waitForResponse(r=>r.url()===h.url+'/api/quote');await page.locator('#quoteBtn').click();assert.equal((await rejected).status(),400);await page.waitForFunction(()=>!document.getElementById('quoteBtn').disabled);assert.equal(await s.state(),'2');assert.equal(h.records().length,0);assert.equal(await page.locator('#email').inputValue(),s.input.email);
- await page.locator('#promoCode').fill('FIRST15');assert.equal((await quote(s)).promotion.code,'FIRST15');await page.locator('#ewrManhattanSpecialBtn').click();assert.equal(await s.state(),'1');assert.equal(await page.locator('#promoCode').inputValue(),'');assert.equal(await page.locator('#promoCode').isEnabled(),false);await page.locator('#dropoff').fill('Manhattan');await page.locator('#bookingContinue').click();const special=await quote(s);assert.equal(special.totalCents,15000);assert.equal(special.discount,0);assert.equal(special.promotion,null);assert.equal(special.tolls.status,'included');results.push({scenario:'promo_and_special_restriction',width:390,passed:true});
+ const s=await setup(t,390),{page,h}=s;
+ await details(s);
+ await customer(s);
+ await page.locator('#promoCode').fill('INVALID');
+ const rejected=page.waitForResponse(r=>r.url()===h.url+'/api/quote');
+ await page.locator('#quoteBtn').click();
+ assert.equal((await rejected).status(),400);
+ await page.waitForFunction(()=>!document.getElementById('quoteBtn').disabled);
+ assert.equal(await s.state(),'2');
+ assert.equal(await page.locator('#fareBreakdown').getByText('FIRST15 Discount (15%)',{exact:true}).count(),0);
+ assert.equal(h.records().length,0);
+ assert.equal(await page.locator('#email').inputValue(),s.input.email);
+ await page.locator('#promoCode').fill('FIRST15');
+ await checkReviewedFare(s,await quote(s),true);
+ await page.locator('#ewrManhattanSpecialBtn').click();
+ assert.equal(await s.state(),'1');
+ assert.equal(await page.locator('#promoCode').inputValue(),'');
+ assert.equal(await page.locator('#promoCode').isEnabled(),false);
+ await page.locator('#dropoff').fill('Manhattan');
+ await page.locator('#bookingContinue').click();
+ const special=await quote(s);
+ assert.equal(special.totalCents,15000);
+ assert.equal(special.discount,0);
+ assert.equal(special.promotion,null);
+ assert.equal(special.tolls.status,'included');
+ await checkReviewedFare(s,special);
+ results.push({scenario:'promo_and_special_restriction',width:390,passed:true});
+});
+
+test('FIRST15 summary hides the discount if an existing paid ride makes the traveler ineligible',{timeout:30000},async t=>{
+ const s=await setup(t,375,cases.find(item=>item.id==='flag_off')),{page,h}=s;
+ const prior=await h.request('/api/checkout',{...s.input,paymentChoice:'now'});
+ assert.equal(prior.status,200);
+ const session=[...h.state.sessions.values()][0];
+ session.status='complete';
+ session.payment_status='paid';
+ assert.equal((await h.webhook(session)).status,200);
+ assert.equal(h.records()[0].paymentStatus,'paid');
+ await details(s);
+ await customer(s);
+ await page.locator('#promoCode').fill('FIRST15');
+ const pending=page.waitForResponse(response=>response.url()===h.url+'/api/quote');
+ await page.locator('#quoteBtn').click();
+ const rejected=await pending;
+ assert.equal(rejected.status(),400);
+ assert.match((await rejected.json()).error,/only available for your first ride/);
+ await page.waitForFunction(()=>!document.getElementById('quoteBtn').disabled);
+ assert.equal(await s.state(),'2');
+ assert.equal(await page.locator('#fareBreakdown').getByText('FIRST15 Discount (15%)',{exact:true}).count(),0);
+ await page.locator('#promoCode').fill('');
+ const ordinary=await quote(s);
+ assert.equal(ordinary.promotion,null);
+ assert.equal(ordinary.discount,0);
+ await checkReviewedFare(s,ordinary);
+ assert.equal(h.records().length,1);
+ assert.equal(h.state.creates.length,1);
 });
 
 test('late GPS completion cannot change a pickup after leaving Trip Details',{timeout:30000},async t=>{

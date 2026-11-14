@@ -1186,22 +1186,41 @@ function renderFareBreakdown(data, review = false) {
   if(!container)return;
   container.replaceChildren();container.hidden=true;
   if(review||tollQuoteUnavailable(data)){container.textContent='Toll estimate unavailable — contact us for a final quote';container.hidden=false;return;}
-  const p=data?.pricingBreakdown;
-  const waiting=data?.stopSummary;
-  const waitingCents=waiting?.chargeCents || 0;
-  const amount=value=>formatMoney(value/100,data.currency);
-  const row=(label,value)=>{const item=document.createElement('div'),name=document.createElement('span'),price=document.createElement('strong');item.className='fare-breakdown-row';name.textContent=label;price.textContent=value;item.append(name,price);container.append(item);};
-  if(!p || p.version!==1){
-    if(!data)return;
-    // Legacy/flag-off and hourly quotes have no separate toll snapshot. Display
-    // their server total unchanged, without inventing a zero-dollar toll estimate.
-    row('Trip Fare',amount(Math.round(data.total*100)-waitingCents));row('Tolls','Included');
-    if(waiting)row('Additional Stop Waiting',amount(waitingCents));
-    container.hidden=false;return;
+  if (!data) return;
+  const breakdown = data.pricingBreakdown?.version === 1 ? data.pricingBreakdown : null;
+  const waiting = data.stopSummary;
+  const waitingCents = waiting?.chargeCents || 0;
+  const discountCents = breakdown ? breakdown.discountCents : Math.round(data.discount * 100);
+  const first15Cents = !data.fixedOffer && data.promotion?.code === 'FIRST15' &&
+    Number.isSafeInteger(discountCents) && discountCents > 0 ? discountCents : 0;
+
+  const amount = cents => formatMoney(cents / 100, data.currency);
+  const row = (label, value, className = 'fare-breakdown-row') => {
+    const item = document.createElement('div');
+    const name = document.createElement('span');
+    const price = document.createElement('strong');
+    item.className = className;
+    name.textContent = label;
+    price.textContent = value;
+    item.append(name, price);
+    container.append(item);
+  };
+
+  // Quotes without a toll snapshot keep the existing "Included" toll display.
+  let fareCents = Math.round(data.total * 100);
+  if (breakdown) {
+    fareCents = Number.isSafeInteger(breakdown.totalCents)
+      ? breakdown.totalCents - (breakdown.tollsCents || 0)
+      : breakdown.tripFareCents + breakdown.surcharges.reduce((sum, item) => sum + item.amountCents, 0)
+        - breakdown.discountCents + breakdown.gratuityCents;
   }
-  const fare=Number.isSafeInteger(p.totalCents)?p.totalCents-(p.tollsCents||0):p.tripFareCents+p.surcharges.reduce((n,s)=>n+s.amountCents,0)-p.discountCents+p.gratuityCents;
-  row('Trip Fare',amount(fare-waitingCents));
-  row('Tolls',p.tollsIncluded?'Included':amount(p.tollsCents||0));
+
+  // Add the saved discount back only to this displayed subtotal.
+  row('Trip Fare', amount(fareCents - waitingCents + first15Cents));
+  if (first15Cents) {
+    row('FIRST15 Discount (15%)', amount(-first15Cents), 'fare-breakdown-row fare-breakdown-discount');
+  }
+  row('Tolls', !breakdown || breakdown.tollsIncluded ? 'Included' : amount(breakdown.tollsCents || 0));
   if(waiting)row('Additional Stop Waiting',amount(waitingCents));
   container.hidden=false;
 }
@@ -1383,7 +1402,7 @@ async function requestQuote(event) {
     ) {
 
       showNotice(
-        `${data.promotion.code} applied. Your discount is included in Trip Fare.`,
+        `${data.promotion.code} applied.`,
         "success"
       );
 
