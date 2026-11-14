@@ -154,6 +154,214 @@ test('an unavailable future custom tariff uses a valid scheduled Google estimate
   assert.equal(h.records()[0].quote.tolls.format,backup.FORMAT);assert.equal(h.records()[0].quote.tolls.primaryReviewReason,'unsupported_tariff_date');
  }
 });
+
+const rolloverCases=[
+ ['2026-12-31','2026-12-31T17:00:00.000Z','advance_estimate_2026'],
+ ['2027-01-01','2027-01-01T17:00:00.000Z',backup.FORMAT],
+ ['2027-01-03','2027-01-03T17:00:00.000Z',backup.FORMAT]
+];
+
+for(const [date,departure,format] of rolloverCases){
+ for(const vehicle of ['suv','escalade']) for(const paymentChoice of ['now','later']){
+  test('year-end toll flow preserves '+vehicle+' '+paymentChoice+' on '+date,async t=>{
+   const {h,input}=await create(t,cases[0]);
+   const trip={...input,vehicle,date,paymentChoice};
+   const response=await h.request('/api/quote',trip);
+   assert.equal(response.status,200,JSON.stringify(response.body));
+   const quote=response.body;
+   assert.equal(h.state.routes[0].departureTime,departure);
+   assert.equal(quote.pricingBreakdown.tollsCents,2500);
+   assert.equal(quote.totalCents,Math.round(quote.discountedFare*100)+Math.round(quote.gratuity*100)+2500);
+   const reservation=await h.request('/api/checkout',{...trip,quoteRevision:quote.quoteRevision});
+   assert.equal(reservation.status,200,JSON.stringify(reservation.body));
+   assert.equal(h.records().length,1);
+   const saved=h.records()[0].quote;
+   assert.equal(saved.tolls.format,format);
+   assert.equal(saved.tolls.amountCents,2500);
+   assert.equal(saved.totalCents,quote.totalCents);
+   assert.ok(tolls.validQuote(saved));
+   if(format===backup.FORMAT){
+    assert.equal(saved.tolls.primaryReviewReason,'unsupported_tariff_date');
+    assert.equal(saved.tolls.legs[0].googleRouteCents,2500);
+    assert.equal(saved.tolls.legs[0].congestionCents,undefined);
+    assert.equal(saved.tolls.legs[0].creditCents,undefined);
+   }
+   assert.equal(h.state.creates.length,paymentChoice==='now'?1:0);
+   const googleCalls=h.state.googleCalls;
+   h.state.routeResult=()=>{throw Error('Accepted fares must not be repriced');};
+   const payment=await h.request('/api/booking/'+reservation.body.bookingId+'/checkout',{},{
+    ...origin(h),cookie:access(reservation)
+   });
+   assert.equal(payment.status,200,JSON.stringify(payment.body));
+   assert.equal(h.state.googleCalls,googleCalls);
+   assert.equal(h.state.creates.length,1);
+   assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount,quote.totalCents);
+  });
+ }
+ test('missing selected-route toll amount blocks both payment choices on '+date,async t=>{
+  const {h,input,c}=await create(t,cases[0]);
+  h.state.routeResult=()=>route(c,null);
+  for(const vehicle of ['suv','escalade']){
+   const trip={...input,date,vehicle};
+   const responses=[await h.request('/api/quote',trip)];
+   for(const paymentChoice of ['now','later']){
+    responses.push(await h.request('/api/checkout',{...trip,paymentChoice}));
+   }
+   for(const result of responses){
+    assert.equal(result.status,422,JSON.stringify(result.body));
+    assert.equal(result.body.code,'TOLL_ESTIMATE_UNAVAILABLE');
+    assert.equal(result.body.checkoutAllowed,false);
+    assert.equal(result.body.total,undefined);
+   }
+  }
+  assert.equal(h.records().length,0);
+  assert.equal(h.state.creates.length,0);
+ });
+}
+
+for(const [outboundEligible,paymentChoice] of [[true,'now'],[false,'later']]){
+ const label=outboundEligible?'outbound':'return';
+ test('December outbound and January return estimate tolls only for the eligible '+label+' leg',async t=>{
+  const base=cases.find(c=>c.id==='round_trip');
+  const c=outboundEligible?base:{...base,id:'rollover_reverse_round_trip',pickup:base.dropoff,dropoff:base.pickup,direction:'nj_bound'};
+  const {h,input}=await create(t,c);
+  // An unsolicited provider toll on the excluded direction cannot affect the fare.
+  h.state.routeResult=request=>{
+   const returning=request.origin.placeId.endsWith('_dropoff');
+   const njToNyc=outboundEligible!==returning;
+   return route({...base,direction:njToNyc?'ny_bound':'nj_bound'},njToNyc?2500:900);
+  };
+  const trip={...input,date:'2026-12-31',
+   time:outboundEligible?'22:30':'23:50',returnDate:'2027-01-01',returnTime:'18:00',
+   vehicle:outboundEligible?'suv':'escalade',paymentChoice};
+  const result=await h.request('/api/quote',trip);
+  assert.equal(result.status,200,JSON.stringify(result.body));
+  const quote=result.body;
+  const expectedTolls=outboundEligible?[['TOLLS'],undefined]:[undefined,['TOLLS']];
+  assert.deepEqual(h.state.routes.map(request=>request.extraComputations),expectedTolls);
+  assert.equal(quote.pricingBreakdown.tollsCents,2500);
+  assert.equal(quote.totalCents,Math.round(quote.discountedFare*100)+Math.round(quote.gratuity*100)+2500);
+  const accepted=await h.request('/api/checkout',{...trip,quoteRevision:quote.quoteRevision});
+  assert.equal(accepted.status,200,JSON.stringify(accepted.body));
+  assert.deepEqual(h.state.routes.map(request=>request.extraComputations),[...expectedTolls,...expectedTolls]);
+  assert.equal(h.records().length,1);
+  const saved=h.records()[0].quote;
+  assert.ok(saved.roundTrip.outbound && saved.roundTrip.return);
+  assert.equal(saved.tolls.eligibility.pickupState,'NJ');
+  assert.equal(saved.tolls.eligibility.dropoffState,'NY');
+  assert.deepEqual(saved.tolls.legs.map(leg=>leg.amountCents),[2500]);
+  if(outboundEligible){
+   assert.equal(saved.tolls.format,'advance_estimate_2026');
+   assert.equal(saved.tolls.legs[0].day,'2026-12-31');
+  }else{
+   assert.equal(saved.tolls.format,backup.FORMAT);
+   assert.equal(saved.tolls.primaryReviewReason,'unsupported_tariff_date');
+   assert.equal(saved.tolls.legs[0].departureDay,'2027-01-01');
+   assert.equal(saved.tolls.legs[0].arrivalDay,'2027-01-01');
+  }
+  assert.ok(tolls.validQuote(saved));
+  assert.equal(saved.totalCents,quote.totalCents);
+  assert.equal(h.state.creates.length,paymentChoice==='now'?1:0);
+  const payment=await h.request('/api/booking/'+accepted.body.bookingId+'/checkout',{},{
+   ...origin(h),cookie:access(accepted)
+  });
+  assert.equal(payment.status,200,JSON.stringify(payment.body));
+  assert.deepEqual(h.state.routes.map(request=>request.extraComputations),[...expectedTolls,...expectedTolls]);
+  assert.equal(h.state.creates.length,1);
+  assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount,quote.totalCents);
+ });
+}
+
+test('a year-end round trip requires review when the eligible return estimate is missing',async t=>{
+ const base=cases.find(c=>c.id==='round_trip');
+ const {h,input}=await create(t,{...base,id:'rollover_missing_return',pickup:base.dropoff,dropoff:base.pickup,direction:'nj_bound'});
+ h.state.routeResult=request=>route({...base,direction:request.extraComputations?'ny_bound':'nj_bound'},request.extraComputations?null:900);
+ const trip={...input,date:'2026-12-31',time:'23:50',returnDate:'2027-01-01',returnTime:'18:00'};
+ for(const endpoint of ['/api/quote','/api/checkout']){
+  const result=await h.request(endpoint,{...trip,paymentChoice:'now'});
+  assert.equal(result.status,422,JSON.stringify(result.body));
+  assert.equal(result.body.code,'TOLL_ESTIMATE_UNAVAILABLE');
+  assert.equal(result.body.checkoutAllowed,false);
+ }
+ assert.ok(h.state.routes.length>=4);
+ for(const [index,request] of h.state.routes.entries()){
+  assert.deepEqual(request.extraComputations,index%2===0?undefined:['TOLLS']);
+ }
+ assert.equal(h.records().length,0);
+ assert.equal(h.state.creates.length,0);
+});
+
+test('a December PA crossing with a congestion window extending into January keeps Google fallback',async t=>{
+ const c=cases[0];
+ const {h,input}=await create(t,c);
+ // This fixture's PA window closes before midnight. The downstream street
+ // evidence, including the provider traffic allowance, extends past it.
+ const provider=route(c,2113);
+ const departure='2027-01-01T04:37:00.000Z';
+ const geometry=require('../services/toll-route-evidence').geometry(provider);
+ const {gate,points}=advance.detect(geometry);
+ const witness=advance.streetWitness(points);
+ assert.equal(advance.windowRate(geometry,gate.start,gate.end,departure,'pa').day,'2026-12-31');
+ const latest=Date.parse(departure)+(geometry.segments[witness.segment].end+geometry.traffic)*1000;
+ assert.ok(latest>=Date.parse('2027-01-01T05:00:00.000Z'));
+ h.state.routeResult=()=>provider;
+ const trip={...input,date:'2026-12-31',time:'23:37'};
+ const quote=await h.request('/api/quote',trip);
+ assert.equal(quote.status,200,JSON.stringify(quote.body));
+ assert.equal(h.state.routes[0].departureTime,departure);
+ assert.equal(quote.body.pricingBreakdown.tollsCents,2113);
+ const result=await h.request('/api/checkout',{...trip,paymentChoice:'later',quoteRevision:quote.body.quoteRevision});
+ assert.equal(result.status,200,JSON.stringify(result.body));
+ const saved=h.records()[0].quote;
+ assert.equal(saved.tolls.format,backup.FORMAT);
+ assert.equal(saved.tolls.primaryReviewReason,'unsupported_tariff_date');
+ assert.equal(saved.tolls.legs[0].googleRouteCents,2113);
+ assert.equal(saved.tolls.legs[0].congestionCents,undefined);
+});
+
+test('a pre-crossing stop wait into January uses only the selected-route fallback amount',async t=>{
+ const stops=require('./helpers/booking-stops.cjs');
+ const h=await stops.fixture(t);
+ const c=cases[0];
+ let providerAmount=2300;
+ h.state.routeResult=request=>{
+  const data=route(c,providerAmount);
+  const steps=data.legs[0].steps;
+  const split=Math.max(1,Math.floor(steps.length/3));
+  const metrics=stops.providerRoute(request);
+  data.legs=metrics.legs.map((leg,index)=>({
+   ...leg,steps:index===0?steps.slice(0,split):steps.slice(split)
+  }));
+  return data;
+ };
+ const trip={...stops.trip,date:'2026-12-31',time:'23:45',stops:[stops.requested('first',30)]};
+ const response=await h.request('/api/quote',trip);
+ assert.equal(response.status,200,JSON.stringify(response.body));
+ const quote=response.body;
+ assert.equal(h.state.routes[0].departureTime,'2027-01-01T04:45:00.000Z');
+ assert.deepEqual(h.state.routes[0].intermediates,[{placeId:stops.places.first.id}]);
+ assert.equal(quote.stopSummary.chargeCents,3750);
+ assert.equal(quote.pricingBreakdown.tollsCents,2300);
+ providerAmount=null;
+ const unavailable=await h.request('/api/checkout',{...trip,paymentChoice:'later',quoteRevision:quote.quoteRevision});
+ assert.equal(unavailable.status,422,JSON.stringify(unavailable.body));
+ assert.equal(unavailable.body.code,'TOLL_ESTIMATE_UNAVAILABLE');
+ assert.equal(h.records().length,0);
+ assert.equal(h.state.creates.length,0);
+ providerAmount=2300;
+ const reservation=await h.request('/api/checkout',{...trip,paymentChoice:'now',quoteRevision:quote.quoteRevision});
+ assert.equal(reservation.status,200,JSON.stringify(reservation.body));
+ const saved=h.records()[0].quote;
+ assert.equal(saved.tolls.format,backup.FORMAT);
+ assert.equal(saved.tolls.primaryReviewReason,'unsupported_tariff_date');
+ assert.equal(saved.tolls.legs[0].googleRouteCents,2300);
+ assert.equal(saved.tolls.legs[0].congestionCents,undefined);
+ assert.equal(saved.stopPlan.chargeCents,3750);
+ assert.equal(saved.totalCents,quote.totalCents);
+ assert.equal(h.state.creates.length,1);
+ assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount,quote.totalCents);
+});
+
 test('fallback snapshot validation rejects altered prices, assumptions, route association, extra components and private reasons',async t=>{
  const {h,input}=await create(t,fixture()),q=await h.request('/api/quote',input),r=await h.request('/api/checkout',{...input,paymentChoice:'later',quoteRevision:q.body.quoteRevision});assert.equal(r.status,200);
  const original=h.records()[0].quote;for(const change of [q=>q.tolls.amountCents++,q=>q.tolls.legs[0].googleRouteCents++,q=>q.tolls.legs[0].routeHash='0'.repeat(64),q=>q.tolls.eligibility.dropoffPlaceId='foreign_place',

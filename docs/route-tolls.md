@@ -9,7 +9,9 @@ verification, round trips, fallback, and the unchanged treatment of the
 $150 toll-inclusive EWR special and accepted reservations.
 
 Default estimate mode supports the existing eligible Google backup. The
-optional `verified` mode retains the
+[2027 rollover policy](estimated-toll-policy.md#2027-tariff-rollover) explains
+which published tariff windows apply and when Dispatch must provide a final
+quote. The optional `verified` mode retains the
 [official tariff/network evidence path](official-toll-tariffs.md).
 Customer toll pricing requires `ROUTE_TOLLS_ENABLED=true`. The separate
 admin estimate-only tool below still shows Google's original estimate.

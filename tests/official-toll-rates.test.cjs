@@ -32,6 +32,35 @@ test('all 2026 weekday/weekend boundaries, effective dates, holidays and both DS
  assert.equal(r.rateAt('2026-01-04T05:01:00Z','pa').cents,1479);
  assert.throws(()=>r.rateWindow({earliest:'2026-11-10T14:59:59Z',latest:'2026-11-10T15:00:00Z'},'pa'),/unavailable/);
 });
+test('the reviewed Port Authority window ends at New York midnight without assuming the January 3 tariff',()=>{
+ assert.deepEqual(r.rateAt('2026-12-31T23:59:59-05:00','pa'),{day:'2026-12-31',peak:false,cents:1479});
+ for(const time of ['2027-01-01T00:00:00-05:00','2027-01-02T12:00:00-05:00','2027-01-03T12:00:00-05:00']){
+  assert.throws(()=>r.rateAt(time,'pa'),error=>error.reason==='unsupported_tariff_date');
+  assert.throws(()=>r.parts(time),error=>error.reason==='unsupported_tariff_date');
+ }
+});
+test('the separately published 2027 congestion window preserves weekday, weekend and overnight pricing',()=>{
+ const cases=[
+  ['2026-12-31T23:59:59-05:00','2026-12-31',false,225],
+  ['2027-01-01T00:00:00-05:00','2027-01-01',false,225],
+  ['2027-01-01T05:00:00-05:00','2027-01-01',true,900],
+  ['2027-01-03T08:59:59-05:00','2027-01-03',false,225],
+  ['2027-01-03T09:00:00-05:00','2027-01-03',true,900],
+  ['2027-07-06T05:00:00-04:00','2027-07-06',true,900],
+  ['2027-12-31T23:59:59-05:00','2027-12-31',false,225]
+ ];
+ for(const [time,day,peak,cents] of cases)assert.deepEqual(r.rateAt(time,'mta'),{day,peak,cents});
+ assert.throws(()=>r.rateAt('2028-01-01T00:00:00-05:00','mta'),error=>error.reason==='unsupported_tariff_date');
+ const yearEnd={earliest:'2026-12-31T23:59:59-05:00',latest:'2027-01-01T00:00:00-05:00'};
+ assert.throws(()=>r.rateWindow(yearEnd,'mta'),error=>error.reason==='tariff_boundary_uncertain');
+});
+test('a verified 2026 crossing cannot produce a legacy combined snapshot with a 2027 congestion event',()=>{
+ const p=profile().official2026.fleet;
+ const crossing={earliest:'2026-12-31T23:59:00-05:00',latest:'2026-12-31T23:59:59-05:00'};
+ const zone={earliest:'2027-01-01T00:00:00-05:00',latest:'2027-01-01T00:01:00-05:00'};
+ assert.throws(()=>r.calculateTariff(facts({crossingTime:crossing,zoneEntryTime:zone,
+  fleet:{...p,validUntil:'2028-01-01T00:00:00-05:00'}})),error=>error.reason==='unsupported_tariff_date');
+});
 test('unverified route, physical class, tag, daily context, plan, credits and unsupported versions fail closed',()=>{
  for(const change of [{routeVerified:false},{coverageVerified:false},{version:'2027'},{crossing:'guess'},
   {fleet:{...profile().official2026.fleet,paClass:'2Ax'}},{fleet:{...profile().official2026.fleet,tagStatus:'unknown'}},

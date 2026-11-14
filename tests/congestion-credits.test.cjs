@@ -6,7 +6,7 @@ function facts(source='lincoln',time='2026-11-10T12:00:00-05:00',ledger={charged
  const window={earliest:time,latest:time};
  return {movement:kind,zoneEntryTime:window,crossingTime:window,fleet:f.profile().official2026.fleet,creditSource:source,
   crossingPaidCents:source==='queens_midtown'||source==='hugh_carey'?1203:1479,creditEligibility:'eligible',creditEvidence:'synthetic-credit-entitlement',
-  dailyContext:{day:r.parts(time).day,historyComplete:true,evidence:'synthetic-complete-vehicle-day',...ledger}};
+  dailyContext:{day:r.rateAt(time,'mta').day,historyComplete:true,evidence:'synthetic-complete-vehicle-day',...ledger}};
 }
 for(const [source,cents]of Object.entries({lincoln:300,holland:300,queens_midtown:150,hugh_carey:150})){
  test(source+' uses its own eligible Phase 1 peak credit',()=>{
@@ -65,4 +65,20 @@ test('a new New York day requires its own complete history and resets the credit
  const next=facts('lincoln','2026-11-11T08:00:00-05:00');assert.equal(r.calculateCongestion(next).creditCents,300);
  next.dailyContext.day='2026-11-10';assert.throws(()=>r.calculateCongestion(next),r.TollReviewError);
  assert.notEqual(r.CREDIT_VERSION,r.VERSION);
+});
+test('2027 credits require verified non-TLC fleet evidence and retain the daily cap and overnight rules',()=>{
+ const fleet={...f.profile().official2026.fleet,validUntil:'2028-01-01T00:00:00-05:00'};
+ const peak='2027-01-03T09:00:00-05:00';
+ const first={...facts('lincoln',peak),fleet};
+ const result=r.calculateCongestion(first);
+ assert.equal(result.amountCents,900);
+ assert.equal(result.creditCents,300);
+ const later={...facts('queens_midtown',peak,{chargedCents:900,creditedCents:450},'exit'),fleet};
+ assert.deepEqual(r.calculateCongestion(later).stateAfter,{chargedCents:900,creditedCents:500});
+ assert.equal(r.calculateCongestion(later).creditCents,50);
+ const overnight=r.calculateCongestion({...facts('holland','2027-01-03T08:59:59-05:00'),fleet});
+ assert.equal(overnight.amountCents,225);
+ assert.equal(overnight.creditCents,0);
+ assert.throws(()=>r.calculateCongestion({...first,fleet:{...fleet,tlcLicensed:true}}),error=>error.reason==='fleet_or_account_unverified');
+ assert.throws(()=>r.calculateCongestion({...first,fleet:{...fleet,validUntil:peak}}),error=>error.reason==='fleet_or_account_unverified');
 });

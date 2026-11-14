@@ -143,6 +143,47 @@ separate verified engine; the simple mode does not add them independently to
 Google's aggregate. Such routes use the envelope only when required PA/CRZ
 evidence is supported, otherwise manual review is required.
 
+## 2027 tariff rollover
+
+Tariff windows use America/New_York time and the supported crossing or zone
+entry time. The reviewed Port Authority table ends at midnight at the start of
+January 1, 2027 (05:00 UTC). The 2026 New Jersey Turnpike, Garden State Parkway,
+and ordinary MTA bridge and tunnel figures remain 2026 references. A future
+facility tariff needs a published schedule and verified effective time.
+
+- The Port Authority approved reducing the Class 1 E-ZPass off-peak discount
+  from $2.00 to $1.50 on January 3, 2027. Its November 12 announcement also
+  identifies an inflation adjustment and a scheduled $0.25 increase. These
+  sources do not supply a final 2027 Class 1 toll table.
+  [Port Authority approved change](https://www.panynj.gov/content/dam/corporate/public-hearings-pdfs/Approved_Fee_Changes_Toll_and_Bus.pdf)
+  and [2027 announcement](https://www.panynj.gov/port-authority/en/press-room/press-release-archives/2026-press-releases/port-authority-unveils--10-3-billion-2027-budget-to-advance-hist.html).
+- NJTA budget projections assume annual indexing. The MTA financial plan
+  anticipates an ordinary crossing increase in March 2027, subject to Board
+  action. These are projections and contain no facility-level 2027 tariffs.
+  [NJTA budget](https://www.njta.gov/document/2026-annual-budget-in-brief/)
+  and [MTA preliminary budget](https://www.mta.info/document/215226).
+- The published MTA Phase 1 Congestion Relief Zone (CRZ) schedule covers 2027.
+  Standard non-TLC Class 1 pricing with valid E-ZPass remains $9.00 peak and
+  $2.25 overnight, charged once per day. Eligible peak credits are $3.00 for
+  Lincoln/Holland entry and $1.50 for Queens Midtown/Hugh L. Carey entry or
+  exit, capped at $5.00 per day. Existing eligibility, prior-charge, direction,
+  and timing checks apply. The independently reviewed CRZ window ends at
+  midnight at the start of January 1, 2028 (05:00 UTC).
+  [MTA Phase 1 schedule](https://www.mta.info/document/138931).
+
+Combined custom quotes using the existing 2026 formats still require every
+tariff window to fit the 2026 review. Only the eligible NJ-to-NYC direction
+can fall back to the same selected route's Google amount when the custom
+estimate needs an expired or unsupported rate. The
+[Google backup checks](google-toll-backup.md) still apply. The backup consumes
+one whole-route estimate with no separate PA or CRZ charge or credit. An
+unusable estimate requires a final quote from Dispatch. Verified mode still
+requires current tariff, route, fleet, and account evidence.
+
+Accepted reservations continue to use their saved amounts. Both the current
+and baseline readers support the existing quote formats. Rolling back this
+rollover change keeps the NJ-to-NYC directional policy already in the baseline.
+
 ## Configuration and class eligibility
 
 **Shared Luxury SUV pricing update:** current Suburban and Escalade bookings use

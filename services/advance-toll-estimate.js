@@ -71,15 +71,17 @@ function detect(g,refs=facilities){
 function windowRate(g,start,end,departure,kind){
  const first=rates.instant(departure)+g.segments[start].start*1000,last=rates.instant(departure)+(g.segments[end].end+g.traffic)*1000;
  if(last<first||last-first>8*3600000)rates.review('timing_unavailable');
- const initial=rates.rateAt(first,kind),check=r=>{
+ // A 2027 CRZ rate alone cannot authorize a mixed-year 2026 quote snapshot.
+ const rateAt=time=>rates.rateAt(time,kind,{legacy2026:true});
+ const initial=rateAt(first),check=r=>{
   if(r.day!==initial.day)rates.review('day_boundary_uncertain');
   // A whole-route interval cannot prove a peak crossing credit if it spans
   // MTA periods. Do not combine a peak fee with an uncertain credit.
   if(g.timingBasis==='provider_route_bounds'&&kind==='mta'&&r.peak!==initial.peak)rates.review('credit_period_uncertain');
  };
  let rate=initial;
- for(let t=first;t<=last;t+=60000){const r=rates.rateAt(t,kind);check(r);if(r.cents>rate.cents)rate=r;}
- const final=rates.rateAt(last,kind);check(final);return final.cents>rate.cents?final:rate;
+ for(let t=first;t<=last;t+=60000){const r=rateAt(t);check(r);if(r.cents>rate.cents)rate=r;}
+ const final=rateAt(last);check(final);return final.cents>rate.cents?final:rate;
 }
 function estimate(routes,profile,eligibility,parseProvider){
  const pricingCategory=categories.snapshot(profile);
