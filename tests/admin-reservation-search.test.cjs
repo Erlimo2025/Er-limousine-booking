@@ -1,6 +1,7 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto'),vm=require('node:vm'),{createRequire}=require('node:module'),{Pool}=require('pg');
 const {adminQuery,searchSql,adminDto,adminReservationStorage,page}=require('../storage/admin-reservations');
 const {createStore}=require('../storage/postgres');
+const {setup,guestBooking}=require('./helpers/reservation-management.cjs');
 const harnessPath=path.join(__dirname,'security-abuse.test.cjs'),source=fs.readFileSync(harnessPath,'utf8');
 const {harness}=new Function('require','__dirname',source.slice(0,source.indexOf('test("approved prices'))+'\nreturn {harness};')(createRequire(harnessPath),__dirname);
 const at=Date.parse('2026-10-01T16:00:00Z');
@@ -32,6 +33,105 @@ test('search storage enforces a short statement timeout and parameterized bounde
  const calls=[],r=fixture(),q=adminQuery({search:'Alice',airport:'ewr',payment:'unpaid'},at);
  const store=adminReservationStorage(null,async fn=>fn({query:async(text,values)=>{calls.push({text,values});return {rows:text.startsWith('WITH')?[{record:r,id:r.id,start:'2026-10-02T16:00:00Z'}]:[]};}}),x=>x);
  assert.equal((await store.searchAdminReservations(q)).bookings.length,1);assert.equal(calls[0].text,"SET LOCAL statement_timeout='5s'");assert.ok(calls[1].values.includes('%alice%'));assert.ok(calls[1].values.at(-1)<=51);assert.doesNotMatch(calls[1].text,/alice|DROP TABLE/);
+});
+
+const postgres = {skip: !process.env.ER_TEST_DATABASE_URL && 'Requires isolated PostgreSQL'};
+
+test('legacy admin GET and PATCH authorize staff and keep internal reservation fields server-side', postgres, async t => {
+ const f = await setup(t, {ROUTE_TOLLS_ENABLED:'false'});
+ const {h,store} = f;
+ const checkout = await f.post('/api/checkout', {...guestBooking,paymentChoice:'now'});
+ assert.equal(checkout.status,200);
+ const id = checkout.body.bookingId;
+ const change = {status:'assigned',dispatch:{driver:'Synthetic driver',driverPhone:'2015550181',vehicle:'SUV',plate:'TEST'}};
+ const update = session => h.request('/api/bookings/'+id,change,{origin:h.url,cookie:session},'PATCH');
+ const account = await f.register();
+ for (const session of ['',account]) {
+  assert.equal((await f.get('/api/bookings',session)).status,401);
+  assert.equal((await update(session)).status,401);
+ }
+ await store.update(id, record => {
+  record.dispatch.privateNote = 'internal-dispatch-fixture';
+  record.trip.flightNumber = {privateNote:'internal-flight-fixture'};
+  record.trip.pickupPlaceId = 'ChIJ2dQDPZNSwokRVJr9XE2SPt0';
+  record.trip.airline = 'Synthetic Airways';
+  record.trip.notes = 'Meet at the terminal.';
+ });
+ const before = await store.get(id);
+ assert.ok(before.customerAccess.tokenHash);
+ assert.ok(before.stripeSessionId);
+ assert.ok(before.checkoutAttempt.parameters);
+ const admin = await f.adminLogin();
+ const response = await f.get('/api/bookings',admin);
+ assert.equal(response.status,200);
+ assert.equal(response.headers.get('cache-control'),'no-store');
+ const [row] = response.body.bookings;
+ assert.deepEqual(Object.keys(response.body).sort(),['bookings','nextCursor']);
+ assert.equal(response.body.bookings.length,1);
+ assert.equal(response.body.nextCursor,null);
+ assert.deepEqual(Object.keys(row).sort(),
+  ['archived','bookingReference','customer','dispatch','id','paymentStatus','quote','status','trip']);
+ assert.equal(row.id,id);
+ assert.match(row.bookingReference,/^ER-\d{6}$/);
+ assert.deepEqual(row.customer,before.customer);
+ assert.deepEqual(Object.keys(row.trip).sort(),
+  ['airline','date','dropoff','dropoffAirport','hours','notes','passengers','pickup','pickupAirport',
+   'returnDate','returnTime','time','timeZone','tripType','vehicle']);
+ assert.deepEqual(Object.keys(row.trip.pickupAirport).sort(),['code','terminal']);
+ assert.deepEqual(row.quote,{total:before.quote.total,currency:before.quote.currency,vehicle:before.quote.vehicle});
+ assert.deepEqual(Object.keys(row.dispatch).sort(),['driver','driverPhone','plate','vehicle']);
+ const serialized = JSON.stringify(response.body);
+ assert.doesNotMatch(serialized,/customerAccess|tokenHash|quoteApprovalHash|checkoutAttempt|stripeSessionId|paymentIntentId|internal-(dispatch|flight)-fixture/);
+ assert.ok(!serialized.includes(before.customerAccess.tokenHash));
+ assert.ok(!serialized.includes(before.stripeSessionId));
+
+ const saved = await update(admin);
+ assert.equal(saved.status,200);
+ assert.equal(saved.headers.get('cache-control'),'no-store');
+ assert.deepEqual(saved.body,{ok:true});
+ const updated = await store.get(id);
+ assert.equal(updated.status,change.status);
+ assert.deepEqual(updated.dispatch,change.dispatch);
+ for (const key of ['quote','paymentStatus','stripeSessionId','checkoutAttempt','customerAccess','refundStatus']) {
+  assert.deepEqual(updated[key],before[key]);
+ }
+ assert.equal(h.state.creates.length,1);
+ const dispatch = await f.get('/api/bookings/search?status=all&timing=all',admin);
+ assert.equal(dispatch.status,200);
+ assert.deepEqual(dispatch.body.bookings[0].dispatch,change.dispatch);
+ assert.ok(dispatch.body.bookings[0].checkoutAttempt);
+});
+
+test('legacy admin GET returns bounded, non-overlapping pages including historical trips', postgres, async t => {
+ const f = await setup(t, {ROUTE_TOLLS_ENABLED:'false'});
+ const originalId = await f.reserve();
+ const original = await f.store.get(originalId);
+ const at = '2026-09-25T16:00:00Z';
+ const records = Array.from({length:51},() => ({
+  ...original,id:crypto.randomUUID(),status:'completed',trip:{...original.trip,date:'2026-09-25'}
+ }));
+ for (const row of records) {
+  await f.pool.query('INSERT INTO er_reservations(id,record,created_at,scheduled_start_at,scheduled_end_at) VALUES($1,$2,$3,$4,$4)',
+   [row.id,row,row.createdAt,at]);
+ }
+ const admin = await f.adminLogin();
+ const defaults = await f.get('/api/bookings',admin);
+ assert.equal(defaults.status,200);
+ assert.equal(defaults.body.bookings.length,25);
+ assert.ok(defaults.body.nextCursor);
+ assert.ok(defaults.body.bookings.every(row => row.status==='completed'));
+ assert.equal((await f.get('/api/bookings?limit=51',admin)).status,400);
+ const page = await f.get('/api/bookings?limit=50',admin);
+ assert.equal(page.status,200);
+ assert.equal(page.body.bookings.length,50);
+ assert.ok(page.body.nextCursor);
+ const rest = await f.get('/api/bookings?limit=50&cursor='+encodeURIComponent(page.body.nextCursor),admin);
+ assert.equal(rest.status,200);
+ assert.equal(rest.body.bookings.length,2);
+ assert.equal(rest.body.nextCursor,null);
+ const ids = [...page.body.bookings,...rest.body.bookings].map(row => row.id);
+ assert.equal(new Set(ids).size,52);
+ assert.ok(ids.includes(originalId));
 });
 
 function ui(){
