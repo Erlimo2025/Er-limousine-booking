@@ -24,10 +24,14 @@ transaction evidence remains unverified.
 
 ## Published arithmetic and preserved fares
 
-`services/official-toll-rates.js` retains the pure integer-cent 2026 PA/MTA
-calculator, version `pa-class1-mta-standard-2026-v1`, using America/New_York.
-It accepts January 4, 2026 at 00:01 New York through the end of 2026. Unsupported
-years, dates and uncertain rate boundaries require manual review.
+`services/official-toll-rates.js` retains the pure integer-cent PA and CRZ
+calculator, with historical version `pa-class1-mta-standard-2026-v1`, using
+America/New_York. The reviewed PA window runs from January 4, 2026 at 00:01
+through the end of 2026. The independent MTA Congestion Relief Zone Phase 1
+window extends through the end of 2027. Combined quotes in the existing 2026
+formats still require all component windows to fit the 2026 review. See the
+[2027 rollover policy](estimated-toll-policy.md#2027-tariff-rollover) for fallback
+and manual review conditions.
 
 * Lincoln, Holland and GWB Class 1 with eligible NY/NJ E-ZPass and readable tag:
   NY-bound $14.79 off-peak or $16.79 peak. Weekday peak is 06:00–10:00 and

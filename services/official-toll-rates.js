@@ -8,8 +8,11 @@ const VERSION = 'pa-class1-mta-standard-2026-v1';
 const CREDIT_VERSION = 'pa-class1-mta-daily-credits-2026-v2';
 const CREDIT_CENTS = Object.freeze({lincoln:300,holland:300,queens_midtown:150,hugh_carey:150});
 const DAILY_CREDIT_LIMIT = 500;
-const START = Date.parse('2026-01-04T05:01:00Z'); // PA effective 00:01 New York.
-const END = Date.parse('2027-01-01T05:00:00Z'); // Refuse an unreviewed future year.
+const START = Date.parse('2026-01-04T05:01:00Z'); // Preserve the 2026 review's start.
+const END = Date.parse('2027-01-01T05:00:00Z'); // Exclusive PA / reviewed road-network cutoff.
+// MTA Class 1 CBD entry and credits: published Phase 1 covers 2025–2027.
+// https://www.mta.info/document/138931
+const CRZ_END = Date.parse('2028-01-01T05:00:00Z'); // Exclusive, midnight New York.
 const formatter = new Intl.DateTimeFormat('en-US', {timeZone:'America/New_York',
   year:'numeric',month:'2-digit',day:'2-digit',weekday:'short',hour:'2-digit',minute:'2-digit',hourCycle:'h23'});
 const crossings = new Set(['lincoln','holland','gwb']);
@@ -25,27 +28,29 @@ function instant(value) {
   if(calendar.getUTCFullYear()!==year||calendar.getUTCMonth()!==month-1||calendar.getUTCDate()!==day||/[+-]14:(?!00)/.test(value))review('unverified_time');
   const time=Date.parse(value);if(!Number.isFinite(time))review('unverified_time');return time;
 }
-function parts(timestamp) {
+function tariffParts(timestamp,end) {
   const time=instant(timestamp);
-  if(!Number.isFinite(time)||time<START||time>=END)review('unsupported_tariff_date');
+  if(time<START||time>=end)review('unsupported_tariff_date');
   const p=Object.fromEntries(formatter.formatToParts(new Date(time)).map(x=>[x.type,x.value]));
   return {day:`${p.year}-${p.month}-${p.day}`,weekend:['Sat','Sun'].includes(p.weekday),minute:Number(p.hour)*60+Number(p.minute)};
 }
-function rateAt(timestamp,kind) {
+// Road-network evidence and its saved formats use the original 2026 window.
+function parts(timestamp) { return tariffParts(timestamp,END); }
+function rateAt(timestamp,kind,{legacy2026=false}={}) {
   if(!['pa','mta'].includes(kind))review('unsupported_tariff');
-  const p=parts(timestamp),m=p.minute;
+  const p=tariffParts(timestamp,kind==='mta'&&!legacy2026?CRZ_END:END),m=p.minute;
   const peak=kind==='pa'?(p.weekend?m>=660&&m<1260:m>=360&&m<600||m>=960&&m<1200):m>=(p.weekend?540:300)&&m<1260;
   return {day:p.day,peak,cents:kind==='pa'?(peak?1679:1479):(peak?900:225)};
 }
-function rateWindow(window,kind) {
+function rateWindow(window,kind,options) {
   if(!window||typeof window.earliest!=='string'||typeof window.latest!=='string')review('unverified_crossing_time');
   const start=instant(window.earliest),end=instant(window.latest);
   if(!Number.isFinite(start)||!Number.isFinite(end)||end<start||end-start>8*3600000)review('unverified_crossing_time');
-  const first=rateAt(start,kind),last=rateAt(end,kind);
+  const first=rateAt(start,kind,options),last=rateAt(end,kind,options);
   const same=r=>r.day===first.day&&r.cents===first.cents;
   if(!same(last))review('tariff_boundary_uncertain');
   // Check all minute boundaries, including a rate change crossed and changed back.
-  for(let time=Math.floor(start/60000)*60000+60000;time<end;time+=60000)if(!same(rateAt(time,kind)))review('tariff_boundary_uncertain');
+  for(let time=Math.floor(start/60000)*60000+60000;time<end;time+=60000)if(!same(rateAt(time,kind,options)))review('tariff_boundary_uncertain');
   return first;
 }
 function verifiedFleet(fleet,at) {
@@ -62,7 +67,7 @@ function calculateTariff(facts) {
   if(typeof facts.entersCrz!=='boolean')review('crz_unverified');
   let congestion=0,credit=0,day=null,dailyAssumption=null;
   if(facts.entersCrz){
-    const mta=rateWindow(facts.zoneEntryTime,'mta');day=mta.day;
+    const mta=rateWindow(facts.zoneEntryTime,'mta',{legacy2026:true});day=mta.day;
     verifiedFleet(facts.fleet,instant(facts.zoneEntryTime.latest));
     const daily=facts.dailyContext;
     if(!daily||daily.day!==day||!['first_entry','already_charged','first_entry_estimate'].includes(daily.status)||!reference(daily.evidence))review('daily_context_unknown');
