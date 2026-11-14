@@ -30,10 +30,29 @@ index can be considered if volume warrants it.
 
 The search response includes only the existing dispatch display/action information,
 excluding guest access hashes, payment credentials and Stripe session/customer data.
-All searches are read-only. Existing reservation updates, reconciliation actions,
-pricing, payment/webhook authority and ownership protections are unchanged. The
-legacy `/api/bookings` endpoint remains compatible; the dispatch page uses the
-bounded endpoint exclusively.
+All searches are read-only. Dispatch uses `GET /api/bookings/search`. The legacy
+`GET /api/bookings` requires the same admin session and returns
+`{bookings, nextCursor}`. It uses the search filters and pagination above, with
+all trip dates and statuses selected by default and archived trips available via
+`view=archived`. Clients that expect a raw array must use the paginated response.
+
+Each legacy result contains `id`, `bookingReference`, `status`, `paymentStatus`,
+`archived`, `customer`, `trip`, `quote`, `dispatch` and `refundStatus` when
+present. Customer fields are `firstName`, `lastName`, `email` and `phone`.
+Quote fields are `total`, `currency` and `vehicle`. Dispatch fields are
+`driver`, `driverPhone`, `vehicle` and `plate`.
+
+Trip fields are `pickup`, `dropoff`, `date`, `time`, `tripType`, `vehicle`,
+`passengers`, `timeZone`, `pickupAirport`, `dropoffAirport` and, when present,
+`returnDate`, `returnTime`, `hours`, `flightNumber`, `airline`, `notes` and
+`stopSummary`. An airport is null or contains `code` and, when applicable,
+`terminal`. A stop summary contains `pickup`, `dropoff`, `stops`,
+`plannedMinutes`, `freeMinutes`, `billableMinutes`, `rateCentsPerMinute` and
+`chargeCents`. Each stop contains `sequence`, `address`, `plannedMinutes`,
+`freeMinutes` and `billableMinutes`.
+
+A successful `PATCH /api/bookings/:id` returns HTTP 200 and `{ok:true}`. The
+Dispatch client refreshes from the search route to display the updated trip.
 
 Reservation cards prioritize stored New York pickup date/time, authoritative
 reservation/payment/refund badges and airport/terminal labels. Maintained EWR IDs

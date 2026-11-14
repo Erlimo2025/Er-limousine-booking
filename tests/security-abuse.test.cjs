@@ -376,7 +376,7 @@ test("invalid admin tokens throttle without blocking the correct token; cooldown
 
 test("admin sessions authorize all protected APIs and bearer credentials no longer work", async t => {
   const h = await harness(t, {}, JSON.stringify([{id: "mock-reservation", dispatch: {},
-    customer: {firstName: "Test", lastName: "Customer"}, trip: {}, quote: {total: 100}}]));
+     customer: {firstName: "Test", lastName: "Customer"}, trip: {date: "2026-11-10", time: "12:00"}, quote: {total: 100}}]));
   for (const headers of [{}, {cookie: "er_admin_session=invalid"},
     {cookie: `er_admin_session=${"a".repeat(43)}`}, {authorization: "Bearer local-test-token"}]) {
     const denied = await h.request("/api/bookings", undefined, headers);
@@ -1351,7 +1351,7 @@ test('New audit 2: customer data/cookies cannot invoke admin recovery; admin see
   const before=h.state.creates.length;
   const login=await h.request('/api/admin/login',{token:'local-test-token'}),cookie=login.headers.getSetCookie()[0].split(';')[0];
   const result=await h.request(route,{}, {cookie,origin:'http://localhost:3000'});assert.equal(result.status,200);assert.deepEqual(result.body,{ok:true});
-  const list=await h.request('/api/bookings',undefined,{cookie});assert.equal(list.body[0].checkoutAttempt.state,'review_required');
+  const list=await h.request('/api/bookings/search?status=all&timing=all',undefined,{cookie});assert.equal(list.body.bookings[0].checkoutAttempt.state,'review_required');
   assert.equal(h.testStore.shared.claims.size,2);assert.equal(h.state.creates.length,before);
   assert.equal((await h.request(route,{}, {cookie,origin:'https://attacker.example'})).status,403);
   const source=fs.readFileSync(path.join(root,'public/admin.js'),'utf8');assert.match(source,/reconcileBtn/);assert.doesNotMatch(source,/release anyway/i);

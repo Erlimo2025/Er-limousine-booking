@@ -2907,7 +2907,23 @@ app.get(
   requireAdmin,
 
   route(async (req, res) => {
-    res.json(await readBookings());
+    const query = require('./storage/admin-reservations').adminQuery({
+      status: 'all', timing: 'all', ...req.query
+    }, Date.now());
+    const page = await reservationStore.searchAdminReservations(query);
+    const bookings = page.bookings.map(booking => ({
+      id: booking.id,
+      bookingReference: booking.bookingReference,
+      status: booking.status,
+      paymentStatus: booking.paymentStatus,
+      ...(booking.refundStatus ? {refundStatus: booking.refundStatus} : {}),
+      archived: booking.archived,
+      customer: booking.customer,
+      trip: booking.trip,
+      quote: booking.quote,
+      dispatch: booking.dispatch
+    }));
+    res.json({bookings, nextCursor: page.nextCursor});
   })
 );
 
@@ -3011,9 +3027,7 @@ app.patch(
     const booking=req.body.status?await reservationStore.withActionLock(paymentActionKey(initial),mutate):await mutate();
     if (!booking) return res.status(404).json({error:"Booking not found."});
 
-    res.json(
-      booking
-    );
+    res.json({ok:true});
     void runBookingEmails().catch(reportBookingEmailFailure);
   })
 );
