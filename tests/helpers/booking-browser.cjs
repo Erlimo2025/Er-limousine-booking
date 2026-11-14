@@ -40,13 +40,13 @@ const cases=[
  {...orange,id:'interstate_estimate',expected:'estimated'},
  {...orange,id:'faster_traffic',timing:'faster_traffic',expected:'estimated'},
  {...orange,id:'rounded_step_timing',timing:'rounded_steps',expected:'estimated'},
- {...orange,id:'reverse',pickup:orange.dropoff,dropoff:orange.pickup,direction:'nj_bound',expected:'estimated'},
+ {...orange,id:'reverse',pickup:orange.dropoff,dropoff:orange.pickup,direction:'nj_bound',expected:'none'},
  // Destination/county controls use synthetic provider paths; no real Google
  // NJ-to-JFK path or additional-crossing toll coverage is certified by them.
  {...orange,id:'jfk_lincoln',dropoff:'JFK Airport, Queens, NY',nycCounty:'Queens County',expected:'estimated'},
  {...orange,id:'jfk_holland',dropoff:'JFK Airport, Queens, NY',crossing:'holland',street:'CANAL ST',nycCounty:'Queens County',expected:'estimated'},
  {...orange,id:'jfk_gwb_uncertain',dropoff:'JFK Airport, Queens, NY',crossing:'gwb',street:'',unprovedZone:true,nycCounty:'Queens County',expected:'estimated',expectedSource:'google_routes_backup_v1'},
- {...orange,id:'jfk_reverse',pickup:'JFK Airport, Queens, NY',dropoff:orange.pickup,direction:'nj_bound',nycCounty:'Queens County',expected:'estimated',expectedSource:'google_routes_backup_v1'},
+ {...orange,id:'jfk_reverse',pickup:'JFK Airport, Queens, NY',dropoff:orange.pickup,direction:'nj_bound',nycCounty:'Queens County',expected:'none'},
  {...orange,id:'jfk_unmatched',dropoff:'JFK Airport, Queens, NY',nycCounty:'Queens County',crossingEvidence:'none',expected:'estimated',expectedSource:'google_routes_backup_v1'},
  {...orange,id:'jfk_ambiguous',dropoff:'JFK Airport, Queens, NY',nycCounty:'Queens County',crossingEvidence:'multiple',expected:'estimated',expectedSource:'google_routes_backup_v1'},
  {...orange,id:'south_orange_jfk',pickup:'South Orange, NJ',dropoff:'JFK Airport, Queens, NY',nycCounty:'Queens County',crossingEvidence:'none',expected:'estimated',expectedSource:'google_routes_backup_v1'},

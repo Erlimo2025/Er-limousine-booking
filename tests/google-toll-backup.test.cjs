@@ -93,19 +93,33 @@ const routeCases=[
  ['NJ to Manhattan','interstate_estimate'],['Manhattan to NJ','reverse'],['JFK to NJ','jfk_reverse']
 ];
 for(const [label,id]of routeCases)for(const choice of ['now','later'])test('mocked '+label+' / '+choice+' keeps selected metrics, stored fare and Stripe total consistent',async t=>{
- const c=cases.find(c=>c.id===id),{h,input}=await create(t,c),q=await h.request('/api/quote',input);assert.equal(q.status,200);assert.equal(q.body.tolls.status,'estimated');
+ const c=cases.find(c=>c.id===id),{h,input}=await create(t,c),q=await h.request('/api/quote',input);assert.equal(q.status,200);
  assert.equal(h.state.routes.length,1);const provider=h.state.routeResult(h.state.routes[0]);assert.equal(q.body.miles,Math.round(provider.distanceMeters/1609.344*100)/100);assert.equal(q.body.minutes,Math.round(Number(provider.duration.slice(0,-1))/60));
- assert.equal(q.body.pricingBreakdown.totalCents,q.body.totalCents);assert.equal(q.body.tolls.legs,undefined);assert.equal(q.body.tolls.googleAssumptions,undefined);
+ assert.equal(q.body.pricingBreakdown.totalCents,q.body.totalCents);
+ if(c.direction==='nj_bound'){
+  assert.equal(q.body.tolls.status,'none');
+  assert.equal(q.body.pricingBreakdown.tollsCents,0);
+  assert.equal(h.state.routes[0].extraComputations,undefined);
+ }else{
+  assert.equal(q.body.tolls.status,'estimated');
+  assert.equal(q.body.tolls.legs,undefined);
+ }
+ assert.equal(q.body.tolls.googleAssumptions,undefined);
  const before=h.state.routes.length,r=await h.request('/api/checkout',{...input,paymentChoice:choice,quoteRevision:q.body.quoteRevision,amount:1,tolls:{amountCents:1},crossing:'forged'});
  assert.equal(r.status,200);assert.equal(h.state.routes.length-before,1);assert.equal(h.records().length,1);const saved=h.records()[0];assert.equal(saved.quote.totalCents,q.body.totalCents);assert.ok(tolls.validQuote(saved.quote));
  if(c.expectedSource)assert.equal(saved.quote.tolls.format,c.expectedSource);
+ if(c.direction==='nj_bound'){
+  assert.equal(saved.quote.tolls.format,undefined);
+  assert.equal(saved.quote.tolls.reason,undefined);
+  assert.deepEqual(saved.quote.tolls.legs,[{status:'none',amountCents:0}]);
+ }
  const calls=h.state.googleCalls;h.state.routeResult=()=>{throw Error('No repricing of an accepted booking');};
  for(let i=0;i<2;i++)assert.equal((await h.request('/api/booking/'+r.body.bookingId+'/checkout',{}, {...origin(h),cookie:access(r)})).status,200);
  assert.equal(h.state.googleCalls,calls);assert.equal(h.state.creates.length,1);assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount,q.body.totalCents);
  assert.equal(saved.paymentStatus,'unpaid');const session=[...h.state.sessions.values()][0];session.status='complete';session.payment_status='paid';assert.equal((await h.webhook(session)).status,200);
  assert.equal(h.records()[0].paymentStatus,'paid');assert.equal((await h.request('/api/booking/'+r.body.bookingId+'/checkout',{}, {...origin(h),cookie:access(r)})).status,409);
  const receipt=require('../services/booking-emails').bookingMessage(h.records()[0],'customer_reservation_created',{email:'support@example.test',phone:''});
- assert.match(receipt.text,/Tolls: \$/);assert.doesNotMatch(receipt.text,/google_routes_backup|primaryReviewReason|googleAssumptions|geometryHash/);
+ assert.match(receipt.text,c.direction==='nj_bound'?/Tolls: \$0\.00/:/Tolls: \$/);assert.doesNotMatch(receipt.text,/google_routes_backup|primaryReviewReason|googleAssumptions|geometryHash/);
 });
 
 test('backup quotes remain stable across custom diagnostic changes, but a new amount requires quoteRevision approval',async t=>{

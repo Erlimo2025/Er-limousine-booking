@@ -1,11 +1,18 @@
 # Route toll estimates
 
-**Current draft policy:** see [Advance estimated tolls](estimated-toll-policy.md).
-Default estimate mode uses the approved NJ/NYC included-tolls fallback and does
-not require exact account settlement. The optional `verified` mode retains the
+For new ordinary routed quotes with customer toll pricing enabled, only a
+direction from a verified New Jersey pickup to a verified destination in
+NYC's five boroughs may add tolls. Other verified directions add $0 and use
+ordinary driving-route validation without requesting toll estimates. The
+[advance estimate policy](estimated-toll-policy.md) documents county
+verification, round trips, fallback, and the unchanged treatment of the
+$150 toll-inclusive EWR special and accepted reservations.
+
+Default estimate mode supports the existing eligible Google backup. The
+optional `verified` mode retains the
 [official tariff/network evidence path](official-toll-tariffs.md).
-With `ROUTE_TOLLS_ENABLED` false/unset, customer charging remains disabled.
-The separate admin estimate-only tool below still shows Google's original estimate.
+Customer toll pricing requires `ROUTE_TOLLS_ENABLED=true`. The separate
+admin estimate-only tool below still shows Google's original estimate.
 
 ## Historical Google pricing and accepted-snapshot compatibility
 

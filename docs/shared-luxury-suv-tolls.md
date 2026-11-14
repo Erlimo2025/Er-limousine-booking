@@ -31,13 +31,14 @@ for every member. Provider estimates may refresh over time for all vehicles;
 this is not a permanent fixed toll or a promise of exact settlement.
 
 The shared category takes precedence over per-vehicle estimate inputs in
-`TOLL_VEHICLE_PROFILES_JSON`. Missing or malformed category configuration does
-not borrow a vehicle's private profile: new interstate quotes require manual
-review. Unknown geometry/prices, unsupported tariff dates and other estimate
-failures also require review; they are never new zero-toll or Included fares.
-Previously accepted company-included fares remain unchanged. Outside NJ/NYC coverage still
-requires manual review. Same-state added tolls remain zero. Hourly behavior stays
-unchanged. The qualifying $150 EWR special remains Suburban-only and all-inclusive.
+`TOLL_VEHICLE_PROFILES_JSON`. Missing or malformed category configuration cannot borrow a
+private vehicle profile. For a toll-eligible direction, that
+configuration gap requires manual review. Unavailable estimates require manual
+review when neither estimator supplies a usable amount. Previously accepted
+company-included fares retain their saved amounts. Verified directions outside
+the [NJ-to-NYC toll policy](estimated-toll-policy.md) add $0. Hourly behavior
+stays unchanged. The qualifying $150 EWR special remains Suburban-only and
+all-inclusive.
 
 Both feature flags remain disabled by default. This PR changes no Render setting,
 credential or environment value and does not activate customer charging. The

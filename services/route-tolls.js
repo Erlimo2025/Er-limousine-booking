@@ -99,11 +99,18 @@ function eligibility(pickup, destination) {
   return {policy:'interstate_only',pickupState:pickup.state,dropoffState:destination.state,
     pickupPlaceId:pickup.placeId,dropoffPlaceId:destination.placeId};
 }
+function noAddedTolls(eligibility, directions) {
+  // The baseline's `waived` snapshot is reserved for same-state trips.
+  const sameState=eligibility.pickupState===eligibility.dropoffState;
+  const status=sameState?'waived':'none';
+  return {version:1,status,amountCents:0,estimatedRouteCents:sameState?null:0,allowanceCents:0,eligibility,
+    legs:Array.from({length:directions},()=>({status,amountCents:0})),
+    ...(sameState?{reason:'same_state'}:{})};
+}
 function aggregateTolls(legs, profile, hourly = false, allowanceCents = 0, eligibility = null) {
   if (hourly) return {version:1,status:'unknown',amountCents:null,legs:[],reason:'hourly_route_unknown'};
   if (eligibility?.policy === 'interstate_only' && eligibility.pickupState === eligibility.dropoffState) {
-    return {version:1,status:'waived',amountCents:0,estimatedRouteCents:null,allowanceCents:0,eligibility,
-      legs:legs.map(() => ({status:'waived',amountCents:0})),reason:'same_state'};
+    return noAddedTolls(eligibility,legs.length);
   }
   if (!profile?.verified) return {version:1,status:'unknown',amountCents:null,legs,reason:'vehicle_or_coverage_unverified'};
   if (legs.some(leg => leg.status === 'unknown')) return {version:1,status:'unknown',amountCents:null,legs,reason:'provider_estimate_unknown'};
@@ -278,5 +285,5 @@ function priceAdvanceRoutes(routes,profile,eligibility){
 }
 module.exports={REVIEW_MESSAGE,reviewError,failureReason:advance.failureReason,cents,sum,usdCents,routeTolls,vehicleProfile,customerEstimateProfile,requestModifiers,verifiedState,eligibility,aggregateTolls,attachTolls,validQuote,customerPricing,
   customerQuote,
-  advanceCoverage:advance.covered,advanceEligible:advance.eligible,priceAdvanceRoutes,
+  advanceCoverage:advance.covered,chargeableLeg:serviceCoverage.chargeableLeg,noAddedTolls,advanceEligible:advance.eligible,priceAdvanceRoutes,
   officialFieldMask:officialRoutes.FIELD_MASK,priceOfficialRoutes:officialRoutes.priceRoutes};

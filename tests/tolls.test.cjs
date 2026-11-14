@@ -44,8 +44,9 @@ test('toll states use only the route-level total and never sum duplicate leg tot
  route.travelAdvisory.tollInfo.estimatedPrice.push({currencyCode:'CAD',units:'1'});assert.equal(tolls.routeTolls(route).status,'unknown');
 });
 
-test('a reviewed reverse route has no PA or new zone charge; a Google zero is not billing authority',async t=>{
- const h=await fixture(t,0),q=await h.request('/api/quote',{...normal,pickup:normal.dropoff,dropoff:normal.pickup});assert.equal(q.status,200);assert.equal(q.body.tolls.status,'estimated');assert.equal(q.body.tolls.amountCents,0);assert.equal(q.body.total,80);assert.equal(q.body.pricingBreakdown.tollAllowanceCents,0);
+test('a verified reverse route waives tolls without requesting a provider estimate',async t=>{
+ const h=await fixture(t,250),q=await h.request('/api/quote',{...normal,pickup:normal.dropoff,dropoff:normal.pickup});assert.equal(q.status,200);assert.equal(q.body.tolls.status,'none');assert.equal(q.body.tolls.amountCents,0);assert.equal(q.body.total,80);assert.equal(q.body.pricingBreakdown.tollAllowanceCents,0);
+ assert.equal(h.state.routes.length,1);assert.equal(h.state.routes[0].extraComputations,undefined);
  const receipt=require('../services/booking-emails').bookingMessage({trip:normal,quote:q.body,customer:{firstName:'Toll',lastName:'Fixture',email:'fixture@example.test'},paymentStatus:'unpaid',id:crypto.randomUUID()},'customer_reservation_created',{email:'support@example.test',phone:''});assert.match(receipt.text,/Tolls: \$0.00/);assert.doesNotMatch(receipt.text,/Port Authority crossing|MTA congestion|Included in fare allowance/);
 });
 
@@ -64,12 +65,12 @@ test('verified road costs and official components replace the Google aggregate w
  const r=await h.request('/api/checkout',{...normal,quoteRevision:q.body.quoteRevision});assert.equal(r.status,200);assert.equal(h.records()[0].quote.total,103.04);assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount,10304);
 });
 
-test('verified interstate endpoints follow actual directional tolls while same-state tolled routes are waived',async t=>{
+test('verified endpoints add tolls only for NJ to NYC',async t=>{
  const h=await fixture(t);h.state.routeResult=route=>googleRoute(route.origin.placeId===ids.midtown?250:route.destination.placeId===ids.trenton?400:1375,route);
- for(const [trip,amount,total,status]of [[normal,2079,100.79,'estimated'],[{...normal,pickup:normal.dropoff,dropoff:normal.pickup},0,80,'estimated'],[{...normal,dropoff:'Trenton, NJ'},0,80,'waived']]){
+ for(const [trip,amount,total,status]of [[normal,2079,100.79,'estimated'],[{...normal,pickup:normal.dropoff,dropoff:normal.pickup},0,80,'none'],[{...normal,dropoff:'Trenton, NJ'},0,80,'waived'],[{...normal,dropoff:'Stamford, CT'},0,80,'none']]){
   const r=await h.request('/api/quote',trip);assert.equal(r.status,200);assert.equal(r.body.tolls.amountCents,amount);assert.equal(r.body.total,total);assert.equal(r.body.tolls.status,status);
  }
- assert.equal((await h.request('/api/quote',{...normal,dropoff:'Stamford, CT'})).status,422);
+ assert.deepEqual(h.state.routes.map(request=>request.extraComputations),[['TOLLS'],undefined,undefined,undefined]);
 });
 
 test('same-state NJ and NY trips waive real or unknown road tolls, even without a verified company toll profile',async t=>{
@@ -128,12 +129,14 @@ test('previously accepted same-state toll snapshots retain their stored price un
  const fresh=await fixture(t,null,{ROUTE_TOLLS_ENABLED:'true'}),q=await fresh.request('/api/quote',trip);assert.equal(q.status,200);assert.equal(q.body.total,80);assert.equal(q.body.tolls.status,'waived');
 });
 
-test('Round Trip obtains separate outbound/return estimates and applies FIRST15 only to the original combined fare',async t=>{
+test('Round Trip routes both directions, estimates tolls only to NYC and discounts only the combined fare',async t=>{
  const h=await fixture(t);h.state.routeResult=route=>googleRoute(route.origin.placeId===ids.midtown?250:1375,route);
  const body={...normal,tripType:'roundtrip',returnDate:'2026-11-12',returnTime:'18:00',promoCode:'FIRST15'},r=await h.request('/api/quote',body);
  assert.equal(r.status,200);assert.equal(h.state.routes.length,2);assert.equal(h.state.routes[0].origin.placeId,ids.newark);assert.equal(h.state.routes[1].origin.placeId,ids.midtown);assert.equal(h.state.routes[1].departureTime,'2026-11-12T23:00:00.000Z');
- assert.deepEqual(r.body.tolls.legs.map(leg=>leg.amountCents),[2079,0]);assert.equal(r.body.tolls.amountCents,2079);assert.equal(r.body.roundTrip.outbound.fare,80);assert.equal(r.body.roundTrip.return.fare,80);assert.equal(r.body.discount,24);assert.equal(r.body.total,156.79);
+ assert.deepEqual(h.state.routes.map(request=>request.extraComputations),[['TOLLS'],undefined]);
+ assert.equal(r.body.tolls.amountCents,2079);assert.equal(r.body.roundTrip.outbound.fare,80);assert.equal(r.body.roundTrip.return.fare,80);assert.equal(r.body.discount,24);assert.equal(r.body.total,156.79);
  const reserved=await h.request('/api/checkout',{...body,paymentChoice:'now',quoteRevision:r.body.quoteRevision});assert.equal(reserved.status,200);assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount,15679);
+ assert.deepEqual(h.records()[0].quote.tolls.legs.map(leg=>leg.amountCents),[2079]);
 });
 
 test('each maintained EWR identity retains eligibility and reverse/foreign destinations cannot inherit the inclusive special',async t=>{
@@ -393,21 +396,24 @@ test('multiple NJ pickups and NYC destinations reuse the same infrastructure for
  }
 });
 
-test('booking quote detects each physical crossing at weekday/weekend rates and never invents a reverse PA toll',async t=>{
+test('booking quote prices each eligible physical crossing at weekday/weekend rates and waives reverse tolls',async t=>{
  for(const crossing of ['lincoln','holland','gwb'])for(const [date,time,pa,zone]of [['2026-11-10','08:00',1679,600],['2026-11-07','10:00',1479,600],['2026-11-07','12:00',1679,600],['2026-11-08','08:00',1479,225]]){
   const h=await fixture(t);h.state.routeResult=()=>official.googleRoute(crossing);const q=await h.request('/api/quote',{...normal,date,time,crossing:'forged',via:'another tunnel'});
   assert.equal(q.status,200);assert.equal(q.body.tolls.legs[0].crossing,crossing);assert.equal(q.body.tolls.amountCents,pa+(crossing==='gwb'?0:zone));
-  h.state.routeResult=()=>official.googleRoute(crossing,'nj_bound');const reverse=await h.request('/api/quote',{...normal,date,time,pickup:normal.dropoff,dropoff:normal.pickup});assert.equal(reverse.status,200);assert.equal(reverse.body.tolls.amountCents,0);
+  h.state.routeResult=()=>official.googleRoute(crossing,'nj_bound');const reverse=await h.request('/api/quote',{...normal,date,time,pickup:normal.dropoff,dropoff:normal.pickup});assert.equal(reverse.status,200);assert.equal(reverse.body.tolls.status,'none');assert.equal(reverse.body.tolls.amountCents,0);
+  assert.equal(h.state.routes.at(-1).extraComputations,undefined);
  }
 });
 
-test('round-trip road tariffs are looked up independently, added once and never discounted in either payment flow',async t=>{
+test('round trips apply only the eligible direction’s road tariff and preserve both payment flows',async t=>{
  for(const choice of ['now','later']){
   const h=await fixture(t);editCoverage(h,c=>{const road=official.addRoadCost(c,225);road.rates.push({...road.rates[0],entry:'lincoln_n2',exit:'lincoln_n1',amountCents:350});});
   const trip={...normal,tripType:'roundtrip',returnDate:'2026-11-12',returnTime:'18:00',promoCode:'FIRST15',paymentChoice:choice},q=await h.request('/api/quote',trip);
-  assert.equal(q.status,200);assert.equal(q.body.tolls.legs[0].amountCents,2304);assert.equal(q.body.tolls.legs[1].amountCents,350);assert.equal(q.body.tolls.amountCents,2654);assert.equal(q.body.totalCents,16254);
+  assert.equal(q.status,200);assert.equal(q.body.tolls.amountCents,2304);assert.equal(q.body.totalCents,15904);
+  assert.deepEqual(h.state.routes.map(request=>request.extraComputations),[['TOLLS'],undefined]);
   const r=await h.request('/api/checkout',{...trip,quoteRevision:q.body.quoteRevision});assert.equal(r.status,200);
-  const completed=await h.request('/api/booking/'+r.body.bookingId+'/checkout',{}, {...origin,cookie:access(r)});assert.equal(completed.status,200);assert.equal(h.state.creates.length,1);assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount,16254);
+  assert.deepEqual(h.records()[0].quote.tolls.legs.map(leg=>leg.amountCents),[2304]);
+  const completed=await h.request('/api/booking/'+r.body.bookingId+'/checkout',{}, {...origin,cookie:access(r)});assert.equal(completed.status,200);assert.equal(h.state.creates.length,1);assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount,15904);
  }
 });
 

@@ -32,15 +32,20 @@ test('invalid assigned categories fail closed instead of borrowing a per-vehicle
 for(const [label,date,time,amount]of [['weekday off-peak','2026-11-10','12:00',2079],['weekday peak','2026-11-10','08:00',2279],['weekend off-peak','2026-11-07','10:00',2079],['weekend peak','2026-11-07','12:00',2279],['overnight','2026-11-10','22:00',1704]])test('same route and '+label+' produce equal modeled tolls and different trip fares',async t=>{
  const {h,input,c}=await create(t);h.context.process.env.TOLL_VEHICLE_PROFILES_JSON=undefined;h.state.routeResult=()=>route(c,0);const [suv,escalade]=await pair(h,input,{date,time});assert.equal(suv.pricingBreakdown.tollsCents,amount);assert.equal(escalade.pricingBreakdown.tollsCents,amount);assert.deepEqual(h.state.routes[0],h.state.routes[1]);
 });
-test('selected Holland/GWB routes and reverse direction use the same model for both SUVs',async t=>{
- for(const c of [{...cases[0],crossing:'holland',street:'CANAL ST'}, {...cases[0],crossing:'gwb'},cases.find(c=>c.id==='reverse')]){const {h,input}=await create(t,c),q=await pair(h,input);assert.equal(q[0].tolls.status,'estimated');assert.deepEqual(h.state.routes[0],h.state.routes[1]);}
+test('both SUVs estimate eligible Holland/GWB routes and waive reverse tolls',async t=>{
+ for(const c of [{...cases[0],crossing:'holland',street:'CANAL ST'}, {...cases[0],crossing:'gwb'},cases.find(c=>c.id==='reverse')]){
+  const {h,input}=await create(t,c),q=await pair(h,input),reverse=c.direction==='nj_bound';
+  assert.equal(q[0].tolls.status,reverse?'none':'estimated');
+  assert.deepEqual(h.state.routes[0],h.state.routes[1]);
+  if(reverse){assert.equal(q[0].pricingBreakdown.tollsCents,0);assert.ok(h.state.routes.every(request=>!request.extraComputations));}
+ }
 });
 test('tolls are route-dependent amounts, not a fixed SUV surcharge or a sum of duplicate totals',async t=>{
  const {h,input,c}=await create(t);for(const amount of [3000,4500]){h.state.routeResult=()=>route(c,amount);const q=await pair(h,input);assert.equal(q[0].pricingBreakdown.tollsCents,amount);assert.equal(q[1].pricingBreakdown.tollsCents,amount);}
 });
 test('same-state, round trips and hourly preserve their separate existing pricing behavior',async t=>{
  const same=await create(t,cases.find(c=>c.id==='same_state'));for(const q of await pair(same.h,same.input)){assert.equal(q.tolls.status,'waived');assert.equal(q.pricingBreakdown.tollsCents,0);}assert.ok(same.h.state.routes.every(r=>!r.extraComputations));
- const round=await create(t,cases.find(c=>c.id==='round_trip'));const q=await pair(round.h,round.input);assert.equal(round.h.state.routes.length,4);assert.equal(q[0].pricingBreakdown.tollsCents,2725);assert.notDeepEqual(round.h.state.routes[0].origin,round.h.state.routes[1].origin);
+ const round=await create(t,cases.find(c=>c.id==='round_trip'));const q=await pair(round.h,round.input);assert.deepEqual(round.h.state.routes.map(request=>request.extraComputations),[['TOLLS'],undefined,['TOLLS'],undefined]);assert.equal(q[0].pricingBreakdown.tollsCents,2500);assert.notDeepEqual(round.h.state.routes[0].origin,round.h.state.routes[1].origin);
  const hourly=await create(t,cases.find(c=>c.id==='hourly'));for(const [vehicle,total]of [['suv',455],['escalade',525]]){const q=await hourly.h.request('/api/quote',{...hourly.input,vehicle});assert.equal(q.status,200);assert.equal(q.body.total,total);assert.equal(q.body.tolls,undefined);}assert.equal(hourly.h.state.routes.length,0);
 });
 for(const reason of ['missing_category','unknown_provider','unknown_future_provider','ambiguous_geometry'])test(reason+' requires review for both SUVs',async t=>{
@@ -48,10 +53,17 @@ for(const reason of ['missing_category','unknown_provider','unknown_future_provi
  if(['unknown_provider','unknown_future_provider'].includes(reason))h.state.routeResult=()=>route(c,null);if(reason==='ambiguous_geometry')h.state.routeResult=()=>({distanceMeters:100000,duration:'1500s'});
  for(const vehicle of ['suv','escalade'])for(const endpoint of ['/api/quote','/api/checkout']){const q=await h.request(endpoint,{...input,vehicle,...(reason==='unknown_future_provider'?{date:'2027-01-10'}:{}),paymentChoice:'later'});assert.equal(q.status,422);assert.equal(q.body.code,'TOLL_ESTIMATE_UNAVAILABLE');assert.equal(q.body.checkoutAllowed,false);}assert.equal(h.records().length,0);assert.equal(h.state.creates.length,0);if(reason==='missing_category')assert.equal(h.state.routes.length,0);
 });
-test('request JSON cannot choose a category, tariff, pass, amount, vehicle certification or outside-coverage fallback',async t=>{
+test('request JSON cannot choose a category, tariff, pass, amount, vehicle certification or route eligibility',async t=>{
  const {h,input}=await create(t),normal=await h.request('/api/quote',input),forged=await h.request('/api/quote',{...input,tollPricingCategory:'free',tollPricingCategories:{luxury_suv:{companyAbsorbsDifferences:false}},emissionType:'ELECTRIC',tollPasses:['forged'],total:1,tolls:{amountCents:1},actualVehicleEligibilityVerified:true});assert.equal(forged.status,200);assert.deepEqual(h.fareTerms(forged.body),h.fareTerms(normal.body));
  assert.equal((await h.request('/api/quote',{...input,vehicle:'not_configured',tollPricingCategory:'luxury_suv'})).status,400);
- for(const vehicle of ['suv','escalade'])assert.equal((await h.request('/api/quote',{...input,vehicle,dropoff:'Stamford, CT'})).status,422);assert.equal(h.records().length,0);
+ for(const vehicle of ['suv','escalade']){
+  const out=await h.request('/api/quote',{...input,vehicle,dropoff:'Stamford, CT',dropoffState:'NY',dropoffCounty:'New York County'});
+  assert.equal(out.status,200);
+  assert.equal(out.body.tolls.status,'none');
+  assert.equal(out.body.pricingBreakdown.tollsCents,0);
+  assert.equal(h.state.routes.at(-1).extraComputations,undefined);
+ }
+ assert.equal(h.records().length,0);
 });
 test('EWR special is still exactly $150 for Suburban and cannot be inherited by Escalade',async t=>{
  const {h,input}=await create(t,cases.find(c=>c.id==='ewr_special'));

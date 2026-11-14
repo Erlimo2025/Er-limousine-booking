@@ -12,8 +12,8 @@ provider fallback route or conflicting provider evidence cannot authorize backup
 The backup reads the route-level toll total from the SAME selected response used
 for distance and traffic duration. There are no backup network calls, route
 changes, forced via points, alternate-route totals or invented crossing labels.
-The full booking uses custom OR Google totals; it never mixes custom legs with
-Google legs or adds custom PA/MTA charges, credits or leg advisories to Google.
+The toll-eligible direction uses either the custom or Google estimate. The
+backup adds no custom PA/MTA charges, credits or leg advisories to Google.
 Existing fare, surcharge, discount, gratuity and toll-allowance arithmetic stays
 in the existing pricing code. Tolls are added once after existing discounts.
 
@@ -21,7 +21,9 @@ This permits Google-priced routes outside the three-crossing custom inventory,
 including JFK/Brooklyn routes using other facilities, when Google supplies a
 usable amount. This is not certification of those roads, commercial rates or a
 particular actual route. Local route/city/crossing tests are synthetic controls.
-The existing approved scope remains New Jersey and NYC's five boroughs.
+For new ordinary quotes, the backup applies only to the direction from a
+verified New Jersey pickup to a verified NYC destination under the
+[advance estimate policy](estimated-toll-policy.md).
 
 ## Independent validation
 
@@ -30,7 +32,8 @@ The existing approved scope remains New Jersey and NYC's five boroughs.
   An error body is rejected even if its HTTP status is 200.
 - Server-verified origin/destination Place IDs, direction and scheduled departure
   bind the selected route. Google distance and traffic duration must be valid;
-  backups retain the six-hour route limit. Return trips must follow arrival.
+  backups retain the six-hour route limit. An eligible round trip must schedule
+  the return after outbound arrival.
 - The configured server vehicle/profile must be eligible for the existing
   operator-approved estimate policy. Browser amounts, passes and class claims
   cannot select or repair a profile. Individual commercial certification stays
@@ -45,12 +48,12 @@ The existing approved scope remains New Jersey and NYC's five boroughs.
 
 ## Round trips and congestion
 
-Different-day routes are independently priced, then added once. Per the operator's
-explicit approval, two positive Google aggregates with overlapping possible New
-York calendar charge days require manual review. This includes a leg crossing
-midnight before a return that day. A direction with an explicit valid Google
-zero does not introduce a second daily amount. No speculative congestion credit
-or subtraction is used. The backup never adds a separate congestion charge.
+A new round trip can have at most one toll-eligible direction. Only that
+direction can use a Google toll aggregate. The direction outside the pricing
+policy still uses ordinary route validation, without requesting toll
+information. Accepted snapshots from the earlier policy retain their original
+direction and overlap validation. The Google backup uses no speculative
+congestion credit, subtraction or separate congestion charge.
 
 Google's non-commercial estimate may omit toll facilities, congestion charges,
 daily-history effects or credits, or differ from business-account settlement.
@@ -91,11 +94,10 @@ remove accepted snapshots to facilitate rollback. This work does not deploy.
 ## Unchanged policies and controls
 
 The qualifying Suburban EWR-to-Manhattan offer is exactly $150 including tolls.
-Same-state additional tolls stay zero; hourly behavior stays unchanged. FIRST15,
-vehicle fares, Stripe checkout/webhooks/refunds, reservation ownership and action
-locks, Admin payment links, reviews and account authentication are unchanged.
-Both unavailable estimators, unverified endpoints/profile, invalid Google money,
-provider errors and ambiguous same-day overlap retain the manual-quote response.
+Hourly behavior, FIRST15, vehicle fares, Stripe checkout/webhooks/refunds,
+reservation ownership and action locks, Admin payment links, reviews and
+account authentication are unchanged. Unverified endpoints or profiles and
+unusable estimates still require a final quote when toll pricing may apply.
 
 No new flags, credentials, dependencies or services are required. Existing
 `ROUTE_TOLLS_ENABLED` and estimate/verified mode controls retain their defaults.
@@ -104,10 +106,10 @@ No Render setting or production database is changed.
 
 ## API usage and cost
 
-The original request already includes TOLLS and traffic-aware routing. Consuming
-its price as backup adds zero Google requests. Existing fresh quote/checkout
-revalidation still uses one route request per direction. Google bills requests
-by the requested features. Its current global list gives Compute Routes Pro a
+The request for a toll-eligible direction already includes TOLLS and
+traffic-aware routing. Consuming its price as backup adds zero Google
+requests. Fresh quote and checkout revalidation still use one route request
+per direction. Google bills requests by the requested features. Its current global list gives Compute Routes Pro a
 5,000-request monthly free cap and $10 per 1,000 at the first paid volume tier;
 actual billing depends on the account, region, usage and contract. See
 [usage/billing](https://developers.google.com/maps/documentation/routes/usage-and-billing)

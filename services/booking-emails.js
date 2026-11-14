@@ -77,6 +77,8 @@ function bookingMessage(record,kind,contact,myTripsUrl=null,event=null){
   if(Array.isArray(p.tollComponents)&&!p.tollsIncluded){
    for(const c of p.tollComponents)rows.push([c.label,price(c.amountCents)]);
    for(const note of p.tollAssumptions||[])rows.push(['Toll estimate policy',note]);
+  }else if(q.tolls.status==='none'&&!q.tolls.format){
+   rows.push(['Tolls','No additional charge']);
   }else rows.push([p.interstate?'Estimated Interstate Tolls':p.tollsCents>0?'Estimated Tolls':'Tolls',p.tollsIncluded?'Included':q.tolls.status==='waived'?'No added tolls — same-state trip':q.tolls.status==='none'?'None expected':p.tollsCents>0?price(p.tollsCents):p.tollAllowanceCents?'Included in fare allowance':'No additional charge']);
   if(p.tollAllowanceCents)rows.push(['Toll allowance already in fare',price(p.tollAllowanceCents)]);
   if(p.discountCents)rows.push(['Eligible Discount','−'+price(p.discountCents)]);
