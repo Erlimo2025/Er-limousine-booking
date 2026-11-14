@@ -1,15 +1,16 @@
 # Official 2026 toll tariffs — inactive preparation
 
-**Policy update:** the default new-quote mode is now the operator-approved
-[advance estimate policy](estimated-toll-policy.md), with included unknown tolls
-within NJ/NYC. The strict evidence/settlement requirements below describe optional
-`ROUTE_TOLLS_MODE=verified` and historical accepted-snapshot compatibility.
-They are not prerequisites for the new advance-estimate mode. Both modes remain
-behind the disabled customer-charging flag; this is not activation approval.
+The [advance estimate policy](estimated-toll-policy.md) defines new toll
+eligibility per direction, from a verified New Jersey pickup to a verified NYC
+destination. An unavailable estimate on that direction requires manual review.
+The strict evidence and settlement requirements below describe optional
+`ROUTE_TOLLS_MODE=verified` and compatibility with historical accepted snapshots.
+Advance estimate mode has its own evidence requirements. Both modes require
+the customer-charging flag.
 
 The reusable road-network replacement is implemented in `services/toll-road-network.js`
-and used by new toll-enabled interstate quotes. It replaces full-route/address-pair
-approvals. It is **not activated or production-certified**. Both feature flags
+and used by new toll-eligible directions in verified mode. It replaces
+full-route/address-pair approvals. It is **not activated or production-certified**. Both feature flags
 remain disabled by default. No real fleet classification, settled E-ZPass history,
 public road-network dataset or additional commercial tariff table is certified
 for activation by this PR. Synthetic test evidence must never be copied into production.
@@ -50,11 +51,11 @@ Sources checked October 31, 2026:
 * [Google geometry/static-duration fields](https://developers.google.com/maps/documentation/routes/reference/rest/v2/TopLevel/computeRoutes)
 * [Google toll-estimate scope and commercial limitations](https://developers.google.com/maps/documentation/routes/calculate_toll_fees)
 
-Same verified pickup/destination state: no added tolls, even on a tolled route.
-Regular interstate bookings consider the entire selected route, including its
-same-state road segments. Hourly behavior is unchanged. Eligible EWR → Manhattan
-SUV remains **exactly $150 total, tolls included**, without coupon, surcharge or
-gratuity additions; unknown internal toll costs do not block or increase it.
+Verified directions outside the NJ-to-NYC policy add $0 in customer tolls.
+A toll-eligible direction considers the entire selected route, including its
+same-state road segments. Hourly behavior is unchanged. The qualifying EWR →
+Manhattan Suburban offer remains **exactly $150 total, tolls included**. Coupon,
+surcharge, gratuity and unknown internal toll costs do not change that amount.
 EWR verification, A/B/C/General handling and Terminal C fallback remain in place.
 
 Existing fare, discount, surcharge, gratuity and toll-allowance order is unchanged.

@@ -87,13 +87,13 @@ The local configuration check verifies the signing secret’s format. Before ena
 
 ## 4. Google Routes API
 
-Automatic interstate-only route-toll calculation is implemented behind the disabled-by-default
-`ROUTE_TOLLS_ENABLED` flag. NJ E-ZPass business/Suburban 2Ax is confirmed;
-commercial-rate equivalence and congestion coverage must be verified before
-activation. Hourly booking retains its existing behavior when the complete route
-is unknown. Same-state trips add no tolls based on verified
-provider endpoint states. The qualifying EWR → Manhattan special remains $150,
-tolls included. See [toll policy, configuration, costs and tests](docs/route-tolls.md).
+Customer route-toll calculation requires `ROUTE_TOLLS_ENABLED=true`. For new
+ordinary routed quotes, only a direction from a verified New Jersey pickup to
+a verified NYC destination may add tolls. The NJ E-ZPass business account and
+Suburban 2Ax classification are confirmed. Commercial-rate equivalence and
+congestion coverage remain unverified. Hourly booking retains its existing
+behavior. The qualifying EWR → Manhattan special remains $150, tolls included.
+See [toll policy, configuration, costs and tests](docs/route-tolls.md).
 
 ### Current pickup location
 

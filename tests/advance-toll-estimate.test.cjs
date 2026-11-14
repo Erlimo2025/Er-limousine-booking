@@ -90,13 +90,27 @@ for(const choice of ['now','later'])for(const available of [true,false])test('HT
  const corrupt=structuredClone(saved.quote);corrupt.tolls.amountCents++;assert.equal(tolls.validQuote(corrupt),false);
 });
 
-test('outside coverage and unverified provider jurisdiction require review before reservation or Checkout',async t=>{
+test('verified trips outside NJ to NYC receive zero additional tolls despite browser claims',async t=>{
  const h=await fixture(t,2500,env);
  const albany=place('NY','ChIJ_mock_albany','Albany, NY');albany.addressComponents.find(c=>c.types.includes('administrative_area_level_2')).longText='Albany County';h.state.searchResults['Albany, NY']=[albany];
- for(const dropoff of ['Stamford, CT','Philadelphia, PA','Albany, NY'])for(const endpoint of ['/api/quote','/api/checkout']){
-  const r=await h.request(endpoint,{...normal,dropoff,paymentChoice:'later',dropoffState:'NY',dropoffCounty:'New York County'});assert.equal(r.status,422);assert.equal(r.body.checkoutAllowed,false);
+ for(const dropoff of ['Stamford, CT','Philadelphia, PA','Albany, NY']){
+  const trip={...normal,dropoff,paymentChoice:'later',dropoffState:'NY',dropoffCounty:'New York County'};
+  const quote=await h.request('/api/quote',trip);
+  assert.equal(quote.status,200);
+  assert.equal(quote.body.tolls.status,'none');
+  assert.equal(quote.body.pricingBreakdown.tollsCents,0);
+  assert.equal(quote.body.pricingBreakdown.interstate,true);
+  const booked=await h.request('/api/checkout',{...trip,quoteRevision:quote.body.quoteRevision});
+  assert.equal(booked.status,200);
+  const saved=h.records().find(record=>record.id===booked.body.bookingId).quote;
+  assert.equal(saved.tolls.format,undefined);
+  assert.equal(saved.tolls.reason,undefined);
+  assert.equal(saved.tolls.estimatedRouteCents,0);
+  assert.deepEqual(saved.tolls.legs,[{status:'none',amountCents:0}]);
+  assert.equal(saved.totalCents,quote.body.totalCents);
  }
- assert.equal(h.records().length,0);assert.equal(h.state.creates.length,0);
+ assert.equal(h.records().length,3);assert.equal(h.state.creates.length,0);
+ assert.equal(h.state.routes.length,6);assert.ok(h.state.routes.every(request=>!request.extraComputations));
 });
 
 test('unknown tolls require review even within all five provider-verified NYC boroughs',async t=>{
@@ -114,14 +128,18 @@ test('same-state trips waive additional tolls and hourly behavior and the $150 o
  const special=await h.request('/api/quote',{...normal,pickup:'EWR',offerCode:'EWR_MANHATTAN_SUV',promoCode:'FIRST15'});assert.equal(special.status,200);assert.equal(special.body.totalCents,15000);assert.equal(special.body.tolls.status,'included');assert.equal(special.body.discount,0);
 });
 
-test('round trips price each direction separately, share only an assumed booking-day ledger, and preserve FIRST15 order',async t=>{
+test('round trips charge only the eligible direction and preserve FIRST15 order',async t=>{
  const h=await fixture(t,2500,env);h.state.routeResult=r=>route('lincoln',r.origin.placeId.includes('midtown')?'nj_bound':'ny_bound',r.origin.placeId.includes('midtown')?0:2500,r.origin.placeId.includes('midtown'));
  const q=await h.request('/api/quote',{...normal,tripType:'roundtrip',returnDate:'2026-11-10',returnTime:'18:00',promoCode:'FIRST15'});assert.equal(q.status,200);assert.equal(h.state.routes.length,2);assert.equal(q.body.discount,Math.round(q.body.baseTotal*15)/100);assert.equal(q.body.pricingBreakdown.tollsCents,2500);assert.equal(q.body.totalCents,q.body.pricingBreakdown.totalCents);
+ assert.deepEqual(h.state.routes.map(request=>request.extraComputations),[['TOLLS'],undefined]);
 });
 
-test('uncertain Google congestion overlap on same-day round-trip legs blocks a possible duplicate charge',async t=>{
+test('an unsolicited reverse Google amount cannot introduce a second same-day charge',async t=>{
  const h=await fixture(t,2500,env);h.state.routeResult=r=>route('lincoln',r.origin.placeId.includes('midtown')?'nj_bound':'ny_bound',r.origin.placeId.includes('midtown')?900:2500,r.origin.placeId.includes('midtown'));
- const q=await h.request('/api/quote',{...normal,tripType:'roundtrip',returnDate:'2026-11-10',returnTime:'18:00'});assert.equal(q.status,422);assert.equal(q.body.checkoutAllowed,false);assert.ok(h.state.logs.some(line=>line.startsWith('{')&&JSON.parse(line).tollReason==='daily_provider_overlap_unknown'));assert.equal(h.records().length,0);
+ const q=await h.request('/api/quote',{...normal,tripType:'roundtrip',returnDate:'2026-11-10',returnTime:'18:00'});
+ assert.equal(q.status,200);
+ assert.deepEqual(h.state.routes.map(request=>request.extraComputations),[['TOLLS'],undefined]);
+ assert.equal(q.body.pricingBreakdown.tollsCents,2500);
 });
 
 test('transient toll-provider failure blocks acceptance without a distance-only fallback',async t=>{

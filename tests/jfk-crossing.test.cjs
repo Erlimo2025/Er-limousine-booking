@@ -54,7 +54,7 @@ for(const id of ['jfk_lincoln','jfk_holland'])for(const choice of ['now','later'
  assert.equal(h.records()[0].paymentStatus,'unpaid');
 });
 
-for(const [id,reason]of [['jfk_unmatched','crossing_not_matched'],['jfk_ambiguous','crossing_ambiguous'],['jfk_gwb_uncertain','congestion_entry_unknown'],['jfk_reverse','reverse_congestion_entry_unknown']])test('synthetic '+id+' remains private and fails closed when Google is also unavailable',async t=>{
+for(const id of ['jfk_unmatched','jfk_ambiguous','jfk_gwb_uncertain'])test('synthetic '+id+' remains private and fails closed when Google is also unavailable',async t=>{
  const {h,input}=await create(t,fixture(id)),original=h.state.routeResult;
  h.state.routeResult=r=>{const data=original(r);data.travelAdvisory.tollInfo={};return data;};
  for(const path of ['/api/quote','/api/checkout'])for(const paymentChoice of ['now','later']){
@@ -65,6 +65,22 @@ for(const [id,reason]of [['jfk_unmatched','crossing_not_matched'],['jfk_ambiguou
  const diagnostics=h.state.logs.filter(line=>line.startsWith('{')).map(line=>JSON.parse(line));assert.equal(diagnostics.length,4);assert.ok(diagnostics.every(d=>d.tollReason==='provider_amount_unknown'));
  assert.doesNotMatch(JSON.stringify(diagnostics),/encodedPolyline|geometryHash|latitude|longitude|matchedFacilities/);
  assert.ok(!JSON.stringify(diagnostics).includes(input.pickup));assert.ok(!JSON.stringify(diagnostics).includes(input.email));
+});
+
+test('JFK to NJ remains payable when the route is valid and toll pricing was not requested',async t=>{
+ const {h,input}=await create(t,fixture('jfk_reverse')),original=h.state.routeResult;
+ h.state.routeResult=request=>{const data=original(request);data.travelAdvisory.tollInfo={};return data;};
+ const quote=await h.request('/api/quote',input);
+ assert.equal(quote.status,200);
+ assert.equal(quote.body.tolls.status,'none');
+ assert.equal(quote.body.pricingBreakdown.tollsCents,0);
+ const booking=await h.request('/api/checkout',{...input,paymentChoice:'now',quoteRevision:quote.body.quoteRevision});
+ assert.equal(booking.status,200);
+ assert.ok(h.state.routes.every(request=>!request.extraComputations));
+ assert.equal(h.records()[0].quote.tolls.reason,undefined);
+ assert.deepEqual(h.records()[0].quote.tolls.legs,[{status:'none',amountCents:0}]);
+ assert.equal(h.state.creates.length,1);
+ assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount,quote.body.totalCents);
 });
 
 for(const fault of ['unknown_money','missing_geometry','provider_error','fallback'])test('JFK quote remains blocked with unusable Google information / '+fault,async t=>{

@@ -1344,35 +1344,44 @@ async function calculateQuote(body,req) {
   const tollProfile = tollPricingEnabled ? (tollEstimateMode
     ? routeTollPricing.customerEstimateProfile(pricing,process.env,body.vehicle)
     : routeTollPricing.vehicleProfile(process.env,body.vehicle)) : null;
-  const tollOptions = {enabled:tollPricingEnabled,profile:tollProfile,special:!!fixedOffer,stops:stopJourney?.stops};
+  const tollOptions = {enabled:tollPricingEnabled&&!!fixedOffer,profile:tollProfile,special:!!fixedOffer,stops:stopJourney?.stops};
   const origin = stopJourney?.origin || verifiedPickup;
   const destination = stopJourney?.destination || verifiedDropoff;
-  let tollEligibility=null,routePickup=origin?{placeId:origin.placeId}:body.pickup,
+  let tollEligibility=null,outboundTolls=false,returnTolls=false,routePickup=origin?{placeId:origin.placeId}:body.pickup,
     routeDropoff=destination?{placeId:destination.placeId}:body.dropoff;
   if(tollPricingEnabled && !fixedOffer && !isHourly){
     try {
       const [from,to]=stopJourney ? [stopJourney.origin,stopJourney.destination] :
         await Promise.all([verifyTollLocation(body.pickup,verifiedPickup),verifyTollLocation(body.dropoff,verifiedDropoff)]);
       tollEligibility=routeTollPricing.eligibility(from,to);
-      if(tollEstimateMode){
-        if(!routeTollPricing.advanceCoverage(from,to))throw routeTollPricing.reviewError('service_coverage_unverified');
+      outboundTolls=routeTollPricing.chargeableLeg(from,to);
+      returnTolls=isRoundTrip&&routeTollPricing.chargeableLeg(to,from);
+      if(outboundTolls===null||returnTolls===null)throw routeTollPricing.reviewError('location_unverified');
+      if(tollEstimateMode||(!outboundTolls&&!returnTolls&&from.state!==to.state)){
         tollEligibility.pickupCounty=from.county||null;tollEligibility.dropoffCounty=to.county||null;
       }
       routePickup={placeId:from.placeId};routeDropoff={placeId:to.placeId};
-      // A same-state waiver does not imply the physical route has no tolls.
-      // Do not request/charge toll estimates or require an E-ZPass profile there.
-      tollOptions.estimate=tollEstimateMode&&from.state!==to.state;
-      if(tollOptions.estimate&&!routeTollPricing.advanceEligible(tollProfile))throw routeTollPricing.reviewError('vehicle_estimate_profile_missing');
-      tollOptions.enabled=from.state!==to.state&&(!tollEstimateMode||routeTollPricing.advanceEligible(tollProfile));
-      tollOptions.official=tollOptions.enabled;
-      if(tollOptions.official&&!tollEstimateMode&&!tollProfile?.official)throw Error('Unverified official vehicle profile.');
+      if(outboundTolls||returnTolls){
+        if(tollEstimateMode&&!routeTollPricing.advanceEligible(tollProfile))throw routeTollPricing.reviewError('vehicle_estimate_profile_missing');
+        if(!tollEstimateMode&&!tollProfile?.official)throw Error('Unverified official vehicle profile.');
+        if(returnTolls){
+          tollEligibility=routeTollPricing.eligibility(to,from);
+          if(tollEstimateMode){
+            tollEligibility.pickupCounty=to.county||null;tollEligibility.dropoffCounty=from.county||null;
+          }
+        }
+      }
     }catch(error){throw error?.tollReview===true?error:routeTollPricing.reviewError('location_unverified');}
   }
   const departure = !isHourly && (isRoundTrip || tollPricingEnabled || stopJourney) ?
     new Date(parseServiceDateTime(body.date, body.time, "pickup")).toISOString() : undefined;
-  const route = isHourly ? null : await getRouteEstimate(routePickup,routeDropoff,departure,tollOptions);
+  const route = isHourly ? null : await getRouteEstimate(routePickup,routeDropoff,departure,
+    outboundTolls?{...tollOptions,enabled:true,official:true}:tollOptions);
+  const returnAt = isRoundTrip ? parseServiceDateTime(body.returnDate, body.returnTime, "return") : null;
+  if(isRoundTrip&&(outboundTolls||returnTolls)&&returnAt<Date.parse(departure)+route.minutes*60000)
+    throw routeTollPricing.reviewError('route_time_order');
   const returnRoute = isRoundTrip ? await getRouteEstimate(routeDropoff,routePickup,
-    new Date(parseServiceDateTime(body.returnDate, body.returnTime, "return")).toISOString(),tollOptions) : null;
+    new Date(returnAt).toISOString(),{...tollOptions,enabled:returnTolls,official:returnTolls}) : null;
 
   /*
     Verify fixed offer before
@@ -1503,10 +1512,15 @@ async function calculateQuote(body,req) {
   // booking flow; absence of a toll snapshot is not a zero-cost toll estimate.
   if(tollPricingEnabled && !isHourly){
     try {
-      const allowance=routeTollPricing.cents(pricing.tollAllowance)*(isRoundTrip?2:1);
-      const tolls=tollOptions.estimate ? routeTollPricing.priceAdvanceRoutes([route.officialRoute,...(returnRoute?[returnRoute.officialRoute]:[])],tollProfile,tollEligibility) : tollOptions.official ? routeTollPricing.priceOfficialRoutes([route.officialRoute,...(returnRoute?[returnRoute.officialRoute]:[])],tollProfile,process.env,tollEligibility,{now:Date.now()}) :
-        routeTollPricing.aggregateTolls([route.tolls,...(returnRoute?[returnRoute.tolls]:[])],tollProfile,false,allowance,tollEligibility);
-      if(tollOptions.official&&tolls.status==='estimated'){tolls.allowanceCents=allowance;tolls.amountCents=Math.max(0,tolls.estimatedRouteCents-allowance);}
+      const chargedRoute=outboundTolls?route.officialRoute:returnRoute?.officialRoute;
+      const tolls=chargedRoute ? (tollEstimateMode
+        ? routeTollPricing.priceAdvanceRoutes([chargedRoute],tollProfile,tollEligibility)
+        : routeTollPricing.priceOfficialRoutes([chargedRoute],tollProfile,process.env,tollEligibility,{now:Date.now()}))
+        : routeTollPricing.noAddedTolls(tollEligibility,isRoundTrip?2:1);
+      if(chargedRoute&&tolls.status==='estimated'){
+        tolls.allowanceCents=routeTollPricing.cents(pricing.tollAllowance);
+        tolls.amountCents=Math.max(0,tolls.estimatedRouteCents-tolls.allowanceCents);
+      }
       if(tolls.status==='unknown'||tolls.status==='absorbed')throw routeTollPricing.reviewError(tolls.reviewReason);
       routeTollPricing.attachTolls(normalQuote,tolls);
     }catch(error){throw error?.tollReview===true?error:routeTollPricing.reviewError(error?.reason);}
