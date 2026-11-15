@@ -26,6 +26,7 @@ async function harness(t, env = {}, saved = "[]", injectedStore, startedAt = Dat
   const state = { creates: [], sessions: new Map(), googleCalls: 0, routes: [], timeout: false,
     googleError: false, fail: null, retrieveError: false, createDelay: 0, timeoutMs: null };
   state.logs=[];state.emailMessages=[];state.emailFail=false;state.bookingMessages=[];state.bookingCalls=[];state.bookingKeys=new Set();
+  state.enrollmentMessages=[];state.enrollmentCalls=[];state.enrollmentFail=false;
   const storageFailures = {};
   const {memoryStore} = require("./helpers/memory-storage.cjs");
   const testStore = injectedStore || memoryStore(JSON.parse(saved), undefined, storageFailures);
@@ -130,7 +131,12 @@ async function harness(t, env = {}, saved = "[]", injectedStore, startedAt = Dat
       if (name === "dotenv") return {config() {}};
       if (name === "express") return express;
       if (name === "stripe") return MockStripe;
-      if (name === "./services/email") return {createEmailProvider:options=>{if(env.TEST_VALIDATE_EMAIL_CONFIG)require('../services/email').createEmailProvider(options);if(env.TEST_RECOVERY_CONFIG_FAILURE)throw new Error('synthetic provider configuration');return {enabled:options.enabled,sendBookingEmail:async message=>{if(state.bookingOnCall)await state.bookingOnCall();state.bookingCalls.push({...message});if(state.emailFail)throw new Error('synthetic email secret marker');if(!state.bookingKeys.has(message.idempotencyKey)){state.bookingKeys.add(message.idempotencyKey);state.bookingMessages.push({...message});}if(state.bookingLoseResponse){state.bookingLoseResponse=false;throw new Error('synthetic lost email response');}},sendResetLink:async message=>{if(state.emailFail)throw new Error('synthetic email secret marker');state.emailMessages.push({...message});}};}};
+      if (name === "./services/email") return {createEmailProvider:options=>{if(env.TEST_VALIDATE_EMAIL_CONFIG)require('../services/email').createEmailProvider(options);if(env.TEST_RECOVERY_CONFIG_FAILURE)throw new Error('synthetic provider configuration');return {enabled:options.enabled,sendBookingEmail:async message=>{if(state.bookingOnCall)await state.bookingOnCall();state.bookingCalls.push({...message});if(state.emailFail)throw new Error('synthetic email secret marker');if(!state.bookingKeys.has(message.idempotencyKey)){state.bookingKeys.add(message.idempotencyKey);state.bookingMessages.push({...message});}if(state.bookingLoseResponse){state.bookingLoseResponse=false;throw new Error('synthetic lost email response');}},sendResetLink:async message=>{if(state.emailFail)throw new Error('synthetic email secret marker');state.emailMessages.push({...message});},
+        sendEnrollmentLink:async message=>{
+          state.enrollmentCalls.push({...message});
+          if(state.enrollmentFail)throw new Error('synthetic enrollment provider failure');
+          state.enrollmentMessages.push({...message});
+        }};}};
       if (name === "./services/booking-emails") return require("../services/booking-emails");
       if (name === "./services/booking-stops") return require("../services/booking-stops");
       if (name === "./services/quote-approval") return require("../services/quote-approval");
@@ -203,7 +209,32 @@ async function harness(t, env = {}, saved = "[]", injectedStore, startedAt = Dat
     return result;
   }
 
+  // Keep unrelated login, booking and payment tests on synthetic historical
+  // accounts. Enrollment tests send the actual wire request via requestRaw.
+  async function seedCustomer(body) {
+    const customers = require("../auth/customers");
+    const email = customers.email(body.email), phone = customers.phone(body.phone);
+    const fullName = typeof body.fullName === "string" ? body.fullName.trim().replace(/\s+/g, " ") : "";
+    if (!email || !phone || !customers.passwordValid(body.password) || fullName.length < 2 || fullName.length > 120) {
+      return {status:400,body:{error:"Invalid customer fixture."},headers:new Headers()};
+    }
+    const customer = {id:crypto.randomUUID(),full_name:fullName,normalized_email:email.normalized,display_email:email.display,
+      normalized_phone:phone.normalized,display_phone:phone.display,password_hash:await customers.hashPassword(body.password)};
+    const session = crypto.randomBytes(32).toString("base64url");
+    const created = new Date(clock), expires = new Date(clock + customers.SESSION_MS);
+    const headers = new Headers({"cache-control":"no-store"});
+    const saved = await testStore.registerCustomer(customer,{created,expires,hash:customers.hashToken(session)});
+    if (!saved) return {status:400,body:{error:"Duplicate customer fixture."},headers};
+    const cookieName = production ? "__Host-er_customer_session" : "er_customer_session";
+    headers.append("set-cookie",cookieName+"="+session+"; Path=/; Max-Age="+(customers.SESSION_MS/1000)+"; HttpOnly; SameSite=Strict"+(production?"; Secure":""));
+    return {status:201,body:{customer:{fullName,email:email.display,phone:phone.display,emailVerified:null}},headers};
+  }
+
   async function request(route, body, headers = {}, method) {
+    if (route === "/api/customer/register" && (!method || method === "POST") && body && Object.hasOwn(body,"fullName") &&
+        (!headers.origin || headers.origin === new URL(env.SITE_URL || "http://localhost:3000").origin) &&
+        (!headers["sec-fetch-site"] || ["same-origin","none"].includes(headers["sec-fetch-site"])) &&
+        (!headers["content-type"] || headers["content-type"] === "application/json")) return seedCustomer(body);
     if (route === "/api/quote" && method === undefined) return preview(body, headers);
     if (route !== "/api/checkout" || (method && method !== "POST")) return requestRaw(route, body, headers, method);
     // Existing workflow tests model a customer who has reviewed a quote.
@@ -222,7 +253,7 @@ async function harness(t, env = {}, saved = "[]", injectedStore, startedAt = Dat
     get data() { return JSON.stringify(testStore.shared.records); },
     records: () => JSON.parse(JSON.stringify(testStore.shared.records)),
     advance: ms => {clock += ms;},
-    request, requestRaw,
+    request, requestRaw, seedCustomer,
     fareTerms: ({quoteApproval: _approval, ...fare}) => fare,
     async webhook(session, type = "checkout.session.completed", invalid = false) {
       const payload = JSON.stringify({id: "evt_mock", type, data: {object: session}});

@@ -5,7 +5,7 @@
   <title>My Account | ER Limousine Service</title>
   <meta name="robots" content="noindex, nofollow">
   <link rel="stylesheet" href="/account.css"><link rel="stylesheet" href="/booking-date-controls.css"><link rel="stylesheet" href="/booking-reference.css"><link rel="stylesheet" href="/booking-stops.css">
-  <script src="/trip-date-format.js" defer></script><script src="/booking-date-controls.js" defer></script><script src="/booking-reference.js" defer></script><script src="/booking-stops.js" defer></script><script src="/account.js?v=booking-stops-1" defer></script>
+  <script src="/trip-date-format.js" defer></script><script src="/booking-date-controls.js" defer></script><script src="/booking-reference.js" defer></script><script src="/booking-stops.js" defer></script><script src="/account.js?v=email-enrollment-1" defer></script>
 </head>
 <body>
 <header class="account-header" id="accountHeader">
@@ -44,13 +44,21 @@
   <p class="eyebrow">ER LIMOUSINE SERVICE</p><h1>Create Your Account</h1>
   <p class="intro">Welcome to ER Limousine Service.<br>Create an account to book rides, manage your trips, and enjoy exclusive offers.</p>
   <form id="registerForm">
-    <div class="form-field"><label for="fullName">Full Name</label><input id="fullName" autocomplete="name" required minlength="2" maxlength="120"></div>
+    <div class="form-field"><label for="registerFirstName">First Name</label><input id="registerFirstName" autocomplete="given-name" required maxlength="60"></div>
+    <div class="form-field"><label for="registerLastName">Last Name</label><input id="registerLastName" autocomplete="family-name" required maxlength="60"></div>
     <div class="form-field"><label for="registerEmail">Email Address</label><input id="registerEmail" type="email" autocomplete="username" required maxlength="254"></div>
     <div class="form-field"><label for="phone">Phone Number</label><input id="phone" type="tel" autocomplete="tel" required maxlength="40"></div>
     <div class="form-field"><label for="registerPassword">Password</label><div class="password-field"><input id="registerPassword" data-password-input type="password" autocomplete="new-password" required minlength="10" maxlength="128" aria-describedby="passwordHelp"><button class="password-toggle" type="button" data-password-toggle="registerPassword" aria-controls="registerPassword" aria-pressed="false" aria-label="Show password">Show</button></div><small id="passwordHelp">Use 10–128 characters. Passphrases are welcome.</small></div>
     <button class="primary submit-button" type="submit">CREATE ACCOUNT</button>
   </form>
   <p class="switch">Already have an account? <a href="/account.html">Log In</a></p>
+</section>
+<section id="enrollmentView" class="auth-card" aria-labelledby="enrollmentPending" hidden>
+  <p class="eyebrow">ER LIMOUSINE SERVICE</p><h1 id="enrollmentPending" tabindex="-1">Check Your Email</h1>
+  <p class="intro">If registration can proceed, you’ll receive a link to verify your email and finish creating your account. Check your spam folder if the email doesn’t arrive.</p>
+  <div class="reset-actions"><button id="enrollmentResend" class="primary" type="button">Resend Verification Email</button></div>
+  <p class="switch"><a href="/account.html#create">Start Again</a></p>
+  <p class="switch"><a href="/account.html">Back to Log In</a></p>
 </section>
 <section id="recoveryView" class="auth-card" hidden>
   <p class="eyebrow">ER LIMOUSINE SERVICE</p><h1>Password Recovery</h1>
@@ -86,6 +94,10 @@
       <h2 id="profileHeading" tabindex="-1">My Profile</h2>
     </div>
     <dl class="profile-details"><div><dt>Full Name</dt><dd id="profileName"></dd></div><div><dt>Email Address (read-only)</dt><dd id="profileEmail"></dd></div><div><dt>Phone Number</dt><dd id="profilePhone"></dd></div></dl>
+    <div id="emailVerificationReminder" class="recovery-notice" hidden>
+      <span>Verify your email address to confirm you can receive account messages.</span>
+      <button id="requestEmailVerification" class="text-button" type="button">Send Verification Email</button>
+    </div>
     <button id="editProfile" class="text-button" type="button" aria-expanded="false" aria-controls="profileForm">Edit Profile</button>
     <form id="profileForm" hidden>
       <div class="form-field"><label for="editFullName">Full Name</label><input id="editFullName" autocomplete="name" required minlength="2" maxlength="120"></div>

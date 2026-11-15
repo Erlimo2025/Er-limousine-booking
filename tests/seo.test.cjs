@@ -47,7 +47,7 @@ function assertLandingGraph(nodes, landingPath) {
   assert.deepEqual(service.areaServed, serviceAreas);
 }
 
-const privatePages = ['account.html', 'admin.html', 'manage-reservation.html', 'payment-methods.html', 'payment-link-result.html', 'review.html', 'success.html', 'reset-password.html'];
+const privatePages = ['account.html', 'admin.html', 'manage-reservation.html', 'payment-methods.html', 'payment-link-result.html', 'review.html', 'success.html', 'reset-password.html', 'verify-customer-email.html'];
 
 test('homepage has a concise NJ-origin title/description, root canonical and matching social metadata', async t => {
   const h = await harness(t, {SITE_URL: 'https://unrelated.example.test'});
@@ -154,7 +154,7 @@ test('sitemap contains only approved canonical public pages, with no private/tra
   assert.deepEqual([...r.body.matchAll(/<loc>(.*?)<\/loc>/g)].map(match => match[1]), [origin + '/', origin + servicePath, origin + ewrPath]);
   assert.equal((r.body.match(/<url>/g) || []).length, 3);
   assert.match(r.body, /<\/urlset>\s*$/);
-  assert.doesNotMatch(r.body, /account|admin|dispatch|success|payment-methods|reset-password|login|signup|recovery|api\/|index\.html|jfk|lga/i);
+  assert.doesNotMatch(r.body, /account|admin|dispatch|success|payment-methods|reset-password|verify-customer-email|login|signup|recovery|api\/|index\.html|jfk|lga/i);
 });
 
 test('all private HTML pages and their API/auth surfaces carry noindex without removing no-store', async t => {
@@ -171,7 +171,7 @@ test('all private HTML pages and their API/auth surfaces carry noindex without r
   assert.equal(dashboard.status, 302);
   assert.equal(dashboard.headers.get('location'), '/account.html');
   assert.equal(dashboard.headers.get('x-robots-tag'), 'noindex, nofollow');
-  for (const url of ['/api/customer/profile', '/api/customer/trips', '/api/bookings/search', '/api/customer/payment-methods', '/api/customer/recovery/request', '/api/booking/manage/guest', '/api/admin/reservation-requests', '/internal/booking-emails']) {
+  for (const url of ['/api/customer/profile', '/api/customer/trips', '/api/bookings/search', '/api/customer/payment-methods', '/api/customer/recovery/request', '/api/customer/enrollment/confirm', '/api/customer/email-verification/confirm', '/api/booking/manage/guest', '/api/admin/reservation-requests', '/internal/booking-emails']) {
     const r = await h.request(url);
     assert.equal(r.headers.get('x-robots-tag'), 'noindex, nofollow');
     assert.ok(r.status >= 400, url);

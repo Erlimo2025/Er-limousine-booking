@@ -9,7 +9,7 @@ function hidePasswords(){
 }
 function show(view){
   hidePasswords();
-  for(const name of ['login','register','dashboard','recovery'])if(el(name+'View'))el(name+'View').hidden=name!==view;
+  for(const name of ['login','register','enrollment','dashboard','recovery'])if(el(name+'View'))el(name+'View').hidden=name!==view;
   const signedIn=view==='dashboard';
   closeAccountMenu();
   el('accountNavigation').hidden=!signedIn;
@@ -31,6 +31,8 @@ function dashboard(customer){
 function displayProfile(customer){
   el('welcome').textContent='Welcome, '+displayFirstName(customer.fullName);
   el('profileName').textContent=customer.fullName;el('profileEmail').textContent=customer.email;el('profilePhone').textContent=customer.phone;
+  const reminder=el('emailVerificationReminder');
+  if(reminder)reminder.hidden=customer.emailVerified===true;
 }
 function closeProfileEditor(){
  if(!el('profileForm'))return;
@@ -67,19 +69,60 @@ async function api(path,data){
   if(!response.ok)throw Object.assign(new Error(result.error || 'Service temporarily unavailable. Please try again.'),{status:response.status});
   return result;
 }
-function authForm(id,path,values){
-  el(id).addEventListener('submit',async event=>{
+function authForm(id,path,values,onSuccess){
+  const form=el(id),button=form.querySelector('button[type=submit]');
+  const password=form.querySelector('[data-password-input]');
+  form.addEventListener('submit',async event=>{
     event.preventDefault();
+    if(button.disabled)return;
     const generation=++accountGeneration;
-    const button=el(id).querySelector('button[type=submit]');button.disabled=true;el('message').textContent='';
+    button.disabled=true;el('message').textContent='';
     try{
-      const result=await api(path,values());if(generation!==accountGeneration)return;el(id).reset();dashboard(result.customer);history.replaceState(null,'','/account/dashboard');
-    }catch(error){el('message').textContent=error.message;}
-    finally{el(id).querySelector('[data-password-input]').value='';hidePasswords();button.disabled=false;}
+      const request=api(path,values());
+      password.value='';hidePasswords();
+      const result=await request;
+      if(generation!==accountGeneration)return;
+      form.reset();onSuccess(result);
+    }catch(error){if(generation===accountGeneration)el('message').textContent=error.message;}
+    finally{button.disabled=false;}
   });
 }
-authForm('loginForm','login',()=>({email:el('loginEmail').value,password:el('loginPassword').value}));
-authForm('registerForm','register',()=>({fullName:el('fullName').value,email:el('registerEmail').value,phone:el('phone').value,password:el('registerPassword').value}));
+authForm('loginForm','login',()=>({email:el('loginEmail').value,password:el('loginPassword').value}),result=>{
+  dashboard(result.customer);history.replaceState(null,'','/account/dashboard');
+});
+authForm('registerForm','register',()=>({
+  firstName:el('registerFirstName').value,lastName:el('registerLastName').value,
+  email:el('registerEmail').value,phone:el('phone').value,password:el('registerPassword').value
+}),()=>{
+  history.replaceState(null,'','/account.html#check-email');
+  show('enrollment');el('enrollmentPending').focus();
+});
+const verificationRequestNotice='If verification can proceed, an email with a new link will be sent.';
+async function requestVerification(button,path,status,{signedIn=false}={}){
+  if(button.disabled)return;
+  const generation=accountGeneration;
+  button.disabled=true;status.textContent='';
+  try{
+    await api(path,{});
+    if(generation!==accountGeneration)return;
+    status.textContent=verificationRequestNotice;
+    status.classList.add('success');
+  }catch(error){
+    if(generation!==accountGeneration)return;
+    if(signedIn&&error.status===401){
+      accountGeneration++;clearPrivateAccount();show('login');
+      history.replaceState(null,'','/account.html');
+      el('message').textContent='Please log in to continue.';
+    }else{
+      status.classList.remove('success');
+      status.textContent=error.message;
+    }
+  }finally{button.disabled=false;}
+}
+el('enrollmentResend')?.addEventListener('click',event=>
+  requestVerification(event.currentTarget,'enrollment/resend',el('message')));
+el('requestEmailVerification')?.addEventListener('click',event=>
+  requestVerification(event.currentTarget,'email-verification/request',el('profileStatus'),{signedIn:true}));
 for(const button of document.querySelectorAll('[data-password-toggle]')){
   button.addEventListener('click',()=>{
     const input=el(button.dataset.passwordToggle),visible=input.type==='password';
@@ -100,11 +143,15 @@ async function logout(){
   finally{button.disabled=false;}
 }
 el('navLogout').addEventListener('click',logout);
-async function load(){const generation=++accountGeneration;clearPrivateAccount();try{const result=await api('profile');if(generation!==accountGeneration)return;dashboard(result.customer);}catch(_){if(generation!==accountGeneration)return;show(location.hash==='#create'?'register':location.hash==='#recover'?'recovery':'login');}}
+function signedOutView(){
+  return {'#create':'register','#recover':'recovery','#check-email':'enrollment'}[location.hash]||'login';
+}
+async function load(){const generation=++accountGeneration;clearPrivateAccount();try{const result=await api('profile');if(generation!==accountGeneration)return;dashboard(result.customer);}catch(_){if(generation!==accountGeneration)return;show(signedOutView());}}
 window.addEventListener('hashchange',()=>{
   // Profile navigation must not switch an authenticated dashboard to the login view.
   if(location.hash==='#profile' && !el('dashboardView').hidden)return;
-  el('loginForm').reset();el('registerForm').reset();show(location.hash==='#create'?'register':location.hash==='#recover'?'recovery':'login');
+  accountGeneration++;
+  el('loginForm').reset();el('registerForm').reset();show(signedOutView());
 });
 window.addEventListener('pageshow',()=>load());
 
@@ -170,6 +217,7 @@ function clearPrivateAccount(){
  closeProfileEditor();
  closeAccountMenu();
  clearTrips();for(const id of ['profileName','profileEmail','profilePhone','welcome'])el(id).textContent='';
+ if(el('emailVerificationReminder'))el('emailVerificationReminder').hidden=true;
  el('dashboardView').hidden=true;el('accountNavigation').hidden=true;
 }
 function tripCard(trip,view='upcoming'){

@@ -309,9 +309,10 @@ try { reservationStore = createStore(process.env); }
 catch (_) { console.error("Reservation storage configuration unavailable."); process.exitCode = 1; }
 const recoveryEmailsEnabled=process.env.CUSTOMER_EMAIL_RECOVERY_ENABLED==='true';
 const bookingEmailsEnabled=process.env.BOOKING_EMAILS_ENABLED===undefined?recoveryEmailsEnabled:process.env.BOOKING_EMAILS_ENABLED==='true';
-let recoveryEmailProvider,bookingEmailProvider,recoveryConfigurationFailed=false;
+let recoveryEmailProvider,bookingEmailProvider,enrollmentEmailProvider,recoveryConfigurationFailed=false;
 try {
  const provider=require('./services/email').createEmailProvider({enabled:recoveryEmailsEnabled||bookingEmailsEnabled,apiKey:recoveryEmailsEnabled||bookingEmailsEnabled?process.env.RESEND_API_KEY:undefined,from:process.env.CUSTOMER_RECOVERY_FROM,siteUrl:SITE_URL,production:productionHttps});
+ enrollmentEmailProvider=provider;
  recoveryEmailProvider={...provider,enabled:recoveryEmailsEnabled&&provider.enabled};
  bookingEmailProvider={...provider,enabled:bookingEmailsEnabled&&provider.enabled};
 }catch (_) {
@@ -331,6 +332,20 @@ async function runBookingReferenceBackfill() {
   }
 }
 setInterval(runBookingReferenceBackfill, 60000).unref();
+let enrollmentCleanupRunning=false;
+async function runEmailEnrollmentCleanup(){
+  if(enrollmentCleanupRunning || !reservationStore?.cleanupEmailEnrollments)return;
+  enrollmentCleanupRunning=true;
+  try {
+    await storageReady;
+    await reservationStore.cleanupEmailEnrollments(Date.now());
+  } catch (_) {
+    logDiagnostic({referenceId:crypto.randomUUID()},503,'storage_unavailable','postgresql');
+  } finally {
+    enrollmentCleanupRunning=false;
+  }
+}
+setInterval(runEmailEnrollmentCleanup, 60000).unref();
 const reportBookingEmailFailure=()=>logDiagnostic({referenceId:crypto.randomUUID(),route:{path:'/internal/booking-emails'}},503,'provider_error','resend');
 const bookingEmailService=require('./services/booking-emails').createBookingEmails({store:reservationStore,provider:bookingEmailProvider,siteUrl:SITE_URL,
  contact:{email:process.env.COMPANY_EMAIL || 'bookings@erlimousineservice.com',phone:process.env.COMPANY_PHONE || '(973) 555-0100'},
@@ -1934,7 +1949,9 @@ app.use(
 );
 
 const customerAuth=require('./auth/customers').installCustomerAuth(app,{store:reservationStore,route,rateLimit,
-  validOrigin:validAdminOrigin,secure:adminCookieSecure,now:()=>Date.now()});
+  validOrigin:validAdminOrigin,secure:adminCookieSecure,siteUrl:SITE_URL,clientKey,emailProvider:enrollmentEmailProvider,
+  reportFailure:(req,provider)=>logDiagnostic(req,503,provider==='resend'?'provider_error':'storage_unavailable',provider),
+  now:()=>Date.now()});
 const customerPaymentService=require('./routes/customer-payment-methods').installCustomerPaymentMethods(app,{store:reservationStore,stripe,customerAuth,route,
   enabled:process.env.CUSTOMER_PAYMENT_METHODS_ENABLED==='true',siteUrl:SITE_URL,publishableKey:process.env.STRIPE_PUBLISHABLE_KEY,production:adminCookieSecure,clientKey,
   reportFailure:(req,status,provider)=>logDiagnostic(req,status,'provider_error',provider),now:()=>Date.now()});
@@ -1973,6 +1990,11 @@ app.use(['/payment-methods.html','/payment-methods.js'],(req,res,next)=>{
   res.set({'Cache-Control':'no-store','Referrer-Policy':'no-referrer','Content-Security-Policy':"default-src 'none'; script-src 'self' https://js.stripe.com https://*.js.stripe.com; script-src-attr 'none'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://api.stripe.com; frame-src https://js.stripe.com https://*.js.stripe.com https://hooks.stripe.com; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self'"});next();
 });
 app.use(['/reset-password.html','/reset-password.js'],(req,res,next)=>{res.set({'Cache-Control':'no-store','Referrer-Policy':'no-referrer','Content-Security-Policy':"default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'"});next();});
+app.use(['/verify-customer-email.html','/verify-customer-email.js'],(req,res,next)=>{
+  res.set({'Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Robots-Tag':'noindex, nofollow',
+    'Content-Security-Policy':"default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'"});
+  next();
+});
 
 require('./services/public-seo').installPublicSeo(app, {
   publicDirectory: path.join(__dirname, 'public'), contentSecurityPolicy,
@@ -3098,6 +3120,7 @@ app.use((error,req,res,next)=> {
 
 storageReady.then(() => {
 void runBookingReferenceBackfill();
+void runEmailEnrollmentCleanup();
 void runBookingEmails().catch(reportBookingEmailFailure);
 void runReservationRefunds().catch(()=>logDiagnostic({referenceId:crypto.randomUUID()},503,'provider_error','stripe'));
 app.listen(
