@@ -351,8 +351,17 @@ test('authenticated owner receipt and guest status expose the same safe breakdow
  const q=await h.request('/api/quote',normal,auth),r=await h.request('/api/checkout',{...normal,paymentChoice:'later',quoteRevision:q.body.quoteRevision},auth),id=r.body.bookingId;
  const owned=await h.request('/api/customer/trips/'+id,undefined,auth);assert.equal(owned.status,200);assert.equal(owned.body.trip.pricingBreakdown.totalCents,10079);assert.equal(owned.body.trip.pricingBreakdown.tollsCents,2079);
  assert.equal((await h.request('/api/customer/trips/'+id,undefined,{cookie:cookie(b)})).status,404);
- const guest=await h.request('/api/booking/'+id,undefined,{cookie:access(r)});assert.equal(guest.body.quote.pricingBreakdown.totalCents,10079);assert.equal(guest.body.quote.total,100.79);assert.ok(!JSON.stringify(guest.body).includes('commercialRatesVerified'));
- const receipt=require('../services/booking-emails').bookingMessage(h.records()[0],'customer_reservation_created',{email:'support@example.test',phone:''});assert.match(receipt.text,/Trip Fare: \$80.00/);assert.match(receipt.text,/Tolls: \$20.79/);assert.doesNotMatch(receipt.text,/Port Authority crossing|MTA congestion|Eligible credit/);assert.match(receipt.text,/Total: \$100.79/);
+ const confirmation=await h.request('/api/booking/'+id,undefined,auth);assert.equal(confirmation.status,200);
+ assert.equal((await h.request('/api/booking/'+id,undefined,{cookie:access(r)})).status,401);
+ const guestTrip={...normal,email:'toll-guest@example.test',phone:'2035550182'};
+ const guestQuote=await h.request('/api/quote',guestTrip,{cookie:''});
+ const guestBooking=await h.request('/api/checkout',{...guestTrip,paymentChoice:'later',quoteRevision:guestQuote.body.quoteRevision},{cookie:''});
+ assert.equal(guestBooking.status,200);
+ const guest=await h.request('/api/booking/'+guestBooking.body.bookingId,undefined,{cookie:access(guestBooking)});
+ assert.equal(guest.status,200);assert.deepEqual(guest.body.quote.pricingBreakdown,confirmation.body.quote.pricingBreakdown);
+ assert.equal(guest.body.quote.pricingBreakdown.totalCents,10079);assert.equal(guest.body.quote.total,100.79);
+ assert.ok(!JSON.stringify(guest.body).includes('commercialRatesVerified'));
+ const receipt=require('../services/booking-emails').bookingMessage(h.records().find(record=>record.id===id),'customer_reservation_created',{email:'support@example.test',phone:''});assert.match(receipt.text,/Trip Fare: \$80.00/);assert.match(receipt.text,/Tolls: \$20.79/);assert.doesNotMatch(receipt.text,/Port Authority crossing|MTA congestion|Eligible credit/);assert.match(receipt.text,/Total: \$100.79/);
 });
 
 test('Trip Summary uses server cents, shows inclusive $150 without a lower invented fare, and does not display unknown tolls as zero',()=>{
