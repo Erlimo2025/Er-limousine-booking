@@ -1,6 +1,6 @@
 // All SQL is parameterized; failures never expose provider diagnostics.
 function customerStorage(pool,transaction,safe) {
- const columns='c.id,c.full_name,c.display_email,c.display_phone';
+ const columns='c.id,c.full_name,c.display_email,c.display_phone,c.email_verified_at';
  return {
   updateCustomerProfile:(id,hash,changes,now)=>transaction(async client=>{
    const customer=(await client.query("SELECT id FROM er_customers WHERE id=$1 AND account_status='active' FOR UPDATE",[id])).rows[0];
@@ -8,7 +8,7 @@ function customerStorage(pool,transaction,safe) {
    const session=await client.query('SELECT customer_id FROM er_customer_sessions WHERE token_hash=$1 AND customer_id=$2 AND expires_at>$3 FOR SHARE',[hash,id,new Date(now)]);
    if(!session.rowCount)return null;
    try{
-    return (await client.query('UPDATE er_customers SET full_name=COALESCE($2,full_name),normalized_phone=COALESCE($3,normalized_phone),display_phone=COALESCE($4,display_phone),updated_at=$5 WHERE id=$1 RETURNING id,full_name,display_email,display_phone',[id,changes.fullName ?? null,changes.phone?.normalized ?? null,changes.phone?.display ?? null,new Date(now)])).rows[0];
+    return (await client.query('UPDATE er_customers SET full_name=COALESCE($2,full_name),normalized_phone=COALESCE($3,normalized_phone),display_phone=COALESCE($4,display_phone),updated_at=$5 WHERE id=$1 RETURNING id,full_name,display_email,display_phone,email_verified_at',[id,changes.fullName ?? null,changes.phone?.normalized ?? null,changes.phone?.display ?? null,new Date(now)])).rows[0];
    }catch(error){if(error.code==='23505')throw Object.assign(new Error('Unable to update profile with these details.'),{status:400});throw error;}
   }),
   customerByEmail:email=>safe(async()=> (await pool.query('SELECT * FROM er_customers WHERE normalized_email=$1',[email])).rows[0] || null),

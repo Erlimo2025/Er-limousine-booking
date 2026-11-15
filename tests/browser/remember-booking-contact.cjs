@@ -232,10 +232,12 @@ test(engine + ' a signed-in customer never inherits device contact from another 
   const {h, input, page, context} = await setup(t);
   await seed(page);
   const account = {fullName: 'Account Owner', email: 'signed-in@example.test', phone: '2025550188', password: 'Synthetic browser password'};
-  const registration = await context.request.post(h.url + '/api/customer/register', {
-    data: account, headers: {Origin: h.url, 'Sec-Fetch-Site': 'same-origin'}
+  const seeded = await h.seedCustomer(account);
+  assert.equal(seeded.status, 201);
+  const login = await context.request.post(h.url + '/api/customer/login', {
+    data: {email: account.email, password: account.password}, headers: {Origin: h.url, 'Sec-Fetch-Site': 'same-origin'}
   });
-  assert.equal(registration.status(), 201);
+  assert.equal(login.status(), 200);
   const pending = gateResponse(page);
   await customerStep(page, input);
   assert.deepEqual(await (await pending).json(), {allowRememberedContact: false});

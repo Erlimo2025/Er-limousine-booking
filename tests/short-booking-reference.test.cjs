@@ -281,7 +281,7 @@ test('migration 018 and repeatable concurrent backfill preserve 123 legacy reser
   assert.deepEqual(before.map(rows => rows.length), [123, 1, 1, 1]);
 
   await store.migrate();
-  assert.deepEqual(await versions(), Array.from({length: 18}, (_, i) => i + 1));
+  assert.deepEqual(await versions(), Array.from({length: 19}, (_, i) => i + 1));
   const missing = async () => (await pool.query(
     'SELECT id FROM er_reservations WHERE booking_reference IS NULL ORDER BY id'
   )).rows.map(row => row.id);

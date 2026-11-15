@@ -7,6 +7,9 @@ const auth=require('../auth/customers');
 const testPath=path.join(__dirname,'security-abuse.test.cjs'),source=fs.readFileSync(testPath,'utf8');
 const {harness}=new Function('require','__dirname',source.slice(0,source.indexOf('test("approved prices'))+'\nreturn {harness};')(createRequire(testPath),__dirname);
 const account={fullName:'Zoë García',email:'Customer@Example.test',phone:'(201) 555-0199',password:'A comfortable test passphrase'};
+const enrollment={firstName:'Zoë',lastName:'García',email:account.email,phone:account.phone,password:account.password};
+const enrollmentEnabled={BOOKING_EMAILS_ENABLED:'true'};
+const enrollmentOrigin={origin:'http://localhost:3000','sec-fetch-site':'same-origin'};
 const cookie=r=>r.headers.getSetCookie().find(x=>x.includes('er_customer_session'))?.split(';')[0];
 const register=h=>h.request('/api/customer/register',account);
 const profileUpdate=(h,c,body,extra={})=>h.request('/api/customer/profile',body,{cookie:c,origin:'http://localhost:3000','sec-fetch-site':'same-origin',...extra});
@@ -38,7 +41,7 @@ test('profile edits use the session owner, preserve historical bookings/payment 
  const booking=await h.request('/api/checkout',{pickup:'EWR',pickupPlaceId:'ChIJ7wzsxeFSwokRhvLXxTe087M',dropoff:'Manhattan',date:'2026-11-10',time:'12:00',vehicle:'suv',passengers:2,tripType:'oneway',firstName:'Original',lastName:'Snapshot',email:account.email,phone:account.phone,paymentChoice:'later'},{cookie:c});
  assert.equal(booking.status,200);const snapshots=h.records(),owner=await h.testStore.reservationOwner(booking.body.bookingId);
  for(const [body,expected] of [[{fullName:'  Zoë   Updated  '},{fullName:'Zoë Updated',phone:account.phone}],[{phone:'+1 (973) 555-0123'},{fullName:'Zoë Updated',phone:'+1 (973) 555-0123'}],[{fullName:'Final Owner',phone:'973-555-0190'},{fullName:'Final Owner',phone:'973-555-0190'}]]){
-  const r=await profileUpdate(h,c,body);assert.equal(r.status,200);assert.deepEqual(r.body.customer,{...expected,email:account.email});assert.match(r.headers.get('cache-control'),/no-store/);assert.equal(r.headers.get('referrer-policy'),'no-referrer');
+  const r=await profileUpdate(h,c,body);assert.equal(r.status,200);assert.deepEqual(r.body.customer,{...expected,email:account.email,emailVerified:null});assert.match(r.headers.get('cache-control'),/no-store/);assert.equal(r.headers.get('referrer-policy'),'no-referrer');
  }
  assert.equal(stored.id,id);assert.equal(stored.normalized_phone,'+19735550190');assert.deepEqual(foreign,beforeForeign);
  assert.deepEqual(await h.testStore.paymentMapping(id),beforeMapping);assert.deepEqual(h.records(),snapshots);assert.equal(await h.testStore.reservationOwner(booking.body.bookingId),owner);assert.equal(owner,id);
@@ -81,7 +84,16 @@ test('profile storage failures are sanitized and account update throttling is sh
 });
 
 test('customer registration stores only salted scrypt and session hashes; profile is minimal',async t=>{
- const h=await harness(t),r=await register(h);assert.equal(r.status,201);assert.deepEqual(Object.keys(r.body.customer).sort(),['email','fullName','phone']);
+ const h=await harness(t,enrollmentEnabled);
+ const pending=await h.requestRaw('/api/customer/register',enrollment,enrollmentOrigin);
+ assert.equal(pending.status,202);
+ assert.equal(cookie(pending),undefined);
+ const proof=pending.headers.getSetCookie().find(value=>value.startsWith('er_customer_enrollment=')).split(';')[0];
+ const {token}=h.state.enrollmentMessages[0];
+ const r=await h.requestRaw('/api/customer/enrollment/confirm',{token},{...enrollmentOrigin,cookie:proof});
+ assert.equal(r.status,201,JSON.stringify(r.body));
+ assert.deepEqual(Object.keys(r.body.customer).sort(),['email','emailVerified','fullName','phone']);
+ assert.equal(r.body.customer.emailVerified,true);
  const stored=[...h.testStore.shared.customers.values()][0],raw=cookie(r).split('=')[1];
  assert.equal(stored.normalized_email,'customer@example.test');assert.equal(stored.normalized_phone,'+12015550199');
  assert.match(stored.password_hash,/^scrypt\$v1\$65536\$8\$2\$/);assert.ok(!stored.password_hash.includes(account.password));
@@ -89,13 +101,27 @@ test('customer registration stores only salted scrypt and session hashes; profil
  assert.ok(!JSON.stringify(r.body).includes('password'));assert.match(r.headers.get('cache-control'),/no-store/);
  assert.equal((await h.request('/api/customer/profile',undefined,{cookie:cookie(r)})).body.customer.fullName,account.fullName);
 });
-test('normalized email and phone uniqueness rejects both equivalent formats',async t=>{
- const h=await harness(t);await register(h);
- for(const b of [{...account,email:' customer@example.test ',phone:'2025550199'},{...account,email:'other@example.test',phone:'+1 201-555-0199'}])assert.equal((await h.request('/api/customer/register',b)).status,400);
+test('normalized email and phone conflicts do not create accounts or expose existing identities',async t=>{
+ const h=await harness(t,enrollmentEnabled);await register(h);
+ const fresh=await h.requestRaw('/api/customer/register',{...enrollment,email:'fresh@example.test',phone:'2025550188'},enrollmentOrigin);
+ assert.equal(fresh.status,202);
+ let conflictingPhoneProof;
+ for(const b of [{...enrollment,email:' customer@example.test ',phone:'2025550199'},{...enrollment,email:'other@example.test',phone:'+1 201-555-0199'}]){
+  const result=await h.requestRaw('/api/customer/register',b,enrollmentOrigin);
+  assert.equal(result.status,202);
+  assert.deepEqual(result.body,fresh.body);
+  assert.equal(cookie(result),undefined);
+  if(b.email==='other@example.test')conflictingPhoneProof=result.headers.getSetCookie().find(value=>value.startsWith('er_customer_enrollment=')).split(';')[0];
+ }
+ const {token}=h.state.enrollmentMessages.find(message=>message.email==='other@example.test');
+ const refused=await h.requestRaw('/api/customer/enrollment/confirm',{token},{...enrollmentOrigin,cookie:conflictingPhoneProof});
+ assert.equal(refused.status,400);
+ assert.equal(cookie(refused),undefined);
  assert.equal(h.testStore.shared.customers.size,1);
+ assert.deepEqual(h.state.enrollmentCalls.map(message=>message.email),['fresh@example.test','other@example.test']);
 });
-for(const [label,change] of Object.entries({badEmail:{email:'broken'},emailControl:{email:'bad\u0000@example.test'},emailDomain:{email:'test@example..test'},emailDots:{email:'test..user@example.test'},phonePlus:{phone:'201+5550199'},badPhone:{phone:'letters'},internationalUnsupported:{phone:'+442071234567'},shortPassword:{password:'short'},longPassword:{password:'a'.repeat(129)},largeName:{fullName:'x'.repeat(121)},largeEmail:{email:'x'.repeat(255)},largePhone:{phone:'1'.repeat(41)},emptyName:{fullName:' '},controlName:{fullName:'A\u0000B'}})) {
- test('registration rejects '+label,async t=>{const h=await harness(t);assert.equal((await h.request('/api/customer/register',{...account,...change})).status,400);assert.equal(h.testStore.shared.customers.size,0);});
+for(const [label,change] of Object.entries({badEmail:{email:'broken'},emailControl:{email:'bad\u0000@example.test'},emailDomain:{email:'test@example..test'},emailDots:{email:'test..user@example.test'},phonePlus:{phone:'201+5550199'},badPhone:{phone:'letters'},internationalUnsupported:{phone:'+442071234567'},shortPassword:{password:'short'},longPassword:{password:'a'.repeat(129)},largeName:{firstName:'x'.repeat(121)},largeEmail:{email:'x'.repeat(255)},largePhone:{phone:'1'.repeat(41)},emptyName:{lastName:' '},controlName:{firstName:'A\u0000B'}})) {
+ test('registration rejects '+label,async t=>{const h=await harness(t,enrollmentEnabled);assert.equal((await h.requestRaw('/api/customer/register',{...enrollment,...change},enrollmentOrigin)).status,400);assert.equal(h.testStore.shared.customers.size,0);assert.equal(h.state.enrollmentCalls.length,0);});
 }
 test('password salts are random and correct verification is constant-length',async()=>{
  const a=await auth.hashPassword(account.password),b=await auth.hashPassword(account.password);assert.notEqual(a,b);
@@ -116,8 +142,10 @@ test('failed login identity throttling persists across workers and equivalent em
  h.advance(16*60000);second.advance(16*60000);assert.equal((await h.request('/api/customer/login',{email:account.email,password:account.password})).status,200);
 });
 test('customer cookies have separate production host prefix, HttpOnly, Secure, Strict, Path and fixed lifetime',async t=>{
- const h=await harness(t,{NODE_ENV:'production',SITE_URL:'https://er.example.test'}),r=await register(h);
- assert.equal(r.status,201);const header=r.headers.getSetCookie()[0];
+ const h=await harness(t,{NODE_ENV:'production',SITE_URL:'https://er.example.test'});
+ await register(h);
+ const r=await h.request('/api/customer/login',{email:account.email,password:account.password});
+ assert.equal(r.status,200);const header=r.headers.getSetCookie()[0];
  for(const pattern of [/^__Host-er_customer_session=/,/HttpOnly/,/Secure/,/SameSite=Strict/,/Path=\//,/Max-Age=2592000/])assert.match(header,pattern);
  assert.ok(!header.includes('er_admin_session'));
 });
@@ -191,7 +219,13 @@ test('PostgreSQL customer integration: atomic registration, unique identities, p
 
 function accountUiHarness(){
  const vm=require('node:vm'),elements={},events={},toggles=[];
- for(const id of ['loginView','registerView','dashboardView','accountNavigation','accountShell','message','welcome','profileName','profileEmail','profilePhone','logout','navLogout','loginEmail','loginPassword','fullName','registerEmail','phone','registerPassword','loginForm','registerForm','profileForm','editProfile','editFullName','editEmail','editPhone','saveProfile','cancelProfile','profileStatus'])elements[id]={value:'',textContent:'',hidden:true,disabled:false,type:id.endsWith('Password')?'password':'text',classList:{toggle(){}},focus(){},setAttribute(){},addEventListener(event,fn){events[id+':'+event]=fn;}};
+ const html=fs.readFileSync(path.join(__dirname,'../public/account.html'),'utf8');
+ // Keep this fixture focused on account/profile UI. customer-trips.test.cjs
+ // exercises the trip list, which would otherwise add unrelated requests here.
+ for(const [,id] of html.matchAll(/id="([^"]+)"/g)){
+  if(id==='tripsPanel')continue;
+  elements[id]={value:'',textContent:'',hidden:true,disabled:false,type:id.endsWith('Password')?'password':'text',classList:{toggle(){}},focus(){},setAttribute(){},addEventListener(event,fn){events[id+':'+event]=fn;}};
+ }
  for(const name of ['login','register']){
   const input=elements[name+'Password'],button={dataset:{passwordToggle:name+'Password'},attributes:{},addEventListener(event,fn){events[name+'Toggle:'+event]=fn;},setAttribute(name,value){this.attributes[name]=value;}};
   toggles.push(button);const submit={disabled:false};

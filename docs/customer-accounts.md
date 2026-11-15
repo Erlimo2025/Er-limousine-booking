@@ -18,9 +18,46 @@ Customer mutations require same-origin browser metadata and JSON, using the exis
 
 Registration: 10 requests per IP per 15 minutes. Login: 30 requests per IP per 15 minutes. Customer APIs: 120 requests per IP per minute. In addition, a PostgreSQL atomic counter allows 20 attempts per normalized-email hash per 15 minutes across workers, whether or not the account exists. These counts include successful attempts and reset after the fixed window. No plaintext identity is stored in throttle records.
 
+## Email ownership verification
+
+New enrollment requires a confirmed email link before creating a customer or a
+session. The request accepts first and last name, email, U.S. phone, and a
+password. Pending rows contain the minimum data needed to create that account:
+name, email for delivery, normalized contacts for uniqueness, and the existing
+salted scrypt password hash.
+Active account email and phone uniqueness is checked atomically at confirmation.
+
+Enrollment links contain a random 32-byte token in a fragment on the canonical
+site. Only token and initiating-browser proof hashes are saved. Loading the page
+does not consume the link. Confirmation needs the link plus the initiating
+browser's short-lived HttpOnly cookie, or the original signup password on another
+device. Links last up to 20 minutes, drafts at most 30 minutes, and each draft
+has at most eight confirmation attempts. Cleanup removes expired drafts and
+throttle rows in bounded PostgreSQL batches. Resend rotates the link after a
+60-second cooldown, with persistent email and source limits.
+
+Historical accounts keep their account IDs, password hashes, sessions, bookings,
+and current login behavior. Their verification timestamp starts unknown. The
+profile offers optional verification of the existing mailbox and requires an
+active session for the same account to complete it. This does not verify phone
+ownership or claim guest reservations.
+
+Delivery uses the existing Resend transport when configured for booking or
+recovery email. Resend controls link tracking by sending domain. Confirm tracking
+is off before release. The application sends no tracking resources, stores no
+raw token in a retry queue, and will not activate an unsent challenge. A
+provider outage can delay new registration; resend or start again when delivery
+returns. Account verification never gates guest checkout or payment.
+
+Migration 019 is additive. It adds a nullable verification timestamp plus
+private challenge and throttle tables without changing existing unique keys or
+reservation data. Rolling back the application keeps existing records and
+sessions readable, but the baseline signup endpoint would again allow signup
+without verification. Treat that as a security rollback decision.
+
 ## Deferred work
 
-Password recovery now uses secure email links through a server-only Resend adapter; production activation requires reviewed configuration and domain tracking settings. Tests use a mocked provider. See customer-recovery.md. SMS/email enrollment verification, profile editing, account-based promotion eligibility remain deferred. Contact ownership remains unverified. Expired session rows and expired throttle rows are unusable; they currently remain in storage. A future reviewed retention job can purge expired authentication metadata without deleting customers, reservations or payment records. Provider-managed database backups and restricted database access remain required as documented for reservation storage.
+Password recovery now uses secure email links through a server-only Resend adapter; production activation requires reviewed configuration and domain tracking settings. Tests use a mocked provider. See customer-recovery.md. SMS verification and account-based promotion eligibility remain deferred. Phone ownership remains unverified. Expired session rows and expired throttle rows are unusable; they currently remain in storage. A future reviewed retention job can purge expired authentication metadata without deleting customers, reservations or payment records. Provider-managed database backups and restricted database access remain required as documented for reservation storage.
 
 Tests use synthetic identities and isolated local PostgreSQL; Stripe and Google remain mocked.
 

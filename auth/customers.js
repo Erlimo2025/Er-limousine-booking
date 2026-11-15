@@ -40,7 +40,7 @@ function phone(value) {
  let digits=value.replace(/\D/g,'');if(digits.length===11 && digits[0]==='1')digits=digits.slice(1);
  return /^[2-9]\d{2}[2-9]\d{6}$/.test(digits) ? {display:value.trim(),normalized:'+1'+digits} : null;
 }
-const profile=c=>({fullName:c.full_name,email:c.display_email,phone:c.display_phone});
+const profile=c=>({fullName:c.full_name,email:c.display_email,phone:c.display_phone,emailVerified:c.email_verified_at?true:null});
 function customerAuthentication({store,secure,now=Date.now}) {
  const name=secure?'__Host-er_customer_session':'er_customer_session';
  const cookieOptions={httpOnly:true,secure,sameSite:'strict',path:'/'};
@@ -63,7 +63,7 @@ function customerAuthentication({store,secure,now=Date.now}) {
  };
  return {name,cookieOptions,token,clear,resolve,requireCustomer:auth};
 }
-function installCustomerAuth(app,{store,route,rateLimit,validOrigin,secure,now=Date.now}) {
+function installCustomerAuth(app,{store,route,rateLimit,validOrigin,secure,siteUrl,clientKey,emailProvider,reportFailure,now=Date.now}) {
  const authentication=customerAuthentication({store,secure,now});
  const {name,cookieOptions,token,clear,requireCustomer:auth}=authentication;
  const makeSession=()=>{const raw=crypto.randomBytes(32).toString('base64url');const created=new Date(now());return {raw,hash:hashToken(raw),created,expires:new Date(created.getTime()+SESSION_MS)};};
@@ -75,19 +75,11 @@ function installCustomerAuth(app,{store,route,rateLimit,validOrigin,secure,now=D
   if(!validOrigin(req) || !req.is('application/json'))return reject(res,403,'Invalid request.');
   if(!req.body || Array.isArray(req.body) || typeof req.body!=='object')return reject(res,400,'Invalid request.');next();
  };
- app.post('/api/customer/register',rateLimit('customer-register',10,15*60*1000),mutation,route(async(req,res)=>{
-  const b=req.body,e=email(b.email),p=phone(b.phone);
-  const fullName=typeof b.fullName==='string'?b.fullName.trim().replace(/\s+/g,' '):'';
-  if(fullName.length<2 || fullName.length>120 || /[\x00-\x1f\x7f<>]/.test(fullName))return reject(res,400,'Enter a valid full name.');
-  if(!e)return reject(res,400,'Enter a valid email address.');
-  if(!p)return reject(res,400,'Enter a valid U.S. phone number.');
-  if(!passwordValid(b.password))return reject(res,400,'Use a password between 10 and 128 characters.');
-  const c={id:crypto.randomUUID(),full_name:fullName,normalized_email:e.normalized,display_email:e.display,normalized_phone:p.normalized,display_phone:p.display,password_hash:await hashPassword(b.password)};
-  const s=makeSession();
-  if(!await store.registerCustomer(c,s))return reject(res,400,'Unable to create an account with these details. Please log in or use different details.');
-  const old=token(req);if(old)await store.revokeCustomerSession(hashToken(old));
-  issue(res,s);res.status(201).json({customer:profile(c)});
- }));
+ require('./customer-email-verification').installEmailVerification(app,{
+  store,route,rateLimit,siteUrl,secure,now,clientKey,emailProvider,reportFailure,
+  email,phone,passwordValid,hashPassword,verifyPassword,hashToken,
+  requireCustomer:auth,profile,makeSession,issueSession:issue,currentSession:token
+ });
  app.post('/api/customer/login',rateLimit('customer-login',30,15*60*1000),mutation,route(async(req,res)=>{
   const e=email(req.body.email),password=req.body.password;
   const identity=hashToken(e?.normalized || 'invalid-email');

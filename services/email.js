@@ -25,7 +25,17 @@ function createEmailProvider({enabled=false,apiKey,from,siteUrl,production=false
     typeof subject!=='string'||subject.length>200||/[\r\n]/.test(subject)||typeof text!=='string'||typeof html!=='string'||text.length+html.length>60000 ||
     typeof idempotencyKey!=='string'||! /^booking-email\/[a-f0-9-]{36}$/.test(idempotencyKey))throw new Error('Email delivery unavailable.');
   await send({to:[to],subject,text,html},idempotencyKey);
- },sendResetLink:async({email,token,attemptId})=>{
+ },sendEnrollmentLink:async({email,token,attemptId,existing=false})=>{
+   if(!/^[A-Za-z0-9_-]{43}$/.test(token) || !/^[a-f0-9]{64}$/.test(attemptId))throw new Error('Email delivery unavailable.');
+   const url=new URL('/verify-customer-email.html',origin);
+   url.hash=(existing?'verify-profile=':'token=')+token;
+   const link=url.toString();
+   const heading=existing?'Verify the email on your ER Limousine Service account.':'Confirm your email to complete your ER Limousine Service registration.';
+   const expiry='This link is valid for up to 20 minutes and can be used once. If you did not request this, you can ignore this email.';
+   await send({to:[email],subject:'Verify your ER Limousine Service email',
+     text:heading+'\n\n'+link+'\n\n'+expiry,
+     html:'<p>'+heading+'</p><p><a href="'+link+'">Verify Email</a></p><p>'+expiry+'</p>'},'customer-email-verification/'+attemptId);
+  },sendResetLink:async({email,token,attemptId})=>{
   const url=new URL('/reset-password.html',origin);url.hash='token='+token;
   const link=url.toString();
   // Link has a fixed origin/path and a base64url token, not user-controlled HTML.
