@@ -98,7 +98,7 @@ test('isolated PostgreSQL integration: transactions, concurrent workers, import 
  await Promise.all([store.migrate(),second.migrate()]);
  await truncateFixtures();
  await t.test('creation commits a valid reservation; budget rejection creates nothing',async()=>{
-  const r=fixture();await store.createWithBudget(r,records=>assert.equal(records.length,0));assert.equal((await store.get(r.id)).id,r.id);
+  const r=fixture();await store.createWithBudget(r,async readBudget=>assert.deepEqual(await readBudget(Date.parse(r.createdAt)-1),[]));assert.equal((await store.get(r.id)).id,r.id);
   await assert.rejects(store.createWithBudget(fixture(),()=>{throw Object.assign(new Error('budget'),{status:429});}),e=>e.status===429);
   assert.equal((await store.list()).length,1);
  });

@@ -108,6 +108,23 @@ function createStore(env = process.env, suppliedPool) {
   }
   const decode = rows => validateRecords(rows.map(row=> {if(!plain(row.record) || row.record.id !== row.id)throw new StorageError();return row.record;}));
   const list = client => safe(async()=>decode((await (client || scope.getStore() || pool).query('SELECT id, record FROM er_reservations ORDER BY created_at DESC, id')).rows));
+  const checkAvailability = () => safe(async () => {
+    await (scope.getStore() || pool).query('SELECT 1 FROM er_reservations LIMIT 0');
+  });
+  const findCheckout = fingerprint => safe(async () => {
+    const {rows} = await (scope.getStore() || pool).query(`
+      SELECT id, record FROM er_reservations
+      WHERE record->>'checkoutFingerprint' = $1
+        AND jsonb_typeof(record->'checkoutFingerprint') = 'string'
+        AND record->>'status' IS DISTINCT FROM 'cancelled'
+      ORDER BY created_at DESC, id LIMIT 1`, [fingerprint]);
+    return decode(rows)[0] || null;
+  });
+  const hasQuoteApproval = hash => safe(async () => {
+    const {rows} = await (scope.getStore() || pool).query(`
+      SELECT EXISTS (SELECT 1 FROM er_reservations WHERE record->>'quoteApprovalHash' = $1) AS used`, [hash]);
+    return rows[0].used;
+  });
   const readBooking = (id, client, display) => safe(async () => {
     if(typeof id !== 'string' || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(id)) return null;
     const rows = (await (client || scope.getStore() || pool).query(
@@ -223,7 +240,16 @@ function createStore(env = process.env, suppliedPool) {
     return transaction(async client=>{
       // Atomic budget/read/create across processes, held only for database operations.
       await client.query('SELECT pg_advisory_xact_lock($1)',[730901]);
-      const records=await list(client);await check(records);await insert(record,client,false,association);if(record.deferredPayment && record.quote.promotion?.code==='FIRST15')await claimFirstRideWithClient(record,client);await enqueueBookingEmail(client,record,'reservation_created');await enqueueBookingEmail(client,record,'customer_reservation_created');return record;
+      await check(async since => {
+        // created_at is set from the record at insert and is stable for the life of the reservation.
+        const {rows} = await client.query(`
+          SELECT record->>'createdAt' AS "createdAt", record #>> '{customer,email}' AS email,
+            record #>> '{customer,phone}' AS phone, record->>'checkoutClientHash' AS "checkoutClientHash"
+          FROM er_reservations
+          WHERE created_at > $1 AND record->>'paymentStatus' <> 'paid'`, [new Date(since)]);
+        return rows;
+      });
+      await insert(record,client,false,association);if(record.deferredPayment && record.quote.promotion?.code==='FIRST15')await claimFirstRideWithClient(record,client);await enqueueBookingEmail(client,record,'reservation_created');await enqueueBookingEmail(client,record,'customer_reservation_created');return record;
     });
   }
   async function withActionLock(fingerprint,fn) {
@@ -347,6 +373,6 @@ function createStore(env = process.env, suppliedPool) {
   }
   const assertActionLock=key=>{if(actionScope.getStore()!==key)throw Object.assign(new Error('Reservation action is already processing. Please try again.'),{status:409});};
   const adminSearch={...require('./admin-reservations').adminReservationStorage(pool,transaction,validateRecord),...require('./admin-archives').adminArchiveStorage(transaction,validateRecord,assertActionLock),...require('./customer-reviews').customerReviewStorage(pool,transaction,safe)};
-  return {...adminSearch,...require('./dispatch-analytics').dispatchAnalyticsStorage(transaction),...require('./reservation-management').reservationManagementStorage(transaction,safe,validateRecord,()=>scope.getStore() || pool,assertActionLock),...require('./admin-payment-links').adminPaymentLinkStorage(pool,transaction,safe,validateRecord,assertActionLock),...require('./refunds').refundStorage(pool,transaction,validateRecord,assertActionLock,()=>scope.getStore() || pool),...require('./trip-management').tripManagementStorage(pool,transaction,validateRecord,assertActionLock,()=>scope.getStore() || pool),...bookingEmailStorage(pool,transaction,safe),...require('./customer-payments').customerPaymentStorage(pool,transaction,safe),...require('./customer-trips').customerTripsStorage(pool,safe,validateRecord,()=>scope.getStore() || pool),...require('./recovery').recoveryStorage(pool,transaction,safe),...require('./customers').customerStorage(pool,transaction,safe),...require('./customer-email-verification').customerEmailVerificationStorage(pool,transaction,safe),list,get,getForDisplay,backfillBookingReferences,hasPaidRide,update,createWithBudget,withActionLock,firstRideConflicts,claimFirstRide,releaseExpiredFirstRide,reconciliationCandidates,paymentConfirmationPage,abandonedDeferredCandidates,finalizeReconciliation,migrate,importLegacy,close:()=>pool.end()};
+  return {...adminSearch,...require('./dispatch-analytics').dispatchAnalyticsStorage(transaction),...require('./reservation-management').reservationManagementStorage(transaction,safe,validateRecord,()=>scope.getStore() || pool,assertActionLock),...require('./admin-payment-links').adminPaymentLinkStorage(pool,transaction,safe,validateRecord,assertActionLock),...require('./refunds').refundStorage(pool,transaction,validateRecord,assertActionLock,()=>scope.getStore() || pool),...require('./trip-management').tripManagementStorage(pool,transaction,validateRecord,assertActionLock,()=>scope.getStore() || pool),...bookingEmailStorage(pool,transaction,safe),...require('./customer-payments').customerPaymentStorage(pool,transaction,safe),...require('./customer-trips').customerTripsStorage(pool,safe,validateRecord,()=>scope.getStore() || pool),...require('./recovery').recoveryStorage(pool,transaction,safe),...require('./customers').customerStorage(pool,transaction,safe),...require('./customer-email-verification').customerEmailVerificationStorage(pool,transaction,safe),list,checkAvailability,findCheckout,hasQuoteApproval,get,getForDisplay,backfillBookingReferences,hasPaidRide,update,createWithBudget,withActionLock,firstRideConflicts,claimFirstRide,releaseExpiredFirstRide,reconciliationCandidates,paymentConfirmationPage,abandonedDeferredCandidates,finalizeReconciliation,migrate,importLegacy,close:()=>pool.end()};
 }
 module.exports={createStore,StorageError,validateRecord,validateRecords,connectionOptions};

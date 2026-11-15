@@ -354,7 +354,6 @@ let adminPaymentLinkService=null;
 const reviewInvitationService=require('./services/customer-reviews').reviewInvitations({store:reservationStore,provider:bookingEmailProvider,siteUrl:SITE_URL,secret:process.env.REVIEW_INVITATION_SECRET,now:()=>Date.now(),reportFailure:reportBookingEmailFailure});
 async function runBookingEmails(){await storageReady;await bookingEmailService.run();if(adminPaymentLinkService)await adminPaymentLinkService.runEmails();await reviewInvitationService.run();}
 const bookingEmailTimer=setInterval(()=>{void runBookingEmails().catch(reportBookingEmailFailure);},60000);bookingEmailTimer.unref();
-const readBookings = () => reservationStore.list();
 const route = handler => async (req, res, next) => {
   try { await storageReady; await handler(req,res,next); }
   catch (error) {
@@ -1337,7 +1336,7 @@ async function validateCheckoutQuote(body, quote) {
 async function calculateQuote(body,req) {
   validateBookingInput(body);
   await storageReady;
-  await readBookings();
+  await reservationStore.checkAvailability();
 
   const rate =
     getConfiguredVehicleRate(body.vehicle);
@@ -2320,14 +2319,14 @@ function checkoutFingerprint(body,flow=null) {
     ...(body.tripType === "roundtrip" ? {roundTripPricingVersion: 1} : {})}));
 }
 
-function enforceBookingBudget(bookings, body, ip) {
+async function enforceBookingBudget(readBudget, body, ip) {
   const now = Date.now();
+  const unpaid = await readBudget(now - 24 * 60 * MINUTE);
   const email = normalizeEmail(body.email);
   const phone = normalizePhone(body.phone);
   const ipHash = checkoutHash(ip);
-  const unpaid = bookings.filter(item => item.paymentStatus !== "paid");
-  const byCustomer = unpaid.filter(item => normalizeEmail(item.customer?.email) === email ||
-    normalizePhone(item.customer?.phone) === phone);
+  const byCustomer = unpaid.filter(item => normalizeEmail(item.email) === email ||
+    normalizePhone(item.phone) === phone);
   const byIp = unpaid.filter(item => item.checkoutClientHash === ipHash);
   const recentCount = (items, windowMs) => items.filter(item =>
     now - Date.parse(item.createdAt) < windowMs).length;
@@ -2539,8 +2538,7 @@ async function createCheckout(body, ip, fingerprint, req, res) {
   const payLater=body.paymentChoice==='later';
   if (!payLater) requireStripePaymentConfiguration();
 
-  const bookings = await readBookings();
-  const prior = bookings.find(item => item.checkoutFingerprint === fingerprint && item.status !== "cancelled");
+  const prior = await reservationStore.findCheckout(fingerprint);
   const reviewed = approvalHash(body.quoteApproval);
   if (prior) {
     // A fingerprint retry needs its original booking proof and any account owner session.
@@ -2578,7 +2576,7 @@ async function createCheckout(body, ip, fingerprint, req, res) {
   const mismatchedRevision = (needsRevision || body.quoteRevision !== undefined) && body.quoteRevision !== legacyRevision;
   const change = quoteApproval.changeReason(req, fingerprint, quote) ||
     (mismatchedRevision ? "fare" : null) ||
-    (reviewed && bookings.some(item => item.quoteApprovalHash === reviewed) ? "review_required" : null);
+    (reviewed && await reservationStore.hasQuoteApproval(reviewed) ? "review_required" : null);
   if (change) return {change, quote: quoteForReview(req, res, fingerprint, quote)};
 
   const booking = createBookingRecord(body, quote);
@@ -2592,7 +2590,7 @@ async function createCheckout(body, ip, fingerprint, req, res) {
   const start = parseServiceDateTime(body.date, body.time, "pickup");
   const end = body.tripType === "roundtrip" ? parseServiceDateTime(body.returnDate, body.returnTime, "return") :
     start + (body.tripType === "hourly" ? Number(body.hours) * 60 * MINUTE : 0);
-  await reservationStore.createWithBudget(booking, records => enforceBookingBudget(records, body, ip), {
+  await reservationStore.createWithBudget(booking, readBudget => enforceBookingBudget(readBudget, body, ip), {
     customerId: req.customer?.id || null, sessionHash: req.customerSessionHash,
     now: Date.now(), start: new Date(start), end: new Date(end)
   });
