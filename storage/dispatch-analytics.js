@@ -25,16 +25,31 @@ const facts = `
       ${instant("r.record->>'paidAt'")} AS recorded_paid_at,
       ${instant("r.record->>'refundConfirmedAt'")} AS recorded_refund_at,
       COALESCE(r.record->>'refundStatus'='confirmed', false) AS claims_refund,
-      COALESCE(r.record->>'paymentReviewRequired'='true' OR r.record #>> '{checkoutAttempt,state}'='review_required'
-        OR r.record->>'refundStatus' IN ('failed','review_required'), false) AS needs_review,
-      COALESCE(r.record #>> '{checkoutAttempt,state}'='submitted_unknown'
-        OR r.record #>> '{checkoutAttempt,evidence}' IN ('payment_pending','verified_paid_awaiting_webhook'), false)
+      COALESCE(r.record->>'paymentReviewRequired'='true'
+        OR (r.record->>'paymentStatus'<>'paid' AND r.record #>> '{checkoutAttempt,state}'='review_required')
+        OR r.record->>'refundStatus' IN ('failed','review_required')
+        OR confirmation.status IN ('session_unidentified','session_mismatch','provider_unavailable'), false) AS needs_review,
+      COALESCE(r.record->>'paymentStatus'<>'paid' AND (
+        confirmation.status='paid_awaiting_webhook'
+        OR (confirmation.status='payment_pending' AND r.record->>'paymentStatus'<>'failed')
+        OR r.record #>> '{checkoutAttempt,state}'='submitted_unknown'
+        OR r.record #>> '{checkoutAttempt,evidence}' IN ('payment_pending','verified_paid_awaiting_webhook')
         OR (r.record #>> '{checkoutAttempt,firstSubmittedAt}' IS NOT NULL AND r.record->>'stripeSessionId' IS NULL
-          AND (r.record #>> '{checkoutAttempt,state}') IS DISTINCT FROM 'confirmed_unpaid') AS payment_processing,
+          AND (r.record #>> '{checkoutAttempt,state}') IS DISTINCT FROM 'confirmed_unpaid')), false) AS payment_processing,
       CASE WHEN r.record #>> '{quote,currency}'='usd' AND jsonb_typeof(r.record #> '{quote,total}')='number'
         THEN CASE WHEN (r.record #>> '{quote,total}')::numeric > 0
           THEN ROUND((r.record #>> '{quote,total}')::numeric * 100) END END AS fare_cents
     FROM er_reservations r
+    LEFT JOIN LATERAL (
+      -- Match M-04's current review, including older sessions without a local attempt.
+      SELECT r.record #>> '{paymentConfirmationReview,status}' AS status
+      WHERE r.record->>'paymentStatus'<>'paid'
+        AND (r.record #>> '{quote,promotion,code}') IS DISTINCT FROM 'FIRST15'
+        AND (r.record->>'stripeSessionId' IS NOT NULL
+          OR jsonb_typeof(r.record #> '{checkoutAttempt,firstSubmittedAt}')='number')
+        AND (r.record #>> '{paymentConfirmationReview,sessionId}') IS NOT DISTINCT FROM (r.record->>'stripeSessionId')
+        AND (r.record #>> '{paymentConfirmationReview,attemptKey}') IS NOT DISTINCT FROM (r.record #>> '{checkoutAttempt,key}')
+    ) confirmation ON true
   ),
   ledger AS (
     SELECT l.*, count(*) OVER (PARTITION BY stripe_session_id) AS session_uses

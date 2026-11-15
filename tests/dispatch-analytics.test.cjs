@@ -196,6 +196,142 @@ test('signed Stripe replay produces one capture and unsettled payments stay out 
   assert.equal(report.body.summary.netCollectedCents, String(session.amount_total));
 });
 
+test('Analytics uses current payment reviews and ignores replaced sessions or attempts', pg, async t => {
+  const f = await analyticsFixture(t);
+  const checkedAt = Date.parse('2026-03-10T16:00:00Z');
+  const cases = [
+    {review: 'session_mismatch', expected: 'review'},
+    {review: 'provider_unavailable', expected: 'review'},
+    {review: 'session_unidentified', withoutSession: true, expected: 'review'},
+    {review: 'payment_pending', sessionOnly: true, expected: 'processing'},
+    {review: 'paid_awaiting_webhook', sessionOnly: true, expected: 'processing'},
+    {review: 'session_mismatch', staleSession: true, expected: 'unpaid'},
+    {review: 'paid_awaiting_webhook', staleAttempt: true, expected: 'unpaid'},
+    {review: 'session_open', expected: 'unpaid'},
+    {review: 'expired_unpaid', expected: 'unpaid'},
+    {review: 'expired_unpaid', paymentStatus: 'failed', expected: 'failed'}
+  ];
+  const expected = new Map();
+  for (const entry of cases) {
+    const trip = await f.trip({status: 'awaiting_payment', paymentStatus: entry.paymentStatus});
+    const stripeSessionId = entry.withoutSession ? null : 'cs_' + trip.id.replaceAll('-', '');
+    const checkoutAttempt = entry.sessionOnly ? null : {
+      key: trip.id, expiresAt: checkedAt / 1000 + 3600, firstSubmittedAt: checkedAt - 60_000, submissionCount: 1,
+      quote: trip.record.quote, state: entry.withoutSession ? 'submitted_unknown' : 'session_identified'
+    };
+    const paymentConfirmationReview = {
+      status: entry.review, lastResult: entry.review, checkedAt, paymentIntentId: null,
+      sessionId: entry.staleSession ? 'cs_previous_session' : stripeSessionId,
+      attemptKey: entry.staleAttempt ? 'previous-attempt' : checkoutAttempt?.key ?? null
+    };
+    await f.pool.query('UPDATE er_reservations SET record=$2 WHERE id=$1', [trip.id, {
+      ...trip.record, stripeSessionId, paymentConfirmationReview, ...(checkoutAttempt ? {checkoutAttempt} : {})
+    }]);
+    const unsettled = ['review', 'processing'].includes(entry.expected);
+    expected.set(trip.id, {status: entry.expected, capturedCents: unsettled ? null : '0', reference: trip.reference});
+  }
+
+  const admin = await f.adminLogin();
+  const query = dateQuery('2026-03-01', '2026-03-31');
+  const summary = await f.get(endpoint + '?' + query, admin);
+  assert.equal(summary.status, 200);
+  assert.equal(summary.body.summary.collectedCents, null);
+  assert.equal(summary.body.summary.netCollectedCents, null);
+  assert.equal(summary.body.summary.collectibleCents, null);
+  assert.deepEqual(summary.body.summary.coverage, {paymentGaps: 5, refundGaps: 0, unknownBalances: 5});
+  const trips = await f.get(endpoint + '/trips?' + query, admin);
+  assert.equal(trips.status, 200);
+  assert.deepEqual(new Map(trips.body.trips.map(row => [row.id, {
+    status: row.paymentStatus, capturedCents: row.capturedCents, reference: row.reference
+  }])), expected);
+  const reviewCsv = await f.get(endpoint + '/trips.csv?' + query + '&payment=review', admin);
+  assert.equal(reviewCsv.status, 200);
+  const rows = reviewCsv.body.trimEnd().split('\r\n').slice(1);
+  assert.deepEqual(rows.map(row => row.split(',')[0].slice(1, -1)).sort(),
+    [...expected.values()].filter(row => row.status === 'review').map(row => row.reference).sort());
+  assert.ok(rows.every(row => row.includes(',"review",150.00,Unavailable,0.00')));
+});
+
+for (const recoveryStatus of ['payment_pending', 'paid_awaiting_webhook']) {
+  test('Analytics reports Paid after signed confirmation of ordinary ' + recoveryStatus, pg, async t => {
+    const f = await analyticsFixture(t);
+    const checkout = await f.post('/api/checkout', {...guestBooking, paymentChoice: 'now'});
+    assert.equal(checkout.status, 200);
+    const id = checkout.body.bookingId;
+    const [session] = f.h.state.sessions.values();
+    session.status = 'complete';
+    session.payment_status = recoveryStatus === 'payment_pending' ? 'unpaid' : 'paid';
+    if (recoveryStatus === 'payment_pending') {
+      assert.equal((await f.h.webhook(session)).status, 200);
+    } else {
+      f.h.advance(31 * 60_000);
+      await f.h.context.runPaymentConfirmationRecovery();
+      assert.equal((await f.store.get(id)).paymentConfirmationReview.status, recoveryStatus);
+    }
+    const waiting = await f.store.get(id);
+    assert.equal(waiting.paymentStatus, 'unpaid');
+    assert.equal(waiting.checkoutAttempt.version, undefined);
+    const admin = await f.adminLogin();
+    const query = dateQuery('2026-10-01', guestBooking.date);
+    const trips = await f.get(endpoint + '/trips?' + query + '&payment=processing', admin);
+    assert.equal(trips.status, 200);
+    assert.deepEqual(trips.body.trips.map(row => [row.id, row.paymentStatus, row.capturedCents]), [[id, 'processing', null]]);
+    const unconfirmed = await f.get(endpoint + '?' + query, admin);
+    assert.equal(unconfirmed.body.summary.collectedCents, null);
+    assert.equal(unconfirmed.body.summary.collectibleCents, null);
+
+    session.payment_status = 'paid';
+    const event = recoveryStatus === 'payment_pending' ? 'checkout.session.async_payment_succeeded' : 'checkout.session.completed';
+    assert.equal((await f.h.webhook(session, event)).status, 200);
+    assert.equal((await f.h.webhook(session, event)).status, 200);
+    assert.equal((await f.h.webhook({...session, payment_status: 'unpaid'}, 'checkout.session.async_payment_failed')).status, 200);
+    const settled = await f.store.get(id);
+    assert.equal(settled.checkoutAttempt.evidence, waiting.checkoutAttempt.evidence);
+    assert.deepEqual(settled.quote, waiting.quote);
+    const {rows: ledger} = await f.pool.query('SELECT amount_cents::text FROM er_payment_ledger WHERE booking_id=$1', [id]);
+    const cents = String(session.amount_total);
+    assert.deepEqual(ledger, [{amount_cents: cents}]);
+
+    const paid = await f.get(endpoint + '/trips?' + query + '&payment=paid', admin);
+    assert.equal(paid.status, 200);
+    assert.deepEqual(paid.body.trips.map(row => [row.id, row.paymentStatus, row.capturedCents]), [[id, 'paid', cents]]);
+    const csv = await f.get(endpoint + '/trips.csv?' + query + '&payment=paid', admin);
+    assert.equal(csv.status, 200);
+    const amounts = (session.amount_total / 100).toFixed(2);
+    const csvRows = csv.body.trimEnd().split('\r\n').slice(1);
+    assert.equal(csvRows.length, 1);
+    assert.ok(csvRows[0].startsWith('"' + paid.body.trips[0].reference + '",'));
+    assert.ok(csvRows[0].endsWith(',"paid",' + amounts + ',' + amounts + ',0.00'));
+    const summary = await f.get(endpoint + '?' + query, admin);
+    assert.equal(summary.status, 200);
+    assert.equal(summary.body.summary.collectedCents, cents);
+    assert.equal(summary.body.summary.netCollectedCents, cents);
+    assert.equal(summary.body.summary.collectibleCents, '0');
+    assert.deepEqual(summary.body.summary.coverage, {paymentGaps: 0, refundGaps: 0, unknownBalances: 0});
+  });
+}
+
+test('verified settlement ignores stale Checkout processing and preserves refund and cancellation review states', pg, async t => {
+  const f = await analyticsFixture(t);
+  const checkoutAttempt = {state: 'session_identified', evidence: 'verified_paid_awaiting_webhook'};
+  const full = await f.trip({status: 'cancelled', fareCents: 15000, capture: 15000, checkoutAttempt});
+  await f.managedRefund(full);
+  const partial = await f.trip({status: 'cancelled', fareCents: 15000, capture: 15000, checkoutAttempt});
+  await f.register();
+  const {rows: [owner]} = await f.pool.query('SELECT id FROM er_customers');
+  await f.legacyRefund(partial, owner.id, {amount: 4500});
+  const pending = await f.trip({status: 'cancelled', fareCents: 15000, capture: 15000, checkoutAttempt});
+  await f.managedRefund(pending, {state: 'provider_identified', evidence: 'provider_pending'});
+  const review = await f.trip({status: 'cancelled', fareCents: 15000, capture: 15000, paymentReviewRequired: true, checkoutAttempt});
+  const admin = await f.adminLogin();
+  const trips = await f.get(endpoint + '/trips?' + dateQuery('2026-03-01', '2026-03-31'), admin);
+  assert.equal(trips.status, 200);
+  assert.deepEqual(new Map(trips.body.trips.map(row => [row.id, [row.paymentStatus, row.capturedCents, row.refundedCents]])), new Map([
+    [full.id, ['refunded', '15000', '15000']], [partial.id, ['partially_refunded', '15000', '4500']],
+    [pending.id, ['processing', '15000', '0']], [review.id, ['review', '15000', '0']]
+  ]));
+});
+
 test('duplicate refund identifiers count once and pending attempts never become completed refunds', pg, async t => {
   const f = await analyticsFixture(t);
   const customer = await f.register();
