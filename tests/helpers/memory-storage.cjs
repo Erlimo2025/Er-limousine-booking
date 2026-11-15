@@ -50,6 +50,13 @@ function memoryStore(initial=[], shared={records:clone(initial),locks:new Map(),
    return true;
   }),
   customerReservation:async(customerId,id)=>{fail('read');return clone(shared.tripRows.get(id)?.customer_id===customerId?shared.records.find(x=>x.id===id)||null:null);},
+  reservationAuthority:async(id,hash,now)=>{
+   fail('read');if(!shared.records.some(record=>record.id===id))return null;
+   const owner=shared.tripRows.get(id)?.customer_id;
+   if(!owner)return 'guest';
+   const session=shared.customerSessions.get(hash),customer=shared.customers.get(owner);
+   return session?.customer_id===owner && session.expires>now && customer?.account_status==='active'?'owner':null;
+  },
   reservationOwner:async id=>{fail('read');return shared.tripRows.get(id)?.customer_id || null;},
   customerTrip:async(customerId,id,now)=>{fail('read');const r=shared.records.find(x=>x.id===id),row=shared.tripRows.get(id);return r && row?.customer_id===customerId?tripDto(clone(r),now===undefined?null:require('../../services/trip-management').managementDto(r,row.start,row.end,now),shared.bookingReferences.get(id)):null;},
   customerTrips:async(customerId,q,now)=>{fail('read');const upcoming=q.view==='upcoming';

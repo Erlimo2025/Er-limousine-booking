@@ -1787,6 +1787,8 @@ function hasCustomerAccess(req, booking, checkout = false) {
   return supplied;
 }
 
+const reservationAuthority=(req,id)=>reservationStore.reservationAuthority(id,req.customerSessionHash,Date.now());
+
 function validAdminOrigin(req) {
   // Cookie authentication must not turn state-changing admin routes into CSRF targets.
   const origin = req.get("origin");
@@ -2541,22 +2543,20 @@ async function createCheckout(body, ip, fingerprint, req, res) {
   const prior = bookings.find(item => item.checkoutFingerprint === fingerprint && item.status !== "cancelled");
   const reviewed = approvalHash(body.quoteApproval);
   if (prior) {
-    // A fingerprint or quote token is never a reservation credential.
-    if (!hasCustomerAccess(req, prior, true)) {
+    // A fingerprint retry needs its original booking proof and any account owner session.
+    const retryAuthorized=async()=>hasCustomerAccess(req,prior,true) && await reservationAuthority(req,prior.id);
+    if (!await retryAuthorized()) {
       throw Object.assign(new Error("Checkout is temporarily unavailable. Please try again."), {status: 503});
     }
     req.paymentCredentialRequired = true;
-    if (req.customer) {
-      const owner = await reservationStore.reservationOwner(prior.id);
-      if (owner && owner !== req.customer.id) {
-        throw Object.assign(new Error("Checkout is temporarily unavailable. Please try again."), {status: 503});
-      }
-    }
     if (prior.deferredPayment && await expireDeferredUnderLock(prior)) {
       throw Object.assign(new Error("Reservation unavailable."), {status: 409});
     }
     // Preserve the offer/terminal checks on form retries and the stored fare.
     await verifyBookingLocations(body, req);
+    if (!await retryAuthorized()) {
+      throw Object.assign(new Error("Checkout is temporarily unavailable. Please try again."), {status: 503});
+    }
     if (prior.paymentStatus === "paid") {
       throw Object.assign(new Error("This reservation has already been paid."), {status: 409});
     }
@@ -2601,8 +2601,10 @@ async function createCheckout(body, ip, fingerprint, req, res) {
   if (payLater) return checkoutCustomerResult(SITE_URL + "/success.html?booking=" + booking.id, booking.id);
   return checkoutStoredBooking(body, booking, req, false);
 }
-async function verifyPaymentAuthority(req,booking){
-  if(req.customer){const active=await reservationStore.resolveCustomerSession(req.customerSessionHash,Date.now());if(!active || active.id!==req.customer.id)throw Object.assign(new Error('Please log in to continue.'),{status:401});}
+async function verifyPaymentAuthority(req,booking,adminPaymentLink=false){
+  const authority=adminPaymentLink?null:await reservationAuthority(req,booking.id);
+  if(!adminPaymentLink && !authority)throw Object.assign(new Error('Reservation access unavailable.'),{status:401});
+  if(req.customer && authority!=='owner'){const active=await reservationStore.resolveCustomerSession(req.customerSessionHash,Date.now());if(!active || active.id!==req.customer.id)throw Object.assign(new Error('Please log in to continue.'),{status:401});}
   if(req.paymentCredentialRequired && !hasCustomerAccess(req,booking,true) && !hasCustomerAccess(req,booking) &&
      !await req.verifiedGuestPaymentAccess?.(booking.id))throw Object.assign(new Error('Reservation access unavailable.'),{status:401});
   const customer=booking.checkoutAttempt?.parameters?.customer;
@@ -2626,6 +2628,7 @@ const stripeCheckoutVehicleNames = {
 
 async function checkoutStoredBooking(body,booking,req,storedOnly=true,adminPaymentLink=false){
   requireStripePaymentConfiguration();
+  if(!adminPaymentLink)await verifyPaymentAuthority(req,booking);
   if(await expireDeferredUnderLock(booking))throw Object.assign(new Error('Reservation unavailable.'),{status:409});
   if(booking.status==='cancelled')throw Object.assign(new Error('Reservation unavailable.'),{status:409});
   let quote=booking.quote;
@@ -2645,13 +2648,13 @@ async function checkoutStoredBooking(body,booking,req,storedOnly=true,adminPayme
     } catch (_) {
       throw Object.assign(new Error("Checkout is temporarily unavailable. Please try again."), {status: 503});
     }
+    if(!adminPaymentLink)await verifyPaymentAuthority(req,booking);
     if(!validStoredSession(existing,booking) || !providerSessionMatchesAttempt(booking,existing)) {
       throw Object.assign(new Error('Checkout is temporarily unavailable. Please try again.'),{status:503});
     }
     if(booking.checkoutAttempt?.parameters?.customer && (existing.customer?.id || existing.customer)!==booking.checkoutAttempt.parameters.customer)throw Object.assign(new Error('Checkout is temporarily unavailable. Please try again.'),{status:503});
     if (existing.status === "open" && existing.payment_status==='unpaid' && existing.url) {
       if(adminPaymentLink)return adminPaymentLinkResult(existing,booking);
-      await verifyPaymentAuthority(req,booking);
       return checkoutCustomerResult(existing.url, booking.id);
     }
     if (existing.status !== "expired" || existing.payment_status!=='unpaid') {
@@ -2710,7 +2713,7 @@ async function checkoutStoredBooking(body,booking,req,storedOnly=true,adminPayme
 
 
   // Recheck after asynchronous Google/Stripe lookups before payment creation.
-  try {if(!storedOnly)validateBookingInput(body);await verifyPaymentAuthority(req,booking);} catch(error) {
+  try {if(!storedOnly)validateBookingInput(body);await verifyPaymentAuthority(req,booking,adminPaymentLink);} catch(error) {
     // No Stripe call has been made in this action. Clear only a newly prepared,
     // unclaimed attempt; a previous ambiguous attempt must remain reconcilable.
     if(quote.promotion?.code==='FIRST15' && !booking.stripeSessionId && !resumingFirstRideAttempt) {
@@ -2784,7 +2787,7 @@ async function checkoutStoredBooking(body,booking,req,storedOnly=true,adminPayme
     delete parameters.customer_email;
     parameters.saved_payment_method_options={payment_method_save:'enabled'};
   }
-  await verifyPaymentAuthority(req,booking);
+  await verifyPaymentAuthority(req,booking,adminPaymentLink);
   const firstRide=quote.promotion?.code==='FIRST15';
   const earlierSubmission=firstRide?(booking.checkoutAttempt.version!==1 || booking.checkoutAttempt.firstSubmittedAt!==null):booking.checkoutAttempt.firstSubmittedAt!==null;
   if(firstRide && (booking.checkoutAttempt.version!==1 ||
@@ -2842,7 +2845,7 @@ async function checkoutStoredBooking(body,booking,req,storedOnly=true,adminPayme
 
   await saveCheckoutBooking(booking);
 
-  await verifyPaymentAuthority(req,booking);
+  await verifyPaymentAuthority(req,booking,adminPaymentLink);
   if(adminPaymentLink)return adminPaymentLinkResult(session,booking);
   return checkoutCustomerResult(session.url, booking.id);
 }
@@ -2897,14 +2900,22 @@ function paymentMutation(req,res,next){
   next();
 }
 async function completeReservationPayment(req,res,account){
-  if(!account)req.paymentCredentialRequired=true;
   const lookup=()=>account?reservationStore.customerReservation(req.customer.id,req.params.id):reservationStore.get(req.params.id);
-  const allowed=async booking=>account || hasCustomerAccess(req,booking) || await req.verifiedGuestPaymentAccess?.(booking.id);
+  const access=async booking=>{
+    if(!booking)return null;
+    const authority=await reservationAuthority(req,booking.id);
+    if(authority==='owner')return authority;
+    if(!account && authority==='guest' &&
+       (hasCustomerAccess(req,booking) || await req.verifiedGuestPaymentAccess?.(booking.id)))return authority;
+    return null;
+  };
   const initial=await lookup();
-  if(!initial || !await allowed(initial))return res.status(404).json({error:'Reservation unavailable.'});
+  if(!await access(initial))return res.status(404).json({error:'Reservation unavailable.'});
   const result=await reservationStore.withActionLock(paymentActionKey(initial),async()=>{
     const booking=await lookup();
-    if(!booking || !await allowed(booking))throw Object.assign(new Error('Reservation unavailable.'),{status:404});
+    const authority=await access(booking);
+    if(!authority)throw Object.assign(new Error('Reservation unavailable.'),{status:404});
+    req.paymentCredentialRequired=authority==='guest';
     return checkoutStoredBooking(booking.trip,booking,req);
   });
   res.json(result);
@@ -2912,8 +2923,6 @@ async function completeReservationPayment(req,res,account){
 app.post('/api/customer/trips/:id/payment',customerPrivateResponse,rateLimit('trip-payment',15),route(customerAuth.requireCustomer),paymentMutation,route((req,res)=>completeReservationPayment(req,res,true)));
 app.post('/api/booking/:id/checkout',rateLimit('booking-payment',15),paymentMutation,route(async(req,res)=>{
   await customerAuth.resolve(req,res);
-  const booking=await reservationStore.get(req.params.id);
-  if(booking && req.customer){const owner=await reservationStore.reservationOwner(booking.id);if(owner && owner!==req.customer.id)return res.status(404).json({error:'Reservation unavailable.'});}
   // Only this existing payment-completion endpoint accepts the email-verified guest grant.
   req.verifiedGuestPaymentAccess=id=>reservationManagement.verifiedGuest(req,id);
   return completeReservationPayment(req,res,false);
@@ -3077,9 +3086,14 @@ app.get(
   "/api/booking/:id",
 
   route(async (req, res) => {
-    const booking=await reservationStore.getForDisplay(req.params.id);
+    await customerAuth.resolve(req,res);
+    const authority=await reservationAuthority(req,req.params.id);
+    const booking=authority?await reservationStore.getForDisplay(req.params.id):null;
 
-    if (!hasCustomerAccess(req, booking) && !(booking && await reservationManagement.verifiedGuest(req,booking.id))) {
+    const allowed=booking && (authority==='owner'
+      ? await reservationAuthority(req,booking.id)==='owner'
+      : hasCustomerAccess(req,booking) || await reservationManagement.verifiedGuest(req,booking.id));
+    if (!allowed) {
       return res.status(401).json({error: "Reservation access unavailable."});
     }
     const driverVisible = ["assigned", "driver_en_route", "passenger_on_board", "completed"].includes(booking.status);

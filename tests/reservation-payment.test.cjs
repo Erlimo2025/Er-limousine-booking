@@ -249,13 +249,13 @@ test('cancellation during provider creation is serialized; open session expires 
 });
 test('prepared FIRST15 cancellation cannot release a claim from outside the owning action lock',async t=>{
  const h=await harness(t),a=await register(h),admin=await adminSession(h),r=await reserve(h,{promoCode:'FIRST15'},{cookie:cookie(a)}),id=r.body.bookingId;
- const resolve=h.testStore.resolveCustomerSession;let attempted=false;
- h.testStore.resolveCustomerSession=async(...args)=>{
+ const authorize=h.testStore.reservationAuthority;let attempted=false;
+ h.testStore.reservationAuthority=async(...args)=>{
   if(!attempted&&h.records()[0].checkoutAttempt?.state==='prepared'){
    attempted=true;assert.equal((await cancel(h,id,admin)).status,409);
    assert.equal((await reserve(h,{promoCode:'FIRST15',time:'13:00'},{cookie:cookie(a)})).status,409);
   }
-  return resolve(...args);
+  return authorize(...args);
  };
  assert.equal((await payment(h,id,cookie(a))).status,200);assert.ok(attempted);assert.equal(h.records().length,1);assert.equal(h.testStore.shared.claims.size,2);
 });
@@ -334,8 +334,7 @@ test('PostgreSQL cancellation/claim transitions serialize across workers and exp
 });
 test('24-hour deferred hold does not cancel active payment authority; verified expiry cancels before discounted renewal',async t=>{
  const h=await harness(t),a=await register(h),r=await reserve(h,{promoCode:'FIRST15'},{cookie:cookie(a)}),id=r.body.bookingId;
- const access=r.headers.getSetCookie().find(x=>x.includes('er_booking_access')).split(';')[0];
- const status=await h.request('/api/booking/'+id,undefined,{cookie:access});assert.equal(Date.parse(status.body.paymentHoldExpiresAt)-Date.parse(h.records()[0].createdAt),24*3600000);
+ const status=await h.request('/api/booking/'+id,undefined,{cookie:cookie(a)});assert.equal(status.status,200);assert.equal(Date.parse(status.body.paymentHoldExpiresAt)-Date.parse(h.records()[0].createdAt),24*3600000);
  await payment(h,id,cookie(a));const si=[...h.state.sessions.values()][0];
  h.advance(25*3600000);await h.context.runFirstRideReconciliation();assert.equal(h.records()[0].status,'awaiting_payment');assert.equal(h.testStore.shared.claims.size,2);
  assert.equal((await payment(h,id,cookie(a))).status,200);assert.equal(h.state.sessions.size,1);
@@ -356,8 +355,7 @@ test('server payment evidence exposes only pending verification, cannot be forge
  await payment(h,id,cookie(a));const si=[...h.state.sessions.values()][0];si.status='complete';si.payment_status='paid';
  assert.equal((await payment(h,id,cookie(a))).status,409);
  assert.equal(h.records()[0].paymentStatus,'unpaid');assert.equal((await own()).body.trip.paymentVerificationPending,true);
- const access=r.headers.getSetCookie().find(x=>x.includes('er_booking_access')).split(';')[0];
- const status=await h.request('/api/booking/'+id+'?paid=true&paymentVerificationPending=false',undefined,{cookie:access});
+ const status=await h.request('/api/booking/'+id+'?paid=true&paymentVerificationPending=false',undefined,{cookie:cookie(a)});assert.equal(status.status,200);
  assert.equal(status.body.paymentVerificationPending,true);assert.equal(status.body.paymentStatus,'unpaid');assert.ok(!('checkoutAttempt' in status.body));
  await h.webhook(si);assert.equal((await own()).body.trip.paymentStatus,'paid');assert.equal((await own()).body.trip.paymentVerificationPending,false);
 });
@@ -428,7 +426,7 @@ test('guest and later-login guest retries cannot save into an account; anonymous
  const p=h.state.creates[0].params;assert.ok(!Object.hasOwn(p,'customer'));assert.ok(!Object.hasOwn(p,'saved_payment_method_options'));assert.equal(h.state.payments.customers.size,0);assert.equal(await h.testStore.reservationOwner(guest.body.bookingId),null);
  const owned=await reserve(h,{time:'13:00'},{cookie:cookie(a)});assert.equal((await payment(h,owned.body.bookingId,cookie(a))).status,200);
  const ownAccess=owned.headers.getSetCookie().find(x=>x.includes('er_booking_access')).split(';')[0],before=h.state.creates.length;
- assert.equal((await h.request('/api/booking/'+owned.body.bookingId+'/checkout',{}, {...headers,cookie:ownAccess})).status,401);
+ assert.equal((await h.request('/api/booking/'+owned.body.bookingId+'/checkout',{}, {...headers,cookie:ownAccess})).status,404);
  const b=await register(h,{email:'save-other@example.test',phone:'2035550179'});assert.equal((await payment(h,owned.body.bookingId,cookie(b))).status,404);
  assert.equal(h.state.creates.length,before);assert.equal(h.state.payments.customers.size,1);
 });

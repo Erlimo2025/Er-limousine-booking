@@ -154,7 +154,19 @@ test('PostgreSQL refund attempt is durable and cross-worker cancellation prevent
  const pool=new Pool({connectionString:u.toString(),options:'-c search_path='+schema}),otherPool=new Pool({connectionString:u.toString(),options:'-c search_path='+schema}),{createStore}=require('../storage/postgres'),store=createStore({},pool),other=createStore({},otherPool);
  t.after(async()=>{await store.close();await other.close();await admin.query('DROP SCHEMA '+schema+' CASCADE');await admin.end();});await Promise.all([store.migrate(),other.migrate()]);
  const {h,c,id,trip}=await setup(t,{store}),worker=await harness(t,{},'[]',other);worker.state.sessions=h.state.sessions;worker.state.refunds=h.state.refunds;
- h.state.refundDelay=70;h.state.loseRefundResponse=true;const body=cancelBody(trip),first=action(h,id,c,'cancel',body);await waitForRefund(h);assert.equal((await action(worker,id,c,'cancel',body)).status,409);assert.ok([200,503].includes((await first).status));
+ // Drain startup refund scans before creating an obligation. Hold the mock
+ // provider call open until the second worker has tested the reservation lock.
+ await Promise.all([h.context.runReservationRefunds(),worker.context.runReservationRefunds()]);
+ let releaseRefund;
+ const pendingRefund=new Promise(resolve=>{releaseRefund=resolve;});
+ h.state.refundOnCall=()=>pendingRefund;
+ h.state.loseRefundResponse=true;
+ const body=cancelBody(trip),first=action(h,id,c,'cancel',body);
+ try{
+  await waitForRefund(h);
+  assert.equal((await action(worker,id,c,'cancel',body)).status,409);
+ }finally{releaseRefund();}
+ assert.ok([200,503].includes((await first).status));
  assert.equal((await store.get(id)).status,'cancelled');assert.equal(h.state.refunds.size,1);const key=h.state.refundRequests[0].options.idempotencyKey;
  assert.equal((await action(worker,id,c,'cancel',body)).status,200);for(const request of worker.state.refundRequests)assert.equal(request.options.idempotencyKey,key);assert.equal(worker.state.refunds.size,1);assert.equal((await store.get(id)).refundStatus,'processing');
  await store.migrate();const eventId='evt_refund_'+crypto.randomUUID().replace(/-/g,'');assert.equal((await refundWebhook(worker,refund(worker),'refund.updated',false,eventId)).status,200);assert.equal((await store.get(id)).refundStatus,'confirmed');assert.equal((await refundWebhook(worker,refund(worker),'refund.updated',false,eventId)).status,200);

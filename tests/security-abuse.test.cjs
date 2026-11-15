@@ -995,7 +995,7 @@ test("storage failures are generic 503 and never interpreted as first-ride eligi
     const h=await harness(t);h.storageFailures[failure]=true;
     if(failure==='read') {
       assert.equal((await h.request('/api/quote',{...booking,promoCode:'FIRST15'})).status,503);
-      assert.equal((await h.request('/api/booking/unknown')).status,503);
+      assert.equal((await h.request('/api/booking/11111111-1111-4111-8111-111111111111')).status,503);
       const login=await h.request('/api/admin/login',{token:'local-test-token'});
       assert.equal((await h.request('/api/bookings',undefined,{cookie:login.headers.get('set-cookie').split(';')[0]})).status,503);
     }

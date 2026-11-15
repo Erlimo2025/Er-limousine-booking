@@ -162,7 +162,7 @@ for (const channel of ['guest', 'signed-in', 'Dispatch']) {
       const another = await fixture.register({email: 'different-owner@example.test', phone: '2015550119'});
       assert.equal((await post(path, {}, another)).status, 404);
     }
-    const publicStatus = await get('/api/booking/' + id + '?paid=true', access);
+    const publicStatus = await get('/api/booking/' + id + '?paid=true', owner || access);
     assert.equal(publicStatus.body.paymentVerificationPending, true);
     assert.deepEqual(await accounting(fixture, id), {ledger: 0, email: 0, refunds: 0, managed: 0});
     assert.equal((await h.webhook(session)).status, 200);

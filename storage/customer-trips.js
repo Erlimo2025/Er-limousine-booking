@@ -66,13 +66,24 @@ function tripDto(record,management=null,bookingReference=null) {
   ...bookingStops.publicSummary(record.quote),
   total:record.quote.total,currency:record.quote.currency,createdAt:record.createdAt};
 }
-function customerTripsStorage(pool,safe,validate) {
+function customerTripsStorage(pool,safe,validate,queryClient=()=>pool) {
  const rowDto=(row,now)=>tripDto(validate(row.record),now===undefined?null:require('../services/trip-management').managementDto(row.record,row.scheduled_start_at,row.scheduled_end_at,now),row.booking_reference);
  return {
   customerReservation:(customerId,id)=>safe(async()=>{
    if(typeof id!=='string'||!uuid.test(id))return null;
    const row=(await pool.query('SELECT record FROM er_reservations WHERE customer_id=$1 AND id=$2',[customerId,id])).rows[0];
    return row?validate(row.record):null;
+  }),
+  reservationAuthority:(id,sessionHash,now)=>safe(async()=>{
+   if(typeof id!=='string'||!uuid.test(id))return null;
+   const row=(await queryClient().query(
+    "SELECT CASE WHEN r.customer_id IS NULL THEN 'guest' WHEN EXISTS (" +
+    "SELECT 1 FROM er_customer_sessions s JOIN er_customers c ON c.id=s.customer_id " +
+    "WHERE s.customer_id=r.customer_id AND s.token_hash=$2 AND s.expires_at>$3 AND c.account_status='active'" +
+    ") THEN 'owner' END AS authority FROM er_reservations r WHERE r.id=$1",
+    [id,sessionHash || null,new Date(now)]
+   )).rows[0];
+   return row?.authority || null;
   }),
   reservationOwner:id=>safe(async()=> (await pool.query('SELECT customer_id FROM er_reservations WHERE id=$1',[id])).rows[0]?.customer_id || null),
   customerTrip:(customerId,id,now)=>safe(async()=>{

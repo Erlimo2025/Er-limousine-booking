@@ -34,7 +34,7 @@ test('My Trips ownership derives only from a valid server session; cross-account
  const foreignCursor=Buffer.from(JSON.stringify({view:'upcoming',at:'2026-10-01T16:00:00.000Z',schedule:'2026-10-01T16:00:00.000Z',id:out.body.bookingId})).toString('base64url');
  assert.equal((await h.request('/api/customer/trips?cursor='+foreignCursor,undefined,{cookie:accountCookie(b)})).body.trips.length,0);
  assert.equal((await h.request('/api/customer/trips/'+out.body.bookingId)).status,401);
- assert.equal((await h.request('/api/booking/'+out.body.bookingId,undefined,{cookie:accountCookie(a)})).status,401);
+ assert.equal((await h.request('/api/booking/'+out.body.bookingId,undefined,{cookie:accountCookie(a)})).status,200);
  const combined=JSON.stringify(own.body)+JSON.stringify(detail.body);
  for(const secret of ['customerAccess','tokenHash','stripeSessionId','checkoutFingerprint','checkoutAttempt','dispatch','customer_id',aid,booking.email,booking.phone])assert.ok(!combined.includes(secret),secret);
  assert.deepEqual(Object.keys(detail.body.trip).sort(),['management','canBookAgain','reference','bookingReference','status','paymentStatus','paymentVerificationPending','tripType','pickup','dropoff','date','time','timeZone','vehicle','passengers','pickupTerminal','dropoffTerminal','total','currency','createdAt','cancellationPolicy'].sort());
@@ -55,8 +55,8 @@ test('owned retry requires booking credential and never transfers ownership to a
  assert.equal((await h.request('/api/checkout',booking,{cookie:accountCookie(a)})).status,503);
  assert.equal((await h.request('/api/checkout',booking,{cookie:bookCookies(h,accountCookie(b))})).status,503);
  assert.equal((await h.request('/api/checkout',booking,{cookie:bookCookies(h,accountCookie(a))})).status,200);
- // Booking credentials alone cannot expose the owner's save-enabled Stripe Customer.
- assert.equal((await h.request('/api/checkout',booking,{cookie:h.checkoutCookies()})).status,401);
+ // Original booking credentials still require the active owner session.
+ assert.equal((await h.request('/api/checkout',booking,{cookie:h.checkoutCookies()})).status,503);
  assert.equal(await h.testStore.reservationOwner(out.body.bookingId),owner);assert.equal(h.state.creates.length,1);
  const session=[...h.state.sessions.values()][0];session.metadata.customer_id=[...h.testStore.shared.customers.keys()].find(id=>id!==owner);session.payment_status='paid';
  assert.equal((await h.webhook(session)).status,200);assert.equal((await h.webhook(session)).status,200);assert.equal(await h.testStore.reservationOwner(out.body.bookingId),owner);
