@@ -356,7 +356,7 @@ test('authenticated owner receipt and guest status expose the same safe breakdow
 });
 
 test('Trip Summary uses server cents, shows inclusive $150 without a lower invented fare, and does not display unknown tolls as zero',()=>{
- const app=fs.readFileSync(path.join(__dirname,'../public/app.js'),'utf8'),make=()=>({children:[],hidden:false,textContent:'',replaceChildren(){this.children=[];this.textContent='';},append(...items){this.children.push(...items);}}),container=make(),context={document:{getElementById:()=>container,createElement:make},formatMoney:n=>'$'+n.toFixed(2)};
+ const app=fs.readFileSync(path.join(__dirname,'../public/app.js'),'utf8'),make=()=>({children:[],hidden:false,textContent:'',replaceChildren(){this.children=[];this.textContent='';},append(...items){this.children.push(...items);}}),container=make(),context={document:{getElementById:()=>container,createElement:make},formatMoney:n=>new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(n)};
  vm.createContext(context);vm.runInContext(app.slice(app.indexOf('function tollQuoteUnavailable('),app.indexOf('function hasCurrentQuote('))+app.slice(app.indexOf('function renderFareBreakdown('),app.indexOf('async function requestQuote(')),context);
  const q={currency:'usd',tolls:{status:'estimated'},pricingBreakdown:{version:1,tripFareCents:8000,surcharges:[],tollsCents:1375,discountCents:0,gratuityCents:0,tollAllowanceCents:0,tollsIncluded:false}};context.renderFareBreakdown(q);assert.equal(container.children[0].children[1].textContent,'$80.00');assert.equal(container.children[1].children[1].textContent,'$13.75');
  const itemized={...q,pricingBreakdown:{...q.pricingBreakdown,tollComponents:[{label:'Port Authority crossing',amountCents:1479},{label:'MTA congestion',amountCents:900},{label:'Eligible credit',amountCents:-300}],tollAssumptions:['Synthetic policy note']}};
@@ -366,6 +366,20 @@ test('Trip Summary uses server cents, shows inclusive $150 without a lower inven
  for(const status of ['absorbed','unknown','review_required']){context.renderFareBreakdown({...q,tolls:{status},pricingBreakdown:{...q.pricingBreakdown,tollsCents:0}});assert.match(container.textContent,/Toll estimate unavailable/);assert.equal(container.children.length,0);}
  const net={...q,pricingBreakdown:{...q.pricingBreakdown,tripFareCents:8000,surcharges:[{label:'Existing surcharge',amountCents:500}],discountCents:1275,gratuityCents:0,totalCents:8600}};context.renderFareBreakdown(net);assert.equal(container.children[0].children[1].textContent,'$72.25');assert.equal(container.children.length,2);
  context.renderFareBreakdown({...q,pricingBreakdown:{...q.pricingBreakdown,tollsIncluded:true,tripFareCents:15000,tollsCents:null}});assert.equal(container.children[0].children[1].textContent,'$150.00');assert.equal(container.children[1].children[1].textContent,'Included');
+ const rows=()=>container.children.map(row=>row.children.map(cell=>cell.textContent));
+ const promotion={code:'FIRST15',percentOff:15};
+ const discounted={...q,promotion,total:153.68,discount:22.71,pricingBreakdown:{...q.pricingBreakdown,
+   tripFareCents:15143,discountCents:2271,tollsCents:2496,totalCents:15368}};
+ context.renderFareBreakdown(discounted);
+ assert.deepEqual(rows(),[['Trip Fare','$151.43'],['FIRST15 Discount (15%)','-$22.71'],['Tolls','$24.96']]);
+ assert.equal(container.children[1].className,'fare-breakdown-row fare-breakdown-discount');
+ assert.equal(discounted.total,153.68);
+ const withWaiting={currency:'usd',promotion,total:102.75,discount:15,stopSummary:{chargeCents:750}};
+ context.renderFareBreakdown(withWaiting);
+ assert.deepEqual(rows(),[['Trip Fare','$110.25'],['FIRST15 Discount (15%)','-$15.00'],
+   ['Tolls','Included'],['Additional Stop Waiting','$7.50']]);
+ context.renderFareBreakdown({...discounted,promotion:null});
+ assert.deepEqual(rows(),[['Trip Fare','$128.72'],['Tolls','$24.96']]);
  context.renderFareBreakdown(null,true);assert.match(container.textContent,/contact us for a final quote/);assert.ok(!container.textContent.includes('$0'));assert.equal(container.hidden,false);
  context.renderFareBreakdown(null);assert.equal(container.hidden,true);
 });
