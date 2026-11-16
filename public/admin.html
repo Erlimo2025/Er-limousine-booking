@@ -45,77 +45,145 @@
       <details id="businessAnalytics" class="booking-card ba" hidden>
         <summary>Business Analytics</summary>
         <div class="ba-content">
-          <form id="analyticsDates" class="ba-filters">
-            <div class="field">
-              <label for="analyticsPreset">Quick date filter</label>
-              <select id="analyticsPreset">
-                <option value="today">Today</option>
-                <option value="yesterday">Yesterday</option>
-                <option value="thisWeek">This Week</option>
-                <option value="lastWeek">Last Week</option>
-                <option value="thisMonth" selected>This Month</option>
-                <option value="lastMonth">Last Month</option>
-                <option value="thisYear">This Year</option>
-                <option value="lastYear">Last Year</option>
-                <option value="custom">Custom Date Range</option>
-              </select>
-            </div>
-            <div class="field"><label for="analyticsFrom">From Date</label><input id="analyticsFrom" type="date" min="0001-01-01" max="9999-12-31" required></div>
-            <div class="field"><label for="analyticsTo">To Date</label><input id="analyticsTo" type="date" min="0001-01-01" max="9999-12-31" required></div>
-            <div class="ba-actions">
-              <button class="btn btn-primary" type="submit">Apply Filter</button>
-              <button id="analyticsReset" class="btn btn-secondary" type="button">Reset Filter</button>
-            </div>
-          </form>
-          <p id="analyticsStatus" class="ba-status" role="status" aria-live="polite"></p>
-          <div id="analyticsResults" hidden>
-            <h3 id="analyticsPeriod" class="ba-period"></h3>
-            <p class="ba-note">New York time · Both dates included</p>
-            <div id="analyticsMetrics"></div>
-            <p id="analyticsCoverage" class="ba-coverage" hidden></p>
-            <details class="ba-definitions">
-              <summary>How these numbers are calculated</summary>
-              <dl>
-                <dt>Bookings received and gross accepted value</dt><dd>Based on when each reservation was created. The gross value includes unpaid and cancelled reservations.</dd>
-                <dt>Ride activity and trip report</dt><dd>Based on scheduled pickup date and current Dispatch status. Upcoming counts future confirmed, assigned and en-route reservations. Pending means awaiting payment. Cancellation rate is cancelled reservations divided by all scheduled reservations in the range.</dd>
-                <dt>Customer requests</dt><dd>Change and cancellation requests submitted in the range, grouped by their current decision status.</dd>
-                <dt>Completed fares and collectible balances</dt><dd>Completed fares use stored fares for rides marked Completed. Balances use the accepted fare less verified captures for noncancelled trips. Unresolved payment evidence may make a balance unavailable.</dd>
-                <dt>Payments, refunds and net collected</dt><dd>Based on application-recorded Stripe confirmation dates. Net collected is confirmed captures less confirmed refunds. External activity without verifiable local evidence and Stripe fees are outside these totals.</dd>
-                <dt>Prior period</dt><dd>Whole-month selections compare the same number of preceding full calendar months. Other selections compare the same number of preceding New York calendar days. Weeks start Monday.</dd>
-              </dl>
-            </details>
-            <section class="ba-group" aria-labelledby="analyticsComparisonHeading">
-              <h3 id="analyticsComparisonHeading">Growth versus prior period</h3>
-              <div id="analyticsComparison"></div>
-            </section>
-            <section class="ba-group" aria-labelledby="analyticsChartsHeading">
-              <h3 id="analyticsChartsHeading">Trends</h3>
-              <p id="analyticsGranularity" class="ba-note"></p>
-              <div id="analyticsCharts" class="ba-chart-grid"></div>
-            </section>
-            <section class="ba-group" aria-labelledby="analyticsTripsHeading">
-              <h3 id="analyticsTripsHeading">Detailed Trip Report</h3>
-              <p class="ba-note">Trips use the selected pickup dates. Payment and refund amounts are lifetime totals per trip.</p>
-              <form id="analyticsTripFilters" class="ba-filters ba-trip-filters">
-                <div class="field ba-search"><label for="analyticsSearch">Search trips</label><input type="search" id="analyticsSearch" maxlength="120" autocomplete="off" placeholder="Reference, pickup or destination"></div>
-                <div class="field"><label for="analyticsTripStatus">Trip status</label><select id="analyticsTripStatus"><option value="all">All statuses</option><option value="awaiting_payment">Awaiting payment</option><option value="confirmed">Confirmed</option><option value="assigned">Assigned</option><option value="driver_en_route">Driver en route</option><option value="passenger_on_board">Passenger on board</option><option value="completed">Completed</option><option value="cancelled">Cancelled</option></select></div>
-                <div class="field"><label for="analyticsPayment">Payment status</label><select id="analyticsPayment"><option value="all">All payment states</option><option value="unpaid">Unpaid</option><option value="failed">Payment failed</option><option value="processing">Processing</option><option value="paid">Paid</option><option value="partially_paid">Partially paid</option><option value="refunded">Refunded</option><option value="partially_refunded">Partially refunded</option><option value="review">Review required</option></select></div>
-                <div class="field"><label for="analyticsVehicle">Vehicle</label><select id="analyticsVehicle"><option value="all">All vehicles</option><option value="suv">Luxury SUV / Suburban</option><option value="escalade">Cadillac Escalade</option></select></div>
-                <div class="field"><label for="analyticsSort">Sort by</label><select id="analyticsSort"><option value="pickupDate">Pickup date</option><option value="reference">Booking reference</option><option value="pickup">Pickup address</option><option value="destination">Destination</option><option value="vehicle">Vehicle</option><option value="status">Trip status</option><option value="payment">Payment status</option><option value="fare">Accepted fare</option><option value="captured">Captured payments</option><option value="refunded">Refunded amount</option></select></div>
-                <div class="field"><label for="analyticsOrder">Sort order</label><select id="analyticsOrder"><option value="desc">Descending</option><option value="asc">Ascending</option></select></div>
-                <div class="ba-actions">
-                  <button class="btn btn-primary" type="submit">Apply Trip Filters</button>
-                  <button id="analyticsCsv" class="btn btn-secondary" type="button" disabled>Export CSV</button>
-                </div>
-              </form>
-              <p id="analyticsReportStatus" class="ba-status" role="status" aria-live="polite"></p>
-              <div id="analyticsTripReport"></div>
-              <div id="analyticsPager" class="ba-actions ba-pager" hidden>
-                <button id="analyticsPrevious" class="btn btn-secondary" type="button">Previous page</button>
-                <span id="analyticsPage"></span>
-                <button id="analyticsNext" class="btn btn-secondary" type="button">Next page</button>
+          <div id="analyticsChartsHeader" class="bac-header" hidden>
+            <header class="bac-navbar">
+              <strong class="bac-brand">ER <span>Dispatch</span></strong>
+              <nav class="bac-nav" aria-label="Dispatch navigation">
+                <button id="chartsBackToDispatch" type="button">Dispatch</button>
+                <button id="chartsReservations" type="button">Reservations</button>
+                <span aria-current="page">Business Analytics</span>
+              </nav>
+              <button id="chartsSignOut" class="bac-sign-out" type="button">Sign out</button>
+            </header>
+            <div class="bac-title">
+              <div>
+                <h1>Business Analytics</h1>
+                <p>Revenue, payments, and trip performance</p>
               </div>
-            </section>
+              <details id="chartsDateControl" class="bac-date">
+                <summary aria-label="Chart date range"><span class="bac-calendar" aria-hidden="true"></span><span id="chartsDateLabel">Select dates</span><span class="bac-chevron" aria-hidden="true"></span></summary>
+                <form id="chartsDateForm" class="bac-date-form">
+                  <label for="chartsPreset">Chart period</label>
+                  <select id="chartsPreset"></select>
+                  <label for="chartsFrom">Chart start date</label>
+                  <input id="chartsFrom" type="date" min="0001-01-01" max="9999-12-31">
+                  <label for="chartsTo">Chart end date</label>
+                  <input id="chartsTo" type="date" min="0001-01-01" max="9999-12-31">
+                  <p>New York dates · Both dates included</p>
+                  <button class="bac-apply" type="submit">Apply chart dates</button>
+                </form>
+              </details>
+            </div>
+          </div>
+          <div class="ba-view-switch" role="tablist" aria-label="Business Analytics views">
+            <button id="analyticsCurrentTab" type="button" role="tab" aria-selected="true" aria-controls="analyticsCurrentView">
+              <span class="bac-tab-icon bac-list-icon" aria-hidden="true"></span>
+              <span><strong>Current View</strong><small aria-hidden="true">Detailed reports, filters, and existing analytics</small></span>
+            </button>
+            <button id="analyticsChartsTab" type="button" role="tab" aria-selected="false" aria-controls="analyticsChartsView" tabindex="-1">
+              <span class="bac-tab-icon bac-bars-icon" aria-hidden="true"></span>
+              <span><strong>Charts View</strong><small aria-hidden="true">Visual dashboard, charts, and summaries</small></span>
+            </button>
+          </div>
+          <div id="analyticsCurrentView" role="tabpanel" aria-labelledby="analyticsCurrentTab" tabindex="0">
+            <form id="analyticsDates" class="ba-filters">
+              <div class="field">
+                <label for="analyticsPreset">Quick date filter</label>
+                <select id="analyticsPreset">
+                  <option value="today">Today</option>
+                  <option value="yesterday">Yesterday</option>
+                  <option value="thisWeek">This Week</option>
+                  <option value="lastWeek">Last Week</option>
+                  <option value="thisMonth" selected>This Month</option>
+                  <option value="lastMonth">Last Month</option>
+                  <option value="thisYear">This Year</option>
+                  <option value="lastYear">Last Year</option>
+                  <option value="custom">Custom Date Range</option>
+                </select>
+              </div>
+              <div class="field"><label for="analyticsFrom">From Date</label><input id="analyticsFrom" type="date" min="0001-01-01" max="9999-12-31" required></div>
+              <div class="field"><label for="analyticsTo">To Date</label><input id="analyticsTo" type="date" min="0001-01-01" max="9999-12-31" required></div>
+              <div class="ba-actions">
+                <button class="btn btn-primary" type="submit">Apply Filter</button>
+                <button id="analyticsReset" class="btn btn-secondary" type="button">Reset Filter</button>
+              </div>
+            </form>
+            <p id="analyticsStatus" class="ba-status" role="status" aria-live="polite"></p>
+            <div id="analyticsResults" hidden>
+              <h3 id="analyticsPeriod" class="ba-period"></h3>
+              <p class="ba-note">New York time · Both dates included</p>
+              <div id="analyticsMetrics"></div>
+              <p id="analyticsCoverage" class="ba-coverage" hidden></p>
+              <details class="ba-definitions">
+                <summary>How these numbers are calculated</summary>
+                <dl>
+                  <dt>Bookings received and gross accepted value</dt><dd>Based on when each reservation was created. The gross value includes unpaid and cancelled reservations.</dd>
+                  <dt>Ride activity and trip report</dt><dd>Based on scheduled pickup date and current Dispatch status. Upcoming counts future confirmed, assigned and en-route reservations. Pending means awaiting payment. Cancellation rate is cancelled reservations divided by all scheduled reservations in the range.</dd>
+                  <dt>Customer requests</dt><dd>Change and cancellation requests submitted in the range, grouped by their current decision status.</dd>
+                  <dt>Completed fares and collectible balances</dt><dd>Completed fares use stored fares for rides marked Completed. Balances use the accepted fare less verified captures for noncancelled trips. Unresolved payment evidence may make a balance unavailable.</dd>
+                  <dt>Payments, refunds and net collected</dt><dd>Based on application-recorded Stripe confirmation dates. Net collected is confirmed captures less confirmed refunds. External activity without verifiable local evidence and Stripe fees are outside these totals.</dd>
+                  <dt>Prior period</dt><dd>Whole-month selections compare the same number of preceding full calendar months. Other selections compare the same number of preceding New York calendar days. Weeks start Monday.</dd>
+                </dl>
+              </details>
+              <section class="ba-group" aria-labelledby="analyticsComparisonHeading">
+                <h3 id="analyticsComparisonHeading">Growth versus prior period</h3>
+                <div id="analyticsComparison"></div>
+              </section>
+              <section class="ba-group" aria-labelledby="analyticsChartsHeading">
+                <h3 id="analyticsChartsHeading">Trends</h3>
+                <p id="analyticsGranularity" class="ba-note"></p>
+                <div id="analyticsCharts" class="ba-chart-grid"></div>
+              </section>
+              <section class="ba-group" aria-labelledby="analyticsTripsHeading">
+                <h3 id="analyticsTripsHeading">Detailed Trip Report</h3>
+                <p class="ba-note">Trips use the selected pickup dates. Payment and refund amounts are lifetime totals per trip.</p>
+                <form id="analyticsTripFilters" class="ba-filters ba-trip-filters">
+                  <div class="field ba-search"><label for="analyticsSearch">Search trips</label><input type="search" id="analyticsSearch" maxlength="120" autocomplete="off" placeholder="Reference, pickup or destination"></div>
+                  <div class="field"><label for="analyticsTripStatus">Trip status</label><select id="analyticsTripStatus"><option value="all">All statuses</option><option value="awaiting_payment">Awaiting payment</option><option value="confirmed">Confirmed</option><option value="assigned">Assigned</option><option value="driver_en_route">Driver en route</option><option value="passenger_on_board">Passenger on board</option><option value="completed">Completed</option><option value="cancelled">Cancelled</option></select></div>
+                  <div class="field"><label for="analyticsPayment">Payment status</label><select id="analyticsPayment"><option value="all">All payment states</option><option value="unpaid">Unpaid</option><option value="failed">Payment failed</option><option value="processing">Processing</option><option value="paid">Paid</option><option value="partially_paid">Partially paid</option><option value="refunded">Refunded</option><option value="partially_refunded">Partially refunded</option><option value="review">Review required</option></select></div>
+                  <div class="field"><label for="analyticsVehicle">Vehicle</label><select id="analyticsVehicle"><option value="all">All vehicles</option><option value="suv">Luxury SUV / Suburban</option><option value="escalade">Cadillac Escalade</option></select></div>
+                  <div class="field"><label for="analyticsSort">Sort by</label><select id="analyticsSort"><option value="pickupDate">Pickup date</option><option value="reference">Booking reference</option><option value="pickup">Pickup address</option><option value="destination">Destination</option><option value="vehicle">Vehicle</option><option value="status">Trip status</option><option value="payment">Payment status</option><option value="fare">Accepted fare</option><option value="captured">Captured payments</option><option value="refunded">Refunded amount</option></select></div>
+                  <div class="field"><label for="analyticsOrder">Sort order</label><select id="analyticsOrder"><option value="desc">Descending</option><option value="asc">Ascending</option></select></div>
+                  <div class="ba-actions">
+                    <button class="btn btn-primary" type="submit">Apply Trip Filters</button>
+                    <button id="analyticsCsv" class="btn btn-secondary" type="button" disabled>Export CSV</button>
+                  </div>
+                </form>
+                <p id="analyticsReportStatus" class="ba-status" role="status" aria-live="polite"></p>
+                <div id="analyticsTripReport"></div>
+                <div id="analyticsPager" class="ba-actions ba-pager" hidden>
+                  <button id="analyticsPrevious" class="btn btn-secondary" type="button">Previous page</button>
+                  <span id="analyticsPage"></span>
+                  <button id="analyticsNext" class="btn btn-secondary" type="button">Next page</button>
+                </div>
+              </section>
+            </div>
+          </div>
+          <div id="analyticsChartsView" class="bac-view" role="tabpanel" aria-labelledby="analyticsChartsTab" tabindex="0" hidden>
+            <p id="chartsStatus" class="bac-status" role="status" aria-live="polite"></p>
+            <div id="chartsResults" hidden>
+              <dl id="chartsMetrics" class="bac-metrics" aria-label="Charts summary"></dl>
+              <div id="chartsFinancialContext" class="bac-reference-totals"></div>
+              <div class="bac-grid">
+                <section class="bac-panel" aria-labelledby="chartsTrendHeading">
+                  <h2 id="chartsTrendHeading">Payments Collected Trend</h2>
+                  <div id="chartsTrend"></div>
+                </section>
+                <section class="bac-panel" aria-labelledby="chartsServicesHeading">
+                  <h2 id="chartsServicesHeading">Payments Collected by Service</h2>
+                  <div id="chartsServices"></div>
+                </section>
+                <section class="bac-panel" aria-labelledby="chartsRecentHeading">
+                  <h2 id="chartsRecentHeading">Recent Reservations</h2>
+                  <div id="chartsRecent"></div>
+                  <button id="chartsViewAll" class="bac-link" type="button">View Detailed Trip Report <span aria-hidden="true">→</span></button>
+                </section>
+                <section class="bac-panel" aria-labelledby="chartsPaymentHeading">
+                  <h2 id="chartsPaymentHeading">Payment Status</h2>
+                  <div id="chartsPaymentStatuses"></div>
+                </section>
+              </div>
+            </div>
           </div>
         </div>
       </details>

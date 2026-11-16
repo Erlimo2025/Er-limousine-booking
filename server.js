@@ -2052,7 +2052,21 @@ app.post("/api/admin/login", (req, res) => {
   res.json({authenticated: true});
 });
 
-app.get("/api/admin/session", requireAdmin, (req, res) => res.json({authenticated: true}));
+app.get("/api/admin/session", (req, res) => {
+  if (req.query.mode !== "charts") {
+    return requireAdmin(req, res, () => res.json({authenticated: true}));
+  }
+  res.set("Cross-Origin-Resource-Policy", "same-origin");
+  if (!validAdminOrigin(req)) return res.status(403).json({error: "Unauthorized"});
+
+  const key = adminSessionKey(req);
+  const session = key && adminSessions.get(key);
+  const serverNow = Date.now();
+  const expiresAt = session ? Math.min(session.expiresAt, session.lastSeen + ADMIN_SESSION_IDLE_MS) : serverNow;
+  // Checking Charts authority must neither renew the session nor replace a session cookie.
+  if (expiresAt <= serverNow) return res.status(401).json({error: "Unauthorized"});
+  return res.json({authenticated: true, expiresAt, serverNow});
+});
 require('./routes/dispatch-analytics').installDispatchAnalytics(app,{
   store:reservationStore,route,rateLimit,requireAdmin,siteUrl:SITE_URL,now:()=>Date.now()
 });

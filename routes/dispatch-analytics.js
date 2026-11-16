@@ -33,6 +33,9 @@ function installDispatchAnalytics(app, {store, route, rateLimit, requireAdmin, s
   app.get(endpoint, ...protect(20, async (req, res) => {
     reply(req, res, await store.dispatchAnalytics(summaryInput(req.query, now())));
   }));
+  app.get(endpoint + '/charts', ...protect(20, async (req, res) => {
+    reply(req, res, await store.dispatchAnalyticsCharts(summaryInput(req.query, now())));
+  }));
   app.get(endpoint + '/trips', ...protect(45, async (req, res) => {
     reply(req, res, await store.dispatchAnalyticsTrips(tripsInput(req.query, now())));
   }));

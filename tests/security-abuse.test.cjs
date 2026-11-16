@@ -463,6 +463,84 @@ test("admin absolute and idle expiration are enforced server-side", async t => {
   assert.equal((await restarted.request("/api/admin/session", undefined, {cookie})).status, 401);
 });
 
+const chartsSession = "/api/admin/session?mode=charts";
+
+test("Dispatch Charts session checks report the idle deadline without renewing it", async t => {
+  const startedAt = Date.parse("2026-10-01T16:00:00Z");
+  const h = await harness(t, {}, "[]", undefined, startedAt);
+  const login = await h.request("/api/admin/login", {token: "local-test-token"});
+  assert.equal(login.status, 200);
+  assert.deepEqual(login.body, {authenticated: true});
+  const cookie = login.headers.get("set-cookie").split(";")[0];
+
+  h.advance(20 * 60000);
+  const status = await h.request(chartsSession, undefined, {cookie});
+  assert.equal(status.status, 200);
+  assert.deepEqual(status.body, {authenticated: true, expiresAt: startedAt + 30 * 60000, serverNow: startedAt + 20 * 60000});
+  assert.equal(status.headers.get("cache-control"), "no-store");
+  assert.equal(status.headers.get("cross-origin-resource-policy"), "same-origin");
+  assert.equal(status.headers.get("set-cookie"), null);
+
+  h.advance(10 * 60000);
+  const expired = await h.request(chartsSession, undefined, {cookie});
+  assert.equal(expired.status, 401);
+  assert.deepEqual(expired.body, {error: "Unauthorized", referenceId: expired.headers.get("x-request-id")});
+  assert.equal(expired.headers.get("set-cookie"), null);
+});
+
+test("Dispatch Charts session checks observe ordinary renewals within the absolute limit", async t => {
+  const startedAt = Date.parse("2026-10-01T16:00:00Z");
+  const h = await harness(t, {}, "[]", undefined, startedAt);
+  const login = await h.request("/api/admin/login", {token: "local-test-token"});
+  const cookie = login.headers.get("set-cookie").split(";")[0];
+
+  h.advance(29 * 60000);
+  const ordinary = await h.request("/api/admin/session", undefined, {cookie});
+  assert.equal(ordinary.status, 200);
+  assert.deepEqual(ordinary.body, {authenticated: true});
+  assert.equal(ordinary.headers.get("cache-control"), "no-store");
+  const renewed = await h.request(chartsSession, undefined, {cookie});
+  assert.deepEqual(renewed.body, {authenticated: true, expiresAt: startedAt + 59 * 60000, serverNow: startedAt + 29 * 60000});
+
+  for (let i = 1; i < 16; i++) {
+    h.advance(29 * 60000);
+    assert.equal((await h.request("/api/bookings", undefined, {cookie})).status, 200);
+  }
+  const capped = await h.request(chartsSession, undefined, {cookie});
+  assert.deepEqual(capped.body, {authenticated: true, expiresAt: startedAt + 8 * 60 * 60000, serverNow: startedAt + 464 * 60000});
+  h.advance(16 * 60000);
+  assert.equal((await h.request(chartsSession, undefined, {cookie})).status, 401);
+});
+
+test("Dispatch Charts session checks keep origin, logout, and rate-limit protections", async t => {
+  const h = await harness(t);
+  const missing = await h.request(chartsSession);
+  assert.equal(missing.status, 401);
+  assert.deepEqual(missing.body, {error: "Unauthorized", referenceId: missing.headers.get("x-request-id")});
+  assert.equal(missing.headers.get("cache-control"), "no-store");
+
+  const login = await h.request("/api/admin/login", {token: "local-test-token"});
+  const cookie = login.headers.get("set-cookie").split(";")[0];
+  for (const headers of [{origin: "https://other.example.test"}, {"sec-fetch-site": "same-site"}]) {
+    const denied = await h.request(chartsSession, undefined, {cookie, ...headers});
+    assert.equal(denied.status, 403);
+    assert.deepEqual(denied.body, {error: "Unauthorized", referenceId: denied.headers.get("x-request-id")});
+    assert.equal(denied.headers.get("cache-control"), "no-store");
+  }
+  const allowed = await h.request(chartsSession, undefined, {cookie, origin: "http://localhost:3000", "sec-fetch-site": "same-origin"});
+  assert.equal(allowed.status, 200);
+  const logout = await h.request("/api/admin/logout", {}, {cookie});
+  assert.equal(logout.status, 200);
+  assert.equal((await h.request(chartsSession, undefined, {cookie})).status, 401);
+
+  const limited = await harness(t);
+  for (let i = 0; i < 120; i++) assert.equal((await limited.request(chartsSession)).status, 401);
+  const rejected = await limited.request("/api/admin/session");
+  assert.equal(rejected.status, 429);
+  assert.equal(rejected.headers.get("retry-after"), "60");
+  assert.equal(rejected.headers.get("cache-control"), "no-store");
+});
+
 test("logout revokes current session, clears cookie and rejects replay", async t => {
   const h = await harness(t);
   const login = await h.request("/api/admin/login", {token: "local-test-token"});
