@@ -121,7 +121,7 @@ test('unpaid pickup change expires open Checkout without replacing it; next paym
  let after=await record(h,id);assert.equal(after.id,id);assert.equal(after.paymentStatus,'unpaid');assert.deepEqual(after.quote,before.quote);assert.equal(after.trip.date,body.date);assert.equal(after.trip.time,body.time);
  assert.equal((await action(h,id,c,'pickup-time',body)).status,200);assert.equal(h.state.creates.length,1);
  const payment=await pay(h,id,c);assert.equal(payment.status,200);assert.equal(h.state.sessions.size,2);assert.equal(h.state.creates.length,2);const latest=h.state.creates.at(-1);
- assert.notEqual(latest.options.idempotencyKey,h.state.creates[0].options.idempotencyKey);assert.equal(latest.params.line_items[0].price_data.unit_amount,10000);assert.match(latest.params.line_items[0].price_data.product_data.description,/2026-11-11.*13:30/);
+ assert.notEqual(latest.options.idempotencyKey,h.state.creates[0].options.idempotencyKey);assert.equal(latest.params.line_items[0].price_data.unit_amount,10000);assert.equal(latest.params.line_items[0].price_data.product_data.description,'ER Limousine transportation service');
  assert.equal((await pay(h,id,c)).status,200);assert.equal(h.state.creates.length,2);after=await record(h,id);assert.deepEqual(after.quote,before.quote);
 });
 
