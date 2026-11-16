@@ -943,6 +943,11 @@ test("customer tokens expire after final service plus 7 days, with minimum 30 da
   }
 });
 
+const driverAssignment = {
+  driver: "Mock chauffeur", driverPhone: "2015550148", vehicle: "Mock SUV", plate: "TEST"
+};
+const {driverPhone, ...completedAssignment} = driverAssignment;
+
 test("reservation response whitelists fields and preserves driver visibility rules", async t => {
   const h = await harness(t);
   const checkout = await h.request("/api/checkout", booking);
@@ -950,10 +955,9 @@ test("reservation response whitelists fields and preserves driver visibility rul
   const record = h.records()[0];
   record.trip.notes = "private requests";
   record.trip.flightNumber = "UA123";
-  record.dispatch = {driver: "Mock chauffeur", driverPhone: "2015550199", vehicle: "Mock SUV", plate: "TEST",
-    internalNotes: "private dispatch notes"};
-  const visible = ["assigned", "driver_en_route", "passenger_on_board", "completed"];
-  for (const status of ["awaiting_payment", "confirmed", ...visible, "cancelled"]) {
+  record.dispatch = {...driverAssignment, internalNotes: "private dispatch notes"};
+  const active = ["assigned", "driver_en_route", "passenger_on_board"];
+  for (const status of ["awaiting_payment", "confirmed", ...active, "completed", "cancelled"]) {
     record.status = status;
     h.context.fixtureRecords = [record];
     h.testStore.fixtures(h.context.fixtureRecords);
@@ -966,15 +970,102 @@ test("reservation response whitelists fields and preserves driver visibility rul
     assert.deepEqual(Object.keys(result.body.quote).sort(), ["currency", "total", "vehicle"]);
     assert.equal(result.headers.get("cache-control"), "no-store");
     assert.equal(result.headers.get("referrer-policy"), "no-referrer");
-    if (visible.includes(status)) {
-      assert.deepEqual(Object.keys(result.body.dispatch).sort(), ["driver", "driverPhone", "plate", "vehicle"]);
-      assert.equal(result.body.dispatch.driver, "Mock chauffeur");
-    } else assert.equal(result.body.dispatch, null);
+    const expected = active.includes(status) ? driverAssignment : status === "completed" ? completedAssignment : null;
+    assert.deepEqual(result.body.dispatch, expected, status);
+    if (!active.includes(status)) assert.equal(JSON.stringify(result.body).includes(driverPhone), false, status);
+    assert.deepEqual((await h.testStore.get(record.id)).dispatch, record.dispatch);
     assert.equal(JSON.stringify(result.body).includes(record.customerAccess.tokenHash), false);
     assert.equal(Object.hasOwn(result.body, "customer"), false);
     assert.equal(Object.hasOwn(result.body, "stripeSessionId"), false);
     assert.equal(Object.hasOwn(result.body, "checkoutAttempt"), false);
   }
+  h.advance(record.customerAccess.expiresAt - Date.parse(record.createdAt));
+  const expired = await h.request("/api/booking/" + record.id, undefined, {cookie});
+  assert.equal(expired.status, 401);
+  assert.equal(Object.hasOwn(expired.body, "dispatch"), false);
+});
+
+test("archived driver details stay scoped to reservation owners, guests and Dispatch", async t => {
+  const h = await harness(t);
+  const owner = await h.seedCustomer({
+    fullName: "Fixture Owner", email: booking.email, phone: booking.phone,
+    password: "Synthetic driver privacy owner password"
+  });
+  const other = await h.seedCustomer({
+    fullName: "Other Fixture Customer", email: "other-driver-privacy@example.test", phone: "2015550153",
+    password: "Synthetic driver privacy other password"
+  });
+  assert.equal(owner.status, 201);
+  assert.equal(other.status, 201);
+  const cookie = result => result.headers.getSetCookie()[0].split(";")[0];
+  const ownerCookie = cookie(owner);
+  const otherCookie = cookie(other);
+  const owned = await h.request("/api/checkout", {...booking, paymentChoice: "later"}, {cookie: ownerCookie});
+  const guest = await h.request("/api/checkout", {
+    ...booking, time: "13:00", email: "guest-driver-privacy@example.test", phone: "2015550157",
+    paymentChoice: "later"
+  }, {cookie: ""});
+  assert.equal(owned.status, 200);
+  assert.equal(guest.status, 200);
+  const ownedId = owned.body.bookingId;
+  const guestId = guest.body.bookingId;
+  assert.equal(await h.testStore.reservationOwner(ownedId), (await h.testStore.customerByEmail(booking.email)).id);
+  assert.equal(await h.testStore.reservationOwner(guestId), null);
+
+  const records = h.records();
+  for (const record of records) {
+    record.status = record.id === ownedId ? "completed" : "cancelled";
+    record.dispatch = {...driverAssignment};
+  }
+  h.testStore.fixtures(records);
+
+  const login = await h.request("/api/admin/login", {token: "local-test-token"});
+  assert.equal(login.status, 200);
+  const adminHeaders = {cookie: cookie(login), origin: "http://localhost:3000"};
+  for (const record of records) {
+    const archived = await h.request("/api/bookings/" + record.id + "/archive", {
+      confirmed: true, requestId: crypto.randomUUID()
+    }, adminHeaders);
+    assert.equal(archived.status, 200);
+    assert.equal(archived.body.archived, true);
+  }
+
+  const ownedPath = "/api/booking/" + ownedId;
+  const completed = await h.request(ownedPath, undefined, {cookie: ownerCookie});
+  assert.equal(completed.status, 200);
+  assert.equal(completed.body.status, "completed");
+  assert.deepEqual(completed.body.dispatch, completedAssignment);
+  assert.equal(JSON.stringify(completed.body).includes(driverPhone), false);
+
+  const cancelled = await h.request("/api/booking/" + guestId, undefined, {cookie: cookie(guest)});
+  assert.equal(cancelled.status, 200);
+  assert.equal(cancelled.body.status, "cancelled");
+  assert.equal(cancelled.body.dispatch, null);
+  assert.equal(JSON.stringify(cancelled.body).includes(driverPhone), false);
+
+  const retainedBookingCookie = cookie(owned);
+  assert.match(retainedBookingCookie, /^er_booking_access_/);
+  const wrong = await h.request(ownedPath, undefined, {cookie: [otherCookie, retainedBookingCookie].join("; ")});
+  assert.equal(wrong.status, 401);
+  assert.equal(Object.hasOwn(wrong.body, "dispatch"), false);
+
+  const logout = await h.request("/api/customer/logout", {}, {cookie: ownerCookie, origin: "http://localhost:3000"});
+  assert.equal(logout.status, 200);
+  for (const accessCookie of [retainedBookingCookie, [ownerCookie, retainedBookingCookie].join("; ")]) {
+    const denied = await h.request(ownedPath, undefined, {cookie: accessCookie});
+    assert.equal(denied.status, 401);
+    assert.equal(Object.hasOwn(denied.body, "dispatch"), false);
+  }
+
+  const dispatch = await h.request("/api/bookings/search?view=archived&status=all&timing=all", undefined, adminHeaders);
+  assert.equal(dispatch.status, 200);
+  assert.equal(dispatch.body.bookings.length, 2);
+  for (const record of records) {
+    const row = dispatch.body.bookings.find(item => item.id === record.id);
+    assert.equal(row?.archived, true);
+    assert.deepEqual(row.dispatch, driverAssignment);
+  }
+  assert.deepEqual(h.records(), records);
 });
 
 test("legacy records deny access and do not get credentials through duplicate checkout", async t => {
