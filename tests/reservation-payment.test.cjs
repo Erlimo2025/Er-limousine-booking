@@ -7,7 +7,8 @@ const cookie=r=>r.headers.getSetCookie().find(x=>x.includes('er_customer_session
 const register=(h,extra={})=>h.request('/api/customer/register',{...customer,...extra});
 const reserve=(h,extra={},auth={})=>h.request('/api/checkout',{...booking,paymentChoice:'later',...extra},auth);
 const payment=(h,id,c)=>h.request('/api/customer/trips/'+id+'/payment',{}, {...headers,cookie:c});
-function assertOrdinaryCallbacks(params, id) {
+function assertOrdinaryCheckout(params, id) {
+  assert.equal(params.line_items[0].price_data.product_data.description, 'ER Limousine transportation service');
   assert.equal(params.success_url, headers.origin + '/success.html?booking=' + id);
   assert.equal(params.cancel_url, headers.origin + '/success.html?booking=' + id + '&cancelled=1');
 }
@@ -18,7 +19,7 @@ const stripeVehicleNames = [
 
 for (const [vehicle, name, cents] of stripeVehicleNames) {
   for (const flow of ['guest Pay Now', 'signed-in Pay Now', 'guest Complete Payment', 'signed-in Complete Payment']) {
-    test('Stripe Checkout vehicle name for ' + vehicle + ' via ' + flow, async t => {
+    test('Stripe Checkout vehicle name and generic description for ' + vehicle + ' via ' + flow, async t => {
       const h = await harness(t);
       h.state.routeResult = () => ({distanceMeters: 16093.44, duration: '1800s'});
       const payNow = flow.endsWith('Pay Now');
@@ -41,7 +42,7 @@ for (const [vehicle, name, cents] of stripeVehicleNames) {
 
       assert.equal(h.state.creates.length, 1);
       const params = h.state.creates[0].params;
-      assertOrdinaryCallbacks(params, id);
+      assertOrdinaryCheckout(params, id);
       const {line_items, metadata} = params;
       assert.equal(line_items[0].price_data.product_data.name, name);
       assert.equal(line_items[0].price_data.unit_amount, cents);
@@ -52,20 +53,21 @@ for (const [vehicle, name, cents] of stripeVehicleNames) {
   }
 }
 
-test('Stripe Checkout preserves a frozen legacy callback and vehicle name until a fresh attempt', async t => {
+test('Stripe Checkout preserves a frozen legacy callback and description until a fresh attempt', async t => {
   const h = await harness(t);
   const account = await register(h);
   const credentials = cookie(account);
   const reserved = await reserve(h, {vehicle: 'suv'}, {cookie: credentials});
   assert.equal(reserved.status, 200);
   const id = reserved.body.bookingId;
-  const originalQuote = (await h.testStore.get(id)).quote;
+  const {quote: originalQuote, trip} = await h.testStore.get(id);
 
   h.state.loseResponse = true;
   assert.equal((await payment(h, id, credentials)).status, 503);
   const submitted = h.state.creates[0];
   const legacy = structuredClone(submitted.params);
   legacy.line_items[0].price_data.product_data.name = 'ER Limousine Service — Black SUV';
+  legacy.line_items[0].price_data.product_data.description = `${trip.pickup} → ${trip.dropoff} | ${trip.date} ${trip.time}`;
   legacy.success_url += '&session_id={CHECKOUT_SESSION_ID}';
   await h.testStore.update(id, record => {record.checkoutAttempt.parameters = legacy;});
 
@@ -86,7 +88,7 @@ test('Stripe Checkout preserves a frozen legacy callback and vehicle name until 
   assert.equal((await payment(h, id, credentials)).status, 200);
   const replacement = h.state.creates[2];
   assert.notEqual(replacement.options.idempotencyKey, submitted.options.idempotencyKey);
-  assertOrdinaryCallbacks(replacement.params, id);
+  assertOrdinaryCheckout(replacement.params, id);
   assert.equal(replacement.params.line_items[0].price_data.product_data.name, 'Luxury SUV — Chevrolet Suburban Premier');
   assert.equal(replacement.params.line_items[0].price_data.unit_amount, 8000);
   assert.equal(replacement.params.metadata.bookingId, id);
@@ -149,7 +151,7 @@ test('FIRST15 Pay Later claims are atomic, durable while payable, exactly 15%, a
  await h.testStore.update(id,r=>{r.dispatch.driver='Local chauffeur';});assert.equal(h.testStore.shared.claims.size,2);
  h.advance(60000);await h.context.reconcileFirstRide(id);assert.equal(h.testStore.shared.claims.size,2);
  const r=await payment(h,id,cookie(a));assert.equal(r.status,200);assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount,8500);
- assertOrdinaryCallbacks(h.state.creates[0].params,id);
+ assertOrdinaryCheckout(h.state.creates[0].params,id);
  const si=[...h.state.sessions.values()][0];si.status='expired';si.payment_status='unpaid';
  await h.context.reconcileFirstRide(id);assert.equal(h.testStore.shared.claims.size,2);
  assert.equal((await reserve(h,{promoCode:'FIRST15',time:'14:00'},auth)).status,409);
@@ -179,7 +181,7 @@ test('EWR special Pay Later and stored payment keep exactly $150, FIRST15 exclud
  assert.equal(r.status,200);assert.equal(h.records()[0].quote.total,150);assert.equal(h.records()[0].quote.promotion,null);
  assert.equal((await payment(h,r.body.bookingId,cookie(a))).status,200);assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount,15000);
  assert.equal(h.state.creates[0].params.line_items[0].price_data.product_data.name,'Luxury SUV — Chevrolet Suburban Premier');
- assertOrdinaryCallbacks(h.state.creates[0].params,r.body.bookingId);
+ assertOrdinaryCheckout(h.state.creates[0].params,r.body.bookingId);
  }
 });
 test('completion mutations enforce Origin, Fetch Metadata, JSON and no-store; provider failures remain sanitized',async t=>{
@@ -303,7 +305,7 @@ test('browser Back invalidates the reviewed quote and requires review without cl
  ctx.currentQuote=null;restore({persisted:true});assert.equal(ctx.payBtn.disabled,true);assert.equal(ctx.payLaterBtn.disabled,true);
 });
 const adminSession=async h=>(await h.request('/api/admin/login',{token:'local-test-token'})).headers.getSetCookie()[0].split(';')[0];
-test('fresh Dispatch payment links retain the payment-only success and cancellation callbacks', async t => {
+test('fresh Dispatch payment links retain their description and payment-only callbacks', async t => {
   const h = await harness(t);
   const admin = await adminSession(h);
   const reserved = await reserve(h);
@@ -318,6 +320,9 @@ test('fresh Dispatch payment links retain the payment-only success and cancellat
   assert.equal(result.status, 200);
   assert.equal(h.state.creates.length, 1);
   const params = h.state.creates[0].params;
+  const {trip} = await h.testStore.get(reserved.body.bookingId);
+  assert.equal(params.line_items[0].price_data.product_data.description,
+    `${trip.pickup} → ${trip.dropoff} | ${trip.date} ${trip.time}`);
   assert.equal(params.success_url, headers.origin + '/payment-link-result.html');
   assert.equal(params.cancel_url, headers.origin + '/payment-link-result.html');
 });
@@ -347,7 +352,7 @@ test('lost response then later provider rejection retains generic attempt and id
  const h=await harness(t),r=await reserve(h),id=r.body.bookingId,access=r.headers.getSetCookie().find(x=>x.includes('er_booking_access')).split(';')[0];
  const pay=()=>h.request('/api/booking/'+id+'/checkout',{}, {...headers,cookie:access});
  h.state.loseResponse=true;assert.equal((await pay()).status,503);const key=h.records()[0].checkoutAttempt.key;
- assertOrdinaryCallbacks(h.records()[0].checkoutAttempt.parameters,id);
+ assertOrdinaryCheckout(h.records()[0].checkoutAttempt.parameters,id);
  h.state.fail={type:'StripeInvalidRequestError',statusCode:400,code:'parameter_invalid_integer'};
  assert.equal((await pay()).status,503);assert.equal(h.records()[0].checkoutAttempt.key,key);
  const worker=await harness(t,{},'[]',h.testStore);worker.state.sessions=h.state.sessions;

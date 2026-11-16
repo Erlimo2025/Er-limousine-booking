@@ -2712,15 +2712,18 @@ async function checkoutStoredBooking(body,booking,req,storedOnly=true,adminPayme
     await reservationStore.claimFirstRide(booking);
   }
 
-  let description =
-    `${booking.trip.pickup} → ${booking.trip.dropoff} | ${booking.trip.date} ${booking.trip.time}`;
+  let description = 'ER Limousine transportation service';
+  if (adminPaymentLink) {
+    description =
+      `${booking.trip.pickup} → ${booking.trip.dropoff} | ${booking.trip.date} ${booking.trip.time}`;
 
-  if (quote.fixedOffer) {
-    description =
-      `${booking.trip.pickup} → ${booking.trip.dropoff} | EWR → Manhattan $150 Flat Rate | ${booking.trip.date} ${booking.trip.time}`;
-  } else if (quote.promotion) {
-    description =
-      `${booking.trip.pickup} → ${booking.trip.dropoff} | ${quote.promotion.code} applied | ${booking.trip.date} ${booking.trip.time}`;
+    if (quote.fixedOffer) {
+      description =
+        `${booking.trip.pickup} → ${booking.trip.dropoff} | EWR → Manhattan $150 Flat Rate | ${booking.trip.date} ${booking.trip.time}`;
+    } else if (quote.promotion) {
+      description =
+        `${booking.trip.pickup} → ${booking.trip.dropoff} | ${quote.promotion.code} applied | ${booking.trip.date} ${booking.trip.time}`;
+    }
   }
 
 
