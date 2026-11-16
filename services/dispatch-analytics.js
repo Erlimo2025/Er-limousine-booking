@@ -123,12 +123,22 @@ const money = (values, incomplete) => incomplete || values.some(row => Number(ro
 const count = values => values.reduce((sum, row) => sum + Number(row.count), 0);
 const byKind = (rows, kind, state) => rows.filter(row => row.kind === kind && (state === undefined || row.state === state));
 
+function financialTotals(rows, paymentGap, refundGap) {
+  const collectedCents = money(byKind(rows, 'capture'), paymentGap);
+  const refundsCents = money(byKind(rows, 'refund'), refundGap);
+  return {
+    grossAcceptedCents: money(byKind(rows, 'received')), collectedCents, refundsCents,
+    netCollectedCents: collectedCents === null || refundsCents === null ? null : (BigInt(collectedCents) - BigInt(refundsCents)).toString(),
+    collectibleCents: money(byKind(rows, 'balance'))
+  };
+}
+
 function summarize(rows, issues) {
   const trips = byKind(rows, 'pickup');
   const completed = byKind(trips, 'pickup', 'completed');
   const cancelled = byKind(trips, 'pickup', 'cancelled');
-  const collectedCents = money(byKind(rows, 'capture'), issues.some(row => row.kind === 'payment_gap'));
-  const refundsCents = money(byKind(rows, 'refund'), issues.some(row => row.kind === 'refund_gap'));
+  const {grossAcceptedCents, collectedCents, refundsCents, netCollectedCents, collectibleCents} =
+    financialTotals(rows, issues.some(row => row.kind === 'payment_gap'), issues.some(row => row.kind === 'refund_gap'));
   const completedValueCents = money(completed);
   const completedCount = count(completed);
   const tripCount = count(trips);
@@ -139,9 +149,7 @@ function summarize(rows, issues) {
     upcomingRides: count(byKind(rows, 'upcoming')), pendingReservations: count(byKind(trips, 'pickup', 'awaiting_payment')),
     pendingRequests: count(byKind(rows, 'request', 'pending')), approvedRequests: count(byKind(rows, 'request', 'approved')),
     declinedRequests: count(byKind(rows, 'request', 'declined')),
-    grossAcceptedCents: money(byKind(rows, 'received')), completedValueCents, collectedCents, refundsCents,
-    netCollectedCents: collectedCents === null || refundsCents === null ? null : (BigInt(collectedCents) - BigInt(refundsCents)).toString(),
-    collectibleCents: money(byKind(rows, 'balance')),
+    grossAcceptedCents, completedValueCents, collectedCents, refundsCents, netCollectedCents, collectibleCents,
     averageCompletedCents: completedValueCents === null || completedCount === 0 ? null :
       ((BigInt(completedValueCents) + BigInt(Math.floor(completedCount / 2))) / BigInt(completedCount)).toString(),
     cancellationRateBasisPoints: tripCount === 0 ? null : Math.round(cancelledCount * 10000 / tripCount),
@@ -228,6 +236,38 @@ function summaryResult(rows, query) {
   };
 }
 
+function chartsResult(evidence, input) {
+  const {activity, payment_gap: paymentGap, refund_gap: refundGap} = evidence;
+  const paymentStatuses = Object.fromEntries(PAYMENT_STATUSES.map(status => [
+    status, count(evidence.statuses.filter(row => row.status === status))
+  ]));
+  const summary = financialTotals(activity, paymentGap, refundGap);
+  const granularity = input.granularity === 'day' ? 'day' : 'month';
+  const collectionsKnown = summary.collectedCents !== null;
+  const trend = collectionsKnown ? {
+    granularity,
+    buckets: bucketRows(byKind(activity, 'capture'), [], input.selected, granularity,
+      rows => ({collectedCents: money(rows)})).buckets
+  } : null;
+  return {
+    range: input.selected, timeZone: ZONE,
+    summary: {
+      ...summary, paidReservations: paymentStatuses.paid, processingReservations: paymentStatuses.processing,
+      cancelledReservations: count(byKind(activity, 'pickup', 'cancelled')),
+      refundEvents: summary.refundsCents === null ? null : count(byKind(activity, 'refund'))
+    },
+    trend,
+    services: collectionsKnown ? evidence.services.map(row => ({service: row.service, cents: row.cents})) : null,
+    paymentStatuses,
+    reservationCount: Object.values(paymentStatuses).reduce((total, value) => total + value, 0),
+    recent: evidence.recent.map(row => ({
+      id: row.id, reference: row.booking_reference || row.id, pickupDate: row.pickup_date,
+      pickupAt: row.pickup_at ? new Date(row.pickup_at).toISOString() : null, service: row.service,
+      paymentStatus: row.payment_status, status: row.status, fareCents: row.fare_cents, archived: row.archived
+    }))
+  };
+}
+
 const csvColumns = ['Booking reference', 'Pickup date (New York)', 'Pickup', 'Destination', 'Vehicle',
   'Reservation status', 'Payment status', 'Accepted fare (USD)', 'Captured payments (USD)', 'Refunded amount (USD)'];
 const csvHeader = csvColumns.join(',') + '\r\n';
@@ -249,4 +289,4 @@ function csvTrip(trip) {
   ].map(csvText).concat([trip.fareCents, trip.capturedCents, trip.refundedCents].map(decimal)).join(',') + '\r\n';
 }
 
-module.exports = {ZONE, VEHICLES, summaryInput, tripsInput, summaryResult, csvHeader, csvTrip};
+module.exports = {ZONE, VEHICLES, summaryInput, tripsInput, summaryResult, chartsResult, csvHeader, csvTrip};

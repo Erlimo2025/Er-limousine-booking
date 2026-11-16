@@ -1,6 +1,6 @@
 'use strict';
 
-const {ZONE, VEHICLES, summaryResult} = require('../services/dispatch-analytics');
+const {ZONE, VEHICLES, summaryResult, chartsResult} = require('../services/dispatch-analytics');
 
 const localDay = expression => '(' + expression + " AT TIME ZONE '" + ZONE + "')::date";
 const instant = expression => "CASE WHEN " + expression + " ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T.*(Z|[+-][0-9]{2}:[0-9]{2})$' " +
@@ -147,7 +147,7 @@ const facts = `
     FROM trip_money m
   )`;
 
-const activitySql = `
+const activityFacts = `
 WITH ${facts},
   params AS (
     SELECT $1::date AS first_day, $2::date AS last_day, $3::timestamptz AS as_of,
@@ -185,7 +185,9 @@ WITH ${facts},
       least(COALESCE(${localDay('recorded_paid_at')}, received_day), ${localDay('prior_refunds_observed_at')}),
       ${localDay('prior_refunds_observed_at')}
       FROM trips WHERE undated_refund_cents>0
-  )
+  )`;
+
+const activitySql = `${activityFacts}
 SELECT to_char(day, 'YYYY-MM-DD') AS day, kind, state, count(*)::text AS count,
   COALESCE(sum(cents), 0)::text AS cents, count(*) FILTER (WHERE cents IS NULL)::text AS missing, NULL::text AS last_day
 FROM events CROSS JOIN params WHERE day BETWEEN first_day AND last_day GROUP BY day, kind, state
@@ -193,6 +195,60 @@ UNION ALL
 SELECT to_char(day, 'YYYY-MM-DD'), kind, NULL, count(*)::text, '0', '0', to_char(g.last_day, 'YYYY-MM-DD')
 FROM coverage_gaps g CROSS JOIN params p WHERE g.day<=p.last_day AND g.last_day>=p.first_day
 GROUP BY g.day, kind, g.last_day`;
+
+const serviceCategory = `
+  CASE WHEN r.record #>> '{quote,fixedOffer,code}'='EWR_MANHATTAN_SUV' THEN 'ewr-manhattan'
+    WHEN r.record #>> '{trip,tripType}'='airport' THEN 'airport'
+    WHEN r.record #>> '{trip,tripType}'='hourly' THEN 'hourly'
+    WHEN r.record #>> '{trip,tripType}' IN ('oneway','roundtrip') THEN 'point-to-point'
+    ELSE 'unclassified' END`;
+
+// All chart values come from one snapshot. Group before returning rows to Node.
+const chartsSql = `${activityFacts},
+  selected_trips AS (
+    SELECT t.id, t.booking_reference, t.archived, t.pickup_day, t.pickup_at, t.status, t.payment_status, t.fare_cents
+    FROM trips t CROSS JOIN params WHERE t.pickup_day BETWEEN first_day AND last_day
+  ),
+  chart_events AS (
+    SELECT CASE WHEN kind <> 'capture' THEN first_day WHEN $4::boolean THEN day
+           ELSE date_trunc('month', day::timestamp)::date END AS bucket_day, kind, state, cents
+    FROM events CROSS JOIN params
+    WHERE day BETWEEN first_day AND last_day AND kind IN ('received','pickup','balance','capture','refund')
+  ),
+  chart_activity AS (
+    SELECT to_char(bucket_day, 'YYYY-MM-DD') AS day, kind, state, count(*)::text AS count,
+      COALESCE(sum(cents), 0)::text AS cents, count(*) FILTER (WHERE cents IS NULL)::text AS missing
+    FROM chart_events GROUP BY bucket_day, kind, state
+  ),
+  chart_gaps AS (
+    SELECT COALESCE(bool_or(kind='payment_gap'), false) AS payment_gap,
+      COALESCE(bool_or(kind='refund_gap'), false) AS refund_gap
+    FROM coverage_gaps g CROSS JOIN params p WHERE g.day<=p.last_day AND g.last_day>=p.first_day
+  ),
+  status_counts AS (
+    SELECT payment_status AS status, count(*)::text AS count FROM selected_trips GROUP BY payment_status
+  ),
+  service_totals AS (
+    SELECT ${serviceCategory} AS service, sum(c.amount_cents)::text AS cents
+    FROM captures c JOIN er_reservations r ON r.id=c.booking_id CROSS JOIN params
+    WHERE c.verified AND ${localDay('c.paid_at')} BETWEEN first_day AND last_day
+    GROUP BY 1
+  ),
+  latest AS (
+    SELECT * FROM selected_trips ORDER BY pickup_day DESC, pickup_at DESC NULLS LAST, id LIMIT 5
+  ),
+  recent_rows AS (
+    SELECT t.id, t.booking_reference, t.archived, to_char(t.pickup_day, 'YYYY-MM-DD') AS pickup_date,
+      t.pickup_at, t.status, t.payment_status, t.fare_cents::text, ${serviceCategory} AS service
+    FROM latest t JOIN er_reservations r ON r.id=t.id
+  )
+SELECT payment_gap, refund_gap,
+  (SELECT COALESCE(jsonb_agg(chart_activity), '[]'::jsonb) FROM chart_activity) AS activity,
+  (SELECT COALESCE(jsonb_agg(status_counts), '[]'::jsonb) FROM status_counts) AS statuses,
+  (SELECT COALESCE(jsonb_agg(service_totals ORDER BY service), '[]'::jsonb) FROM service_totals) AS services,
+  (SELECT COALESCE(jsonb_agg(recent_rows ORDER BY pickup_date DESC, pickup_at DESC NULLS LAST, id), '[]'::jsonb)
+    FROM recent_rows) AS recent
+FROM chart_gaps`;
 
 const sortColumns = {
   reference: 'COALESCE(t.booking_reference, t.id::text)', pickupDate: 't.pickup_at', pickup: 'lower(t.pickup)',
@@ -244,6 +300,11 @@ function dispatchAnalyticsStorage(transaction) {
     dispatchAnalytics: input => read(async client => {
       const {rows} = await client.query(activitySql, [input.previous?.range.from || input.selected.from, input.selected.to, new Date(input.now)]);
       return summaryResult(rows, input);
+    }),
+    dispatchAnalyticsCharts: input => read(async client => {
+      const {rows} = await client.query(chartsSql, [input.selected.from, input.selected.to, new Date(input.now),
+        input.granularity === 'day']);
+      return chartsResult(rows[0], input);
     }),
     dispatchAnalyticsTrips: input => read(async client => {
       const query = tripQuery(input, true);

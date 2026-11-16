@@ -284,3 +284,453 @@ test(engine + ' analytics loading, error, empty and expired-session states', pg,
   assert.equal(await page.locator('[data-metric]').count(), 0);
   assert.deepEqual(errors, []);
 });
+
+async function seedCharts(t) {
+  const f = await analyticsFixture(t);
+  f.setNow('2026-11-29T17:00:00Z');
+  const cases = [
+    {day: 29, paidDay: '08', fare: 15000, type: 'airport', special: true, status: 'cancelled'},
+    {day: 28, paidDay: '09', fare: 2002, type: null},
+    {day: 27, paidDay: '11', fare: 5367, type: 'airport'},
+    {day: 26, fare: 4444, type: 'oneway', status: 'awaiting_payment'},
+    {day: 25, paidDay: '14', fare: 12345, type: 'hourly'},
+    {day: 24, fare: 3850, type: 'oneway', paymentStatus: 'failed'},
+    {day: 23, paidDay: '16', fare: 2345, type: 'roundtrip'}
+  ];
+  const rows = [];
+  for (const {day, paidDay, fare, type, special, status, paymentStatus} of cases) {
+    const date = '2026-11-' + day;
+    const row = await f.trip({createdAt: '2026-11-07T16:00:00Z', pickupDate: date, pickupAt: date + 'T15:00:00Z',
+      paidAt: paidDay && '2026-11-' + paidDay + 'T18:00:00Z', capture: paidDay && fare, fareCents: fare,
+      status: status || 'completed', paymentStatus});
+    row.record.trip.tripType = type;
+    if (special) row.record.quote.fixedOffer = {code: 'EWR_MANHATTAN_SUV'};
+    await f.pool.query('UPDATE er_reservations SET record=$2 WHERE id=$1', [row.id, row.record]);
+    if (special) await f.managedRefund(row, {createdAt: '2026-11-29T16:00:00Z', confirmedAt: '2026-11-29T16:05:00Z'});
+    rows.push(row);
+  }
+  return {...f, rows};
+}
+
+const chartsPath = endpoint + '/charts';
+const isChartsResponse = response => new URL(response.url()).pathname === chartsPath;
+
+async function chartDates(page, from, to) {
+  const range = page.locator('#chartsDateControl');
+  if (await range.getAttribute('open') === null) await range.locator('summary').click();
+  const form = page.locator('#chartsDateForm');
+  await form.getByLabel('Chart period', {exact: true}).selectOption('custom');
+  await form.getByLabel('Chart start date', {exact: true}).fill(from);
+  await form.getByLabel('Chart end date', {exact: true}).fill(to);
+  await form.getByRole('button', {name: 'Apply chart dates'}).click();
+}
+
+async function captureCharts(page, width) {
+  const directory = process.env.ER_TEST_CHARTS_SCREENSHOT_DIR;
+  if (!directory) return;
+  fs.mkdirSync(directory, {recursive: true});
+  await scrollTo(page.locator('#analyticsChartsHeader'));
+  await page.screenshot({path: path.join(directory, 'charts-' + engine + '-' + width + '.png'), animations: 'disabled'});
+}
+
+for (const [width, columns] of [[320, 2], [390, 2], [430, 2], [768, 3], [1440, 6]]) {
+  test(engine + ' Charts View uses verified figures and preserves Current View at ' + width + 'px', pg, async t => {
+    const f = await seedCharts(t);
+    const {page, errors} = await open(t, f, width);
+    const current = page.getByRole('tab', {name: 'Current View', exact: true});
+    const charts = page.getByRole('tab', {name: 'Charts View', exact: true});
+    const view = page.locator('#analyticsChartsView');
+    const currentView = page.locator('#analyticsCurrentView');
+    let chartRequests = 0;
+    page.on('request', request => {
+      if (new URL(request.url()).pathname === chartsPath) {
+        assert.equal(request.method(), 'GET');
+        chartRequests++;
+      }
+    });
+
+    await login(page);
+    const report = page.locator('#analyticsTripReport');
+    const from = currentView.getByLabel('From Date', {exact: true});
+    const to = currentView.getByLabel('To Date', {exact: true});
+    await report.locator('tbody tr').first().waitFor();
+    assert.equal(await current.getAttribute('aria-selected'), 'true');
+    assert.equal(await charts.getAttribute('aria-selected'), 'false');
+    assert.equal(await view.isVisible(), false);
+    assert.equal(chartRequests, 0);
+
+    await from.fill('2026-11-06');
+    await to.fill('2026-11-30');
+    await currentView.getByRole('button', {name: 'Apply Filter', exact: true}).click();
+    await currentView.getByText('Nov 6, 2026 – Nov 30, 2026', {exact: true}).waitFor();
+    await report.locator('tbody tr').first().waitFor();
+    await currentView.getByLabel('Search trips').fill(f.rows[2].reference);
+    await currentView.locator('#analyticsPayment').selectOption('paid');
+    await currentView.getByLabel('Sort by').selectOption('fare');
+    await currentView.getByRole('button', {name: 'Apply Trip Filters'}).click();
+    const filtered = report.getByRole('button', {name: 'Open ' + f.rows[2].reference + ' in Dispatch'});
+    await filtered.waitFor();
+    assert.equal(await report.locator('tbody tr').count(), 1);
+
+    const response = page.waitForResponse(isChartsResponse);
+    if (width === 1440) {
+      await current.focus();
+      await current.press('ArrowRight');
+    } else await charts.click();
+    const loaded = await response;
+    assert.equal(loaded.status(), 200);
+    const data = await loaded.json();
+    assert.deepEqual(data.range, {from: '2026-11-06', to: '2026-11-30'});
+    assert.equal(data.summary.collectedCents, '37059');
+    assert.equal(data.trend.buckets.reduce((sum, bucket) => sum + BigInt(bucket.collectedCents), 0n), 37059n);
+    assert.deepEqual(Object.fromEntries(data.services.map(({service, cents}) => [service, cents])), {
+      'ewr-manhattan': '15000', unclassified: '2002', airport: '5367', hourly: '12345', 'point-to-point': '2345'
+    });
+    assert.deepEqual(data.paymentStatuses, {paid: 4, unpaid: 1, processing: 0, review: 0, refunded: 1,
+      partially_refunded: 0, partially_paid: 0, failed: 1});
+
+    const metrics = view.locator('#chartsMetrics');
+    await metrics.getByText('$370.59', {exact: true}).waitFor();
+    assert.equal(chartRequests, 1);
+    assert.equal(await charts.getAttribute('aria-selected'), 'true');
+    assert.equal(await currentView.isVisible(), false);
+    if (width === 1440) assert.equal(await charts.evaluate(element => element === document.activeElement), true);
+    assert.equal(await metrics.locator('[data-chart-metric]').count(), 6);
+    for (const [metric, label, value] of [
+      ['collectedCents', 'Payments Collected', '$370.59'],
+      ['paidReservations', 'Paid Reservations', '4'],
+      ['processingReservations', 'Processing', '0'],
+      ['cancelledReservations', 'Cancelled', '1'],
+      ['refundEvents', 'Refunded', '1'],
+      ['collectibleCents', 'Unpaid Balances', '$82.94']
+    ]) {
+      const card = metrics.locator('[data-chart-metric="' + metric + '"]');
+      assert.match(await card.locator('dt').innerText(), new RegExp('^' + label));
+      assert.equal(await card.locator('.bac-metric-value').innerText(), value);
+    }
+    assert.match(await metrics.locator('[data-chart-metric="refundEvents"]').innerText(), /confirmed refund events[^\n]*\$150\.00/i);
+    const financialContext = view.locator('#chartsFinancialContext');
+    assert.match(await financialContext.innerText(), /Net collected payments\s*\$220\.59/);
+    assert.match(await financialContext.innerText(), /Gross accepted booking value\s*\$453\.53/);
+    assert.equal(await view.getByRole('heading', {name: 'Payments Collected Trend', exact: true}).isVisible(), true);
+    const trendOverflow = await view.locator('.bac-trend-scroll').evaluate(element => element.scrollWidth - element.clientWidth);
+    assert.ok(trendOverflow <= 1, 'The 25-day trend should fit without horizontal overflow');
+    const donut = view.locator('#chartsServices');
+    for (const value of ['$150.00', '$20.02', '$53.67', '$123.45', '$23.45']) {
+      assert.equal(await donut.getByText(value, {exact: true}).isVisible(), true);
+    }
+    assert.match(await donut.innerText(), /Unclassified/);
+    const statuses = view.locator('#chartsPaymentStatuses');
+    assert.match(await statuses.innerText(), /Paid\s*4 \(57\.14%\)/);
+    assert.match(await statuses.innerText(), /Refunded\s*1 \(14\.29%\)/);
+    const recent = view.locator('#chartsRecent');
+    assert.match(await recent.innerText(), /Accepted Fare/i);
+    const recentRows = recent.locator('tbody tr');
+    assert.equal(await recentRows.count(), 5);
+    for (const [index, row] of f.rows.slice(0, 5).entries()) {
+      assert.match(await recentRows.nth(index).innerText(), new RegExp(row.reference));
+    }
+    assert.match(await recentRows.first().innerText(), /Nov 29, 2026[\s\S]*10:00\s*AM/i);
+    assert.match(await recentRows.first().innerText(), /Refunded[\s\S]*\$150\.00/i);
+    assert.match(await recentRows.nth(3).innerText(), /Unpaid[\s\S]*\$44\.44/i);
+    assert.doesNotMatch(await recent.innerText(), /rider@example|2015550140|cs_/i);
+    assert.equal(await metrics.evaluate(element => getComputedStyle(element).gridTemplateColumns.trim().split(/\s+/).length), columns);
+    const panels = await view.locator('.bac-panel').evaluateAll(sections => sections.map(section => {
+      const {x, y, width, bottom} = section.getBoundingClientRect();
+      return {x, y, width, bottom};
+    }));
+    const [trendPanel, servicePanel, recentPanel, paymentPanel] = panels;
+    if (width === 1440) {
+      assert.ok(trendPanel.width > servicePanel.width && trendPanel.x < servicePanel.x);
+      assert.ok(Math.abs(trendPanel.y - servicePanel.y) < 2);
+      assert.ok(Math.abs(recentPanel.y - paymentPanel.y) < 2 && recentPanel.y > trendPanel.bottom);
+    } else if (width <= 430) {
+      assert.ok(panels.slice(1).every((panel, index) => panel.y >= panels[index].bottom));
+    }
+    await layout(page);
+    await captureCharts(page, width);
+
+    if (width === 1440) await charts.press('ArrowLeft');
+    else await current.click();
+    assert.equal(await current.getAttribute('aria-selected'), 'true');
+    assert.equal(await view.isVisible(), false);
+    assert.equal(await from.inputValue(), '2026-11-06');
+    assert.equal(await to.inputValue(), '2026-11-30');
+    assert.equal(await currentView.getByLabel('Search trips').inputValue(), f.rows[2].reference);
+    assert.equal(await currentView.locator('#analyticsPayment').inputValue(), 'paid');
+    assert.equal(await currentView.getByLabel('Sort by').inputValue(), 'fare');
+    assert.equal(await report.locator('tbody tr').count(), 1);
+    const [download] = await Promise.all([page.waitForEvent('download'), currentView.getByRole('button', {name: 'Export CSV'}).click()]);
+    const csv = fs.readFileSync(await download.path(), 'utf8');
+    assert.equal(csv.trim().split('\r\n').length, 2);
+    assert.match(csv, new RegExp(f.rows[2].reference));
+    assert.doesNotMatch(csv, new RegExp(f.rows[0].reference));
+    assert.deepEqual(errors, []);
+  });
+}
+
+test(engine + ' Charts View handles unavailable totals, stale dates, empty results and session expiry', pg, async t => {
+  const f = await analyticsFixture(t);
+  f.setNow('2026-11-29T17:00:00Z');
+  await f.trip({createdAt: '2026-11-05T16:00:00Z', pickupDate: '2026-11-10', pickupAt: '2026-11-10T16:00:00Z',
+    paymentReviewRequired: true, status: 'awaiting_payment'});
+  const {context, page, errors} = await open(t, f, 390);
+  const gate = () => {
+    let resolve;
+    const promise = new Promise(done => { resolve = done; });
+    return {promise, resolve};
+  };
+  const blocked = gate();
+  const release = gate();
+  const finished = gate();
+  t.after(() => release.resolve());
+  await context.route(url => url.pathname === chartsPath, async route => {
+    if (new URL(route.request().url()).searchParams.get('from') !== '2026-11-04') return route.continue();
+    const stale = await route.fetch();
+    blocked.resolve();
+    await release.promise;
+    // The client may already have aborted this old request.
+    await route.fulfill({response: stale}).catch(() => {});
+    finished.resolve();
+  });
+
+  await login(page);
+  const view = page.locator('#analyticsChartsView');
+  const first = page.waitForResponse(isChartsResponse);
+  await page.getByRole('tab', {name: 'Charts View', exact: true}).click();
+  const incomplete = await (await first).json();
+  assert.equal(incomplete.summary.collectedCents, null);
+  assert.equal(incomplete.services, null);
+  assert.equal(incomplete.trend, null);
+  await view.locator('#chartsMetrics [data-chart-metric="collectedCents"]').getByText('Unavailable', {exact: true}).waitFor();
+  assert.match(await view.locator('#chartsTrend').innerText(), /unavailable/i);
+  assert.match(await view.locator('#chartsServices').innerText(), /unavailable/i);
+  assert.match(await view.locator('#chartsPaymentStatuses').innerText(), /Review required/i);
+
+  await chartDates(page, '2026-11-04', '2026-11-28');
+  await blocked.promise;
+  const latest = page.waitForResponse(response => isChartsResponse(response) &&
+    new URL(response.url()).searchParams.get('from') === '2026-12-01');
+  await chartDates(page, '2026-12-01', '2026-12-02');
+  const empty = await (await latest).json();
+  assert.equal(empty.reservationCount, 0);
+  assert.equal(empty.summary.collectedCents, '0');
+  await view.locator('#chartsMetrics [data-chart-metric="collectedCents"]').getByText('$0.00', {exact: true}).waitFor();
+  assert.match(await view.locator('#chartsRecent').innerText(), /No (?:matching )?reservations/i);
+  release.resolve();
+  await finished.promise;
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  assert.match(await page.locator('#chartsDateLabel').innerText(), /Dec 1[\s\S]*Dec 2/);
+  assert.equal(await view.locator('#chartsMetrics [data-chart-metric="collectedCents"]').getByText('$0.00', {exact: true}).isVisible(), true);
+  await layout(page);
+
+  f.h.advance(2 * 60 * 60 * 1000);
+  await chartDates(page, '2026-12-04', '2026-12-05');
+  await page.locator('#businessAnalytics').waitFor({state: 'hidden'});
+  assert.equal(await view.locator('[data-chart-metric]').count(), 0);
+  assert.equal(await view.locator('#chartsRecent tbody tr').count(), 0);
+  assert.deepEqual(errors, []);
+});
+
+const chartsSessionPath = '/api/admin/session?mode=charts';
+const isChartsSession = url => url.pathname === '/api/admin/session' && url.searchParams.get('mode') === 'charts';
+const isChartsSessionResponse = response => isChartsSession(new URL(response.url()));
+const minute = 60 * 1000;
+
+function deferred() {
+  let resolve;
+  const promise = new Promise(done => { resolve = done; });
+  return {promise, resolve};
+}
+
+async function openWithSessionDeadline(t, fixture, width) {
+  const opened = await open(t, fixture, width);
+  const {page} = opened;
+  await page.clock.install();
+  await login(page);
+  const status = page.waitForResponse(isChartsSessionResponse);
+  await page.getByRole('tab', {name: 'Charts View', exact: true}).click();
+  const response = await status;
+  assert.equal(response.status(), 200);
+  const deadline = await response.json();
+  assert.equal(deadline.authenticated, true);
+  assert.equal(deadline.expiresAt - deadline.serverNow, 30 * minute);
+  const view = page.locator('#analyticsChartsView');
+  const collected = view.locator('#chartsMetrics [data-chart-metric="collectedCents"]')
+    .getByText('$370.59', {exact: true});
+  await collected.waitFor();
+  assert.ok(await view.locator('#chartsRecent tbody tr').count());
+  return {...opened, view, collected, deadline};
+}
+
+async function assertChartsCleared(view) {
+  assert.equal(await view.locator('#chartsResults').isVisible(), false);
+  assert.equal(await view.locator('[data-chart-metric]').count(), 0);
+  assert.equal(await view.locator('#chartsRecent tbody tr').count(), 0);
+  for (const id of ['chartsTrend', 'chartsServices', 'chartsPaymentStatuses', 'chartsFinancialContext']) {
+    assert.equal(await view.locator('#' + id).textContent(), '');
+  }
+}
+
+async function simulateChartVisibility(page, state) {
+  await page.evaluate(state => {
+    Object.defineProperty(document, 'visibilityState', {value: state, configurable: true});
+    Object.defineProperty(document, 'hidden', {value: state === 'hidden', configurable: true});
+    document.dispatchEvent(new Event('visibilitychange'));
+  }, state);
+}
+
+test(engine + ' Charts View clears a visibly idle tab at the server deadline before receiving a denial', pg, async t => {
+  const f = await seedCharts(t);
+  const {page, context, view, collected, errors} = await openWithSessionDeadline(t, f, 390);
+  const release = deferred();
+  t.after(() => release.resolve());
+  await context.route(isChartsSession, async route => {
+    await release.promise;
+    await route.continue();
+  });
+  const outcomes = [];
+  const chartRequests = [];
+  page.on('response', response => {
+    if (isChartsSessionResponse(response) || isChartsResponse(response)) outcomes.push(response.status());
+  });
+  page.on('request', request => {
+    if (new URL(request.url()).pathname === chartsPath) chartRequests.push(request.method());
+  });
+
+  f.h.advance(29 * minute);
+  await page.clock.fastForward(29 * minute);
+  assert.equal(await collected.isVisible(), true);
+  assert.deepEqual(outcomes, []);
+
+  const checking = page.waitForRequest(request => isChartsSession(new URL(request.url())));
+  f.h.advance(minute);
+  await page.clock.fastForward(minute);
+  await checking;
+  await assertChartsCleared(view);
+  assert.deepEqual(outcomes, []);
+  assert.deepEqual(chartRequests, []);
+  assert.deepEqual(await page.evaluate(() => [localStorage.length, sessionStorage.length]), [0, 0]);
+
+  const denied = page.waitForResponse(isChartsSessionResponse);
+  release.resolve();
+  assert.equal((await denied).status(), 401);
+  await page.locator('#businessAnalytics').waitFor({state: 'hidden'});
+  await page.locator('#notice').filter({hasText: /session.*(?:expired|no longer authorized)/i}).waitFor();
+  await assertChartsCleared(view);
+  assert.deepEqual(errors, []);
+});
+
+test(engine + ' Charts View invalidates an in-flight response when its server session expires', pg, async t => {
+  const f = await seedCharts(t);
+  const {page, context, view, errors} = await openWithSessionDeadline(t, f, 1440);
+  const pending = deferred();
+  const release = deferred();
+  const delivered = deferred();
+  t.after(() => release.resolve());
+  await context.route(url => url.pathname === chartsPath, async route => {
+    if (new URL(route.request().url()).searchParams.get('from') !== '2026-11-06') return route.continue();
+    const response = await route.fetch();
+    pending.resolve(response.status());
+    await release.promise;
+    // A read authorized before expiry may complete after the client cancels it.
+    await route.fulfill({response}).catch(() => {});
+    delivered.resolve();
+  });
+  await chartDates(page, '2026-11-06', '2026-11-30');
+  assert.equal(await pending.promise, 200);
+
+  const denied = page.waitForResponse(response => isChartsSessionResponse(response) && response.status() === 401);
+  f.h.advance(31 * minute);
+  await page.clock.fastForward(31 * minute);
+  await denied;
+  await page.locator('#businessAnalytics').waitFor({state: 'hidden'});
+  release.resolve();
+  await delivered.promise;
+  await assertChartsCleared(view);
+  assert.deepEqual(errors, []);
+});
+
+test(engine + ' Charts View revalidates a resumed tab after cross-tab renewal, preserves dates and clears on sign-out', pg, async t => {
+  const f = await seedCharts(t);
+  const {page, context, view, collected, deadline, errors} = await openWithSessionDeadline(t, f, 1440);
+  await chartDates(page, '2026-11-06', '2026-11-30');
+  await collected.waitFor();
+  const dateLabel = page.locator('#chartsDateLabel');
+  assert.match(await dateLabel.innerText(), /Nov 6[\s\S]*Nov 30/);
+
+  f.h.advance(20 * minute);
+  await page.clock.fastForward(20 * minute);
+  await simulateChartVisibility(page, 'hidden');
+  await page.locator('#chartsResults').waitFor({state: 'hidden'});
+
+  const otherTab = await context.newPage();
+  const renewal = await otherTab.goto(f.h.url + '/api/admin/session');
+  assert.equal(renewal.status(), 200);
+  assert.deepEqual(await renewal.json(), {authenticated: true});
+  f.h.advance(11 * minute);
+  // Move the wall clock without running pending timers, as after a suspended tab.
+  await page.clock.setSystemTime(new Date((await page.evaluate(() => Date.now())) + 11 * minute));
+
+  const chartRequests = [];
+  page.on('request', request => {
+    if (new URL(request.url()).pathname === chartsPath) chartRequests.push(request.method());
+  });
+  const statusReady = deferred();
+  const release = deferred();
+  t.after(() => release.resolve());
+  await context.route(isChartsSession, async route => {
+    const response = await route.fetch();
+    statusReady.resolve({status: response.status(), data: await response.json()});
+    await release.promise;
+    await route.fulfill({response});
+  });
+  await page.bringToFront();
+  await simulateChartVisibility(page, 'visible');
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  const renewed = await statusReady.promise;
+  assert.equal(renewed.status, 200);
+  assert.equal(renewed.data.expiresAt, deadline.expiresAt + 20 * minute);
+  assert.equal(renewed.data.expiresAt - renewed.data.serverNow, 19 * minute);
+  await assertChartsCleared(view);
+
+  release.resolve();
+  const reload = view.getByRole('button', {name: 'Reload charts', exact: true});
+  await reload.waitFor();
+  await assertChartsCleared(view);
+  assert.deepEqual(chartRequests, []);
+  await reload.click();
+  await collected.waitFor();
+  assert.match(await dateLabel.innerText(), /Nov 6[\s\S]*Nov 30/);
+  const loggedOut = page.waitForResponse(response => new URL(response.url()).pathname === '/api/admin/logout');
+  await page.getByRole('button', {name: 'Sign out', exact: true}).click();
+  assert.equal((await loggedOut).status(), 200);
+  await page.locator('#businessAnalytics').waitFor({state: 'hidden'});
+  await assertChartsCleared(view);
+  const status = await context.request.get(f.h.url + chartsSessionPath);
+  assert.equal(status.status(), 401);
+  assert.deepEqual(errors, []);
+});
+
+test(engine + ' Charts View keeps financial data hidden when focus revalidation is denied', pg, async t => {
+  const f = await seedCharts(t);
+  const {page, context, view, collected, errors} = await openWithSessionDeadline(t, f, 390);
+  await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+  assert.equal(await collected.isVisible(), false);
+  const checked = page.waitForResponse(isChartsSessionResponse);
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  assert.equal((await checked).status(), 200);
+  await collected.waitFor();
+
+  await context.route(isChartsSession, async route => {
+    const response = await route.fetch({headers: {...await route.request().allHeaders(), origin: 'https://denied.example'}});
+    await route.fulfill({response});
+  });
+  await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+  const denied = page.waitForResponse(isChartsSessionResponse);
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  assert.equal((await denied).status(), 403);
+  await page.locator('#businessAnalytics').waitFor({state: 'hidden'});
+  await assertChartsCleared(view);
+  assert.deepEqual(errors, []);
+});

@@ -412,6 +412,162 @@ test('historical gaps and undated verified partial refunds remain unavailable in
   assert.equal(trips.find(row => row.id === paid.id).refundedCents, '20000');
 });
 
+test('Charts reconciles verified New York collections by day and saved service with bounded pickup rows', pg, async t => {
+  const f = await analyticsFixture(t);
+  const entries = [
+    ['airport', 'EWR_MANHATTAN_SUV', 15000, '2026-03-01T05:00:00Z', 'confirmed'],
+    ['airport', null, 12501, '2026-03-08T04:59:59Z', 'cancelled'],
+    ['hourly', null, 30000, '2026-03-08T07:00:00Z', 'completed'],
+    ['roundtrip', null, 7500, '2026-04-01T03:59:59Z', 'confirmed'],
+    ['unsupported', null, 1999, '2026-03-18T15:35:00Z', 'confirmed'],
+    ['oneway', null, 1111, '2026-03-01T04:59:59Z', 'confirmed'],
+    ['oneway', null, 2222, '2026-04-01T04:00:00Z', 'confirmed']
+  ];
+  const trips = [];
+  for (const [index, [tripType, offerCode, amount, paidAt, status]] of entries.entries()) {
+    const day = String(index + 4).padStart(2, '0');
+    const row = await f.trip({status, pickupAt: '2026-03-' + day + 'T17:30:00Z',
+      fareCents: amount, capture: amount, paidAt});
+    const record = {...row.record, trip: {...row.record.trip, tripType}};
+    if (offerCode) record.quote = {...record.quote, fixedOffer: {code: offerCode}};
+    await f.pool.query('UPDATE er_reservations SET record=$2 WHERE id=$1', [row.id, record]);
+    trips.push(row);
+  }
+  trips.push(await f.trip({status: 'awaiting_payment', fareCents: 4444, createdAt: '2026-03-02T15:00:00Z',
+    pickupAt: '2026-03-11T17:30:00Z'}));
+
+  const admin = await f.adminLogin();
+  const query = dateQuery('2026-03-01', '2026-03-31');
+  const result = await f.get(endpoint + '/charts?' + query, admin);
+  assert.equal(result.status, 200, JSON.stringify(result.body));
+  const data = result.body;
+  assert.deepEqual(data.range, range('2026-03-01', '2026-03-31'));
+  assert.equal(data.timeZone, 'America/New_York');
+  assert.deepEqual(data.summary, {
+    collectedCents: '67000', netCollectedCents: '67000', grossAcceptedCents: '4444',
+    collectibleCents: '4444', paidReservations: 7, processingReservations: 0,
+    cancelledReservations: 1, refundsCents: '0', refundEvents: 0
+  });
+  const summary = (await f.get(endpoint + '?' + query, admin)).body.summary;
+  for (const metric of ['collectedCents', 'netCollectedCents', 'grossAcceptedCents', 'collectibleCents', 'refundsCents']) {
+    assert.equal(data.summary[metric], summary[metric]);
+  }
+  assert.equal(data.trend.granularity, 'day');
+  assert.equal(data.trend.buckets.length, 31);
+  assert.deepEqual(data.trend.buckets.filter(bucket => bucket.collectedCents !== '0').map(bucket => [bucket.from, bucket.collectedCents]),
+    [['2026-03-01', '15000'], ['2026-03-07', '12501'], ['2026-03-08', '30000'], ['2026-03-18', '1999'], ['2026-03-31', '7500']]);
+  assert.equal(data.trend.buckets.reduce((total, bucket) => total + BigInt(bucket.collectedCents), 0n), 67000n);
+  assert.deepEqual(new Map(data.services.map(row => [row.service, row.cents])), new Map([
+    ['ewr-manhattan', '15000'], ['airport', '12501'], ['hourly', '30000'], ['point-to-point', '7500'], ['unclassified', '1999']
+  ]));
+  assert.equal(data.services.reduce((total, row) => total + BigInt(row.cents), 0n), 67000n);
+  assert.deepEqual(data.paymentStatuses, {
+    paid: 7, unpaid: 1, processing: 0, review: 0, refunded: 0, partially_refunded: 0, partially_paid: 0, failed: 0
+  });
+  assert.equal(data.reservationCount, 8);
+  assert.deepEqual(data.recent.map(row => row.reference), trips.slice(-5).reverse().map(row => row.reference));
+  assert.deepEqual(data.recent.map(row => row.service), ['point-to-point', 'point-to-point', 'point-to-point', 'unclassified', 'point-to-point']);
+  assert.equal(new Date(data.recent[0].pickupAt).toISOString(), '2026-03-11T17:30:00.000Z');
+  assert.equal(data.recent[0].fareCents, '4444');
+  assert.equal(data.recent[0].paymentStatus, 'unpaid');
+  assert.deepEqual(Object.keys(data.recent[0]).sort(),
+    ['archived', 'fareCents', 'id', 'paymentStatus', 'pickupAt', 'pickupDate', 'reference', 'service', 'status']);
+  assert.doesNotMatch(JSON.stringify(data), /rider@example|2015550140|Example Place|stripeSession|checkoutAttempt|cs_/);
+
+  const year = (await f.get(endpoint + '/charts?preset=thisYear', admin)).body;
+  assert.equal(year.trend.granularity, 'month');
+  assert.equal(year.trend.buckets.length, 12);
+  assert.equal(year.summary.collectedCents, '70333');
+  assert.equal(year.trend.buckets.reduce((total, bucket) => total + BigInt(bucket.collectedCents), 0n), 70333n);
+});
+
+test('Charts preserves M-05 pending and review states and distinguishes incomplete evidence from an empty range', pg, async t => {
+  const f = await analyticsFixture(t);
+  await f.trip({fareCents: 5000, capture: 5000, paidAt: '2026-03-15T16:00:00Z'});
+  for (const status of ['paid_awaiting_webhook', 'provider_unavailable']) {
+    const trip = await f.trip({status: 'awaiting_payment'});
+    const session = 'cs_' + trip.id.replaceAll('-', '');
+    const review = {status, lastResult: status, sessionId: session, attemptKey: null, paymentIntentId: null,
+      checkedAt: Date.parse('2026-03-12T17:00:00Z')};
+    await f.pool.query('UPDATE er_reservations SET record=$2 WHERE id=$1', [trip.id,
+      {...trip.record, stripeSessionId: session, paymentConfirmationReview: review}]);
+  }
+  for (let index = 0; index < 2; index++) {
+    await f.trip({fareCents: 4000, capture: 4000, session: 'cs_duplicate_fixture', paidAt: '2026-03-14T15:00:00Z'});
+  }
+  await f.trip({status: 'awaiting_payment', paymentStatus: 'failed'});
+  const admin = await f.adminLogin();
+  const result = await f.get(endpoint + '/charts?' + dateQuery('2026-03-01', '2026-03-31'), admin);
+  assert.equal(result.status, 200, JSON.stringify(result.body));
+  assert.equal(result.body.summary.collectedCents, null);
+  assert.equal(result.body.summary.netCollectedCents, null);
+  assert.equal(result.body.summary.collectibleCents, null);
+  assert.equal(result.body.summary.paidReservations, 1);
+  assert.equal(result.body.summary.processingReservations, 1);
+  assert.equal(result.body.paymentStatuses.review, 3);
+  assert.equal(result.body.paymentStatuses.failed, 1);
+  assert.equal(result.body.reservationCount, 6);
+  assert.equal(result.body.trend, null);
+  assert.equal(result.body.services, null);
+
+  const empty = await f.get(endpoint + '/charts?' + dateQuery('2027-02-01', '2027-02-02'), admin);
+  assert.equal(empty.status, 200);
+  assert.equal(empty.body.summary.collectedCents, '0');
+  assert.equal(empty.body.summary.collectibleCents, '0');
+  assert.equal(empty.body.reservationCount, 0);
+  assert.deepEqual(empty.body.services, []);
+  assert.deepEqual(empty.body.recent, []);
+  assert.ok(empty.body.trend.buckets.every(bucket => bucket.collectedCents === '0'));
+});
+
+test('Charts counts confirmed full and partial refund events once each, separately from cancellations', pg, async t => {
+  const f = await analyticsFixture(t);
+  await f.register();
+  const {rows: [owner]} = await f.pool.query('SELECT id FROM er_customers');
+  const full = await f.trip({status: 'cancelled', fareCents: 15000, capture: 15000, paidAt: '2026-03-03T15:00:00Z'});
+  const partial = await f.trip({status: 'cancelled', fareCents: 15000, capture: 15000, paidAt: '2026-03-04T15:00:00Z'});
+  const confirmedAt = '2026-03-12T16:00:00Z';
+  const duplicate = await f.legacyRefund(full, owner.id, {confirmedAt});
+  await f.managedRefund(full, {confirmedAt, stripeRefundId: duplicate.refundId});
+  await f.legacyRefund(partial, owner.id, {confirmedAt, amount: 4500});
+
+  const admin = await f.adminLogin();
+  const response = await f.get(endpoint + '/charts?' + dateQuery('2026-03-01', '2026-03-31'), admin);
+  assert.equal(response.status, 200, JSON.stringify(response.body));
+  const data = response.body;
+  assert.equal(data.summary.refundEvents, 2);
+  assert.equal(data.summary.refundsCents, '19500');
+  assert.equal(data.summary.collectedCents, '30000');
+  assert.equal(data.summary.netCollectedCents, '10500');
+  assert.equal(data.summary.cancelledReservations, 2);
+  assert.equal(data.paymentStatuses.refunded, 1);
+  assert.equal(data.paymentStatuses.partially_refunded, 1);
+  assert.equal(data.paymentStatuses.paid, 0);
+  assert.equal(data.reservationCount, 2);
+  assert.equal(Object.values(data.paymentStatuses).reduce((sum, count) => sum + count, 0), 2);
+  assert.ok(!Object.hasOwn(data.paymentStatuses, 'cancelled'));
+});
+
+test('Charts requires an active Dispatch session, same origin, bounded rates and private response headers', pg, async t => {
+  const f = await analyticsFixture(t);
+  const path = endpoint + '/charts?' + dateQuery('2026-03-01', '2026-03-31');
+  const customer = await f.register();
+  assert.equal((await f.get(path)).status, 401);
+  assert.equal((await f.get(path, customer)).status, 401);
+  const admin = await f.adminLogin();
+  const cross = await f.h.request(path, undefined, {cookie: admin, 'sec-fetch-site': 'cross-site'});
+  assert.equal(cross.status, 403);
+  const response = await f.get(path, admin);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+  assert.equal(response.headers.get('cross-origin-resource-policy'), 'same-origin');
+  assert.equal((await f.get(path + '&limit=10', admin)).status, 400);
+  for (let index = 0; index < 18; index++) assert.equal((await f.get(path, admin)).status, 200);
+  assert.equal((await f.get(path, admin)).status, 429);
+  f.h.advance(31 * 60_000);
+  assert.equal((await f.get(path, admin)).status, 401);
+});
+
 test('report pagination, filters, sorting and CSV use the same authorized dataset', pg, async t => {
   const f = await analyticsFixture(t);
   const a = await f.trip({status: 'completed', fareCents: 13000, pickup: '=1+1'});
