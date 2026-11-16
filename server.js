@@ -3111,7 +3111,8 @@ app.get(
     if (!allowed) {
       return res.status(401).json({error: "Reservation access unavailable."});
     }
-    const driverVisible = ["assigned", "driver_en_route", "passenger_on_board", "completed"].includes(booking.status);
+    const driverPhoneVisible = ["assigned", "driver_en_route", "passenger_on_board"].includes(booking.status);
+    const driverVisible = driverPhoneVisible || booking.status === "completed";
     const bookedCancellationPolicy = cancellationPolicy.policyAtBooking(booking);
     res.json({
       id: booking.id,
@@ -3131,7 +3132,8 @@ app.get(
       quote: {vehicle: booking.trip.vehicle==='suv'?'Luxury SUV':booking.quote.vehicle, total: booking.quote.total,currency:booking.quote.currency,
         ...(booking.quote.pricingBreakdown?{pricingBreakdown:routeTollPricing.customerPricing(booking.quote)}:{})},
       dispatch: driverVisible ? {
-        driver: booking.dispatch?.driver || "", driverPhone: booking.dispatch?.driverPhone || "",
+        driver: booking.dispatch?.driver || "",
+        ...(driverPhoneVisible ? {driverPhone: booking.dispatch?.driverPhone || ""} : {}),
         vehicle: booking.dispatch?.vehicle || "", plate: booking.dispatch?.plate || ""
       } : null
     });
