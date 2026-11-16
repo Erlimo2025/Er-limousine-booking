@@ -7,18 +7,22 @@ const cookie=r=>r.headers.getSetCookie().find(x=>x.includes('er_customer_session
 const register=(h,extra={})=>h.request('/api/customer/register',{...customer,...extra});
 const reserve=(h,extra={},auth={})=>h.request('/api/checkout',{...booking,paymentChoice:'later',...extra},auth);
 const payment=(h,id,c)=>h.request('/api/customer/trips/'+id+'/payment',{}, {...headers,cookie:c});
+function assertOrdinaryCallbacks(params, id) {
+  assert.equal(params.success_url, headers.origin + '/success.html?booking=' + id);
+  assert.equal(params.cancel_url, headers.origin + '/success.html?booking=' + id + '&cancelled=1');
+}
 const stripeVehicleNames = [
   ['suv', 'Luxury SUV — Chevrolet Suburban Premier', 9000],
   ['escalade', 'Luxury SUV — Cadillac Escalade ESV', 11250]
 ];
 
 for (const [vehicle, name, cents] of stripeVehicleNames) {
-  for (const flow of ['Pay Now', 'guest Complete Payment', 'signed-in Complete Payment']) {
+  for (const flow of ['guest Pay Now', 'signed-in Pay Now', 'guest Complete Payment', 'signed-in Complete Payment']) {
     test('Stripe Checkout vehicle name for ' + vehicle + ' via ' + flow, async t => {
       const h = await harness(t);
       h.state.routeResult = () => ({distanceMeters: 16093.44, duration: '1800s'});
-      const payNow = flow === 'Pay Now';
-      const account = flow === 'signed-in Complete Payment' ? await register(h) : null;
+      const payNow = flow.endsWith('Pay Now');
+      const account = flow.startsWith('signed-in') ? await register(h) : null;
       const auth = account ? {cookie: cookie(account)} : {};
       const reserved = await reserve(h, {vehicle, paymentChoice: payNow ? 'now' : 'later'}, auth);
       assert.equal(reserved.status, 200);
@@ -36,7 +40,9 @@ for (const [vehicle, name, cents] of stripeVehicleNames) {
       }
 
       assert.equal(h.state.creates.length, 1);
-      const {line_items, metadata} = h.state.creates[0].params;
+      const params = h.state.creates[0].params;
+      assertOrdinaryCallbacks(params, id);
+      const {line_items, metadata} = params;
       assert.equal(line_items[0].price_data.product_data.name, name);
       assert.equal(line_items[0].price_data.unit_amount, cents);
       assert.equal(line_items[0].price_data.currency, 'usd');
@@ -46,7 +52,7 @@ for (const [vehicle, name, cents] of stripeVehicleNames) {
   }
 }
 
-test('Stripe Checkout vehicle name leaves a submitted legacy retry intact and updates the replacement', async t => {
+test('Stripe Checkout preserves a frozen legacy callback and vehicle name until a fresh attempt', async t => {
   const h = await harness(t);
   const account = await register(h);
   const credentials = cookie(account);
@@ -60,6 +66,7 @@ test('Stripe Checkout vehicle name leaves a submitted legacy retry intact and up
   const submitted = h.state.creates[0];
   const legacy = structuredClone(submitted.params);
   legacy.line_items[0].price_data.product_data.name = 'ER Limousine Service — Black SUV';
+  legacy.success_url += '&session_id={CHECKOUT_SESSION_ID}';
   await h.testStore.update(id, record => {record.checkoutAttempt.parameters = legacy;});
 
   assert.equal((await payment(h, id, credentials)).status, 200);
@@ -69,10 +76,17 @@ test('Stripe Checkout vehicle name leaves a submitted legacy retry intact and up
   assert.equal(h.state.sessions.size, 1);
 
   const existing = [...h.state.sessions.values()][0];
+  const reused = await payment(h, id, credentials);
+  assert.equal(reused.status, 200);
+  assert.equal(reused.body.url, existing.url);
+  assert.equal(h.state.creates.length, 2);
+  assert.deepEqual((await h.testStore.get(id)).checkoutAttempt.parameters, legacy);
+
   existing.status = 'expired';
   assert.equal((await payment(h, id, credentials)).status, 200);
   const replacement = h.state.creates[2];
   assert.notEqual(replacement.options.idempotencyKey, submitted.options.idempotencyKey);
+  assertOrdinaryCallbacks(replacement.params, id);
   assert.equal(replacement.params.line_items[0].price_data.product_data.name, 'Luxury SUV — Chevrolet Suburban Premier');
   assert.equal(replacement.params.line_items[0].price_data.unit_amount, 8000);
   assert.equal(replacement.params.metadata.bookingId, id);
@@ -97,7 +111,15 @@ test('owned Complete Payment uses stored quote and SQL ownership; foreign, guest
  const paid=await payment(h,id,cookie(a));assert.equal(paid.status,200);assert.equal(h.state.googleCalls,before);assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount,10000);
  assert.equal(await h.testStore.reservationOwner(id),owner);assert.equal((await payment(h,id,cookie(a))).status,200);assert.equal(h.state.creates.length,1);
  const session=[...h.state.sessions.values()][0];session.status='complete';session.payment_status='paid';
- assert.equal((await h.request('/success.html?booking='+id+'&paid=true')).status,200);assert.equal(h.records()[0].paymentStatus,'unpaid');
+ const bookingStatus='/api/booking/'+id;
+ const legacyQuery='?session_id=cs_forged&paid=true';
+ assert.equal((await h.request('/success.html?booking='+id+'&session_id=cs_forged&paid=true')).status,200);
+ assert.equal((await h.request(bookingStatus+legacyQuery)).status,401);
+ assert.equal((await h.request(bookingStatus+legacyQuery,undefined,{cookie:cookie(b)})).status,401);
+ const ownerStatus=await h.request(bookingStatus+legacyQuery,undefined,{cookie:cookie(a)});
+ assert.equal(ownerStatus.status,200);
+ assert.equal(ownerStatus.body.paymentStatus,'unpaid');
+ assert.equal(h.records()[0].paymentStatus,'unpaid');
  assert.equal((await h.webhook(session)).status,200);assert.equal((await h.webhook(session)).status,200);
  assert.equal(h.records()[0].paymentStatus,'paid');assert.equal((await payment(h,id,cookie(a))).status,409);assert.equal(h.state.creates.length,1);
 });
@@ -110,6 +132,15 @@ test('guest Pay Later completion requires the existing high-entropy cookie and n
  assert.equal((await h.request('/api/booking/'+id+'/checkout',{}, {...headers,cookie:access.replace(/=.*/,'=forged')})).status,404);
  assert.equal((await h.request('/api/booking/'+id+'/checkout',{}, {...headers,cookie:access})).status,200);
  assert.equal(await h.testStore.reservationOwner(id),null);assert.equal(h.state.creates.length,1);
+ const bookingStatus='/api/booking/'+id;
+ const legacyQuery='?session_id=cs_forged&paid=true';
+ const status=await h.request(bookingStatus,undefined,{cookie:access});
+ assert.equal(status.status,200);
+ assert.equal(status.body.paymentStatus,'unpaid');
+ const legacyStatus=await h.request(bookingStatus+legacyQuery,undefined,{cookie:access});
+ assert.equal(legacyStatus.status,200);
+ assert.deepEqual(legacyStatus.body,status.body);
+ assert.equal((await h.request(bookingStatus+legacyQuery)).status,401);
 });
 test('FIRST15 Pay Later claims are atomic, durable while payable, exactly 15%, and release only after paid/cancelled',async t=>{
  const h=await harness(t),a=await register(h),auth={cookie:cookie(a)},first=await reserve(h,{promoCode:'FIRST15'},auth),id=first.body.bookingId;
@@ -118,6 +149,7 @@ test('FIRST15 Pay Later claims are atomic, durable while payable, exactly 15%, a
  await h.testStore.update(id,r=>{r.dispatch.driver='Local chauffeur';});assert.equal(h.testStore.shared.claims.size,2);
  h.advance(60000);await h.context.reconcileFirstRide(id);assert.equal(h.testStore.shared.claims.size,2);
  const r=await payment(h,id,cookie(a));assert.equal(r.status,200);assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount,8500);
+ assertOrdinaryCallbacks(h.state.creates[0].params,id);
  const si=[...h.state.sessions.values()][0];si.status='expired';si.payment_status='unpaid';
  await h.context.reconcileFirstRide(id);assert.equal(h.testStore.shared.claims.size,2);
  assert.equal((await reserve(h,{promoCode:'FIRST15',time:'14:00'},auth)).status,409);
@@ -147,6 +179,7 @@ test('EWR special Pay Later and stored payment keep exactly $150, FIRST15 exclud
  assert.equal(r.status,200);assert.equal(h.records()[0].quote.total,150);assert.equal(h.records()[0].quote.promotion,null);
  assert.equal((await payment(h,r.body.bookingId,cookie(a))).status,200);assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount,15000);
  assert.equal(h.state.creates[0].params.line_items[0].price_data.product_data.name,'Luxury SUV — Chevrolet Suburban Premier');
+ assertOrdinaryCallbacks(h.state.creates[0].params,r.body.bookingId);
  }
 });
 test('completion mutations enforce Origin, Fetch Metadata, JSON and no-store; provider failures remain sanitized',async t=>{
@@ -196,15 +229,48 @@ test('booking choice double submit is blocked and browser sends only intent, nev
  const first=handler({preventDefault(){},submitter:{id:'payLaterBtn'}});await Promise.resolve();await handler({preventDefault(){},submitter:{id:'payLaterBtn'}});
  assert.equal(calls,1);assert.equal(sent.paymentChoice,'later');assert.equal(sent.vehicle,'suv');assert.equal(sent.quoteRevision,'d'.repeat(64));assert.equal(Object.hasOwn(sent,'cancellationPolicyAcceptance'),false);assert.ok(!Object.hasOwn(sent,'total'));assert.ok(!Object.hasOwn(sent,'amount'));release();await first;
 });
-test('confirmation page re-fetches status and never treats Stripe return parameters as Paid',async()=>{
- const html=fs.readFileSync(path.join(__dirname,'../public/success.html'),'utf8'),script=html.match(/<script>([\s\S]*?)<\/script>/)[1],events={},elements={};
- const node=()=>({children:[],hidden:false,disabled:false,textContent:'',append(...n){this.children.push(...n)},replaceChildren(){this.children=[]},addEventListener(k,f){this.events||={};this.events[k]=f}});
- for(const id of ['message','details','completePayment','refreshReservation'])elements[id]=node();
- let paid=false;
- const ctx={TripDateFormat:require('../public/trip-date-format'),document:{getElementById:id=>elements[id],createElement:node},URLSearchParams,Intl,window:{addEventListener:(e,f)=>events[e]=f},location:{search:'?booking=11111111-1111-4111-8111-111111111111&paid=true&session_id=cs_forged',assign(){}},
- fetch:async()=>({ok:true,status:200,json:async()=>({id:'fixture',status:paid?'confirmed':'awaiting_payment',paymentStatus:paid?'paid':'unpaid',trip:{pickup:'<script>unsafe</script>',dropoff:'Destination',date:'2026-11-10',time:'12:00'},quote:{vehicle:'Luxury SUV',total:80,currency:'usd'}})})};
- vm.createContext(ctx);vm.runInContext(script,ctx);await events.pageshow();assert.match(elements.message.textContent,/Payment is still required/);assert.equal(elements.completePayment.hidden,false);assert.ok(elements.details.children.some(r=>r.children[1].textContent==='<script>unsafe</script>'));
- paid=true;await elements.refreshReservation.events.click();await new Promise(r=>setImmediate(r));assert.match(elements.message.textContent,/Payment received/);assert.equal(elements.completePayment.hidden,true);
+test('current and legacy confirmation URLs re-fetch status without trusting Stripe return parameters', async () => {
+  const html = fs.readFileSync(path.join(__dirname, '../public/success.html'), 'utf8');
+  const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
+  const id = '11111111-1111-4111-8111-111111111111';
+  for (const query of ['', '&paid=true&session_id=cs_forged']) {
+    const events = {}, elements = {}, requests = [];
+    const node = () => ({children: [], hidden: false, disabled: false, textContent: '',
+      append(...children) {this.children.push(...children);},
+      replaceChildren() {this.children = [];},
+      addEventListener(key, callback) {this.events ||= {}; this.events[key] = callback;}});
+    for (const name of ['message', 'details', 'completePayment', 'refreshReservation']) elements[name] = node();
+    let paid = false;
+    const ctx = {
+      TripDateFormat: require('../public/trip-date-format'), URLSearchParams, Intl,
+      document: {getElementById: name => elements[name], createElement: node},
+      window: {addEventListener: (name, callback) => events[name] = callback},
+      location: {search: '?booking=' + id + query},
+      fetch: async (url, options) => {
+        requests.push([url, options.credentials]);
+        return {ok: true, status: 200, json: async () => ({
+          id, status: paid ? 'confirmed' : 'awaiting_payment', paymentStatus: paid ? 'paid' : 'unpaid',
+          trip: {pickup: '<script>unsafe</script>', dropoff: 'Destination', date: '2026-11-10', time: '12:00'},
+          quote: {vehicle: 'Luxury SUV', total: 80, currency: 'usd'}
+        })};
+      }
+    };
+    vm.createContext(ctx);
+    vm.runInContext(script, ctx);
+    await events.pageshow();
+    assert.deepEqual(requests, [['/api/booking/' + id, 'same-origin']]);
+    assert.match(elements.message.textContent, /Payment is still required/);
+    assert.equal(elements.completePayment.hidden, false);
+    assert.ok(elements.details.children.some(row => row.children[1].textContent === '<script>unsafe</script>'));
+
+    paid = true;
+    elements.refreshReservation.events.click();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(requests.at(-1), ['/api/booking/' + id, 'same-origin']);
+    assert.equal(requests.length, 2);
+    assert.match(elements.message.textContent, /Payment received/);
+    assert.equal(elements.completePayment.hidden, true);
+  }
 });
 test('revoked owner session during provider retrieval cannot receive the Checkout URL',async t=>{
  const h=await harness(t),a=await register(h),r=await reserve(h,{}, {cookie:cookie(a)});await payment(h,r.body.bookingId,cookie(a));
@@ -237,6 +303,24 @@ test('browser Back invalidates the reviewed quote and requires review without cl
  ctx.currentQuote=null;restore({persisted:true});assert.equal(ctx.payBtn.disabled,true);assert.equal(ctx.payLaterBtn.disabled,true);
 });
 const adminSession=async h=>(await h.request('/api/admin/login',{token:'local-test-token'})).headers.getSetCookie()[0].split(';')[0];
+test('fresh Dispatch payment links retain the payment-only success and cancellation callbacks', async t => {
+  const h = await harness(t);
+  const admin = await adminSession(h);
+  const reserved = await reserve(h);
+  assert.equal(reserved.status, 200);
+  vm.runInContext(
+    "const originalCreate = stripe.checkout.sessions.create; stripe.checkout.sessions.create = async (...args) => {" +
+    "const session = await originalCreate(...args); session.url = 'https://checkout.stripe.com/c/pay/' + session.id; return session;};",
+    h.context
+  );
+  const result = await h.request('/api/bookings/' + reserved.body.bookingId + '/payment-link/copy', {},
+    {...headers, cookie: admin});
+  assert.equal(result.status, 200);
+  assert.equal(h.state.creates.length, 1);
+  const params = h.state.creates[0].params;
+  assert.equal(params.success_url, headers.origin + '/payment-link-result.html');
+  assert.equal(params.cancel_url, headers.origin + '/payment-link-result.html');
+});
 const cancel=async(h,id,admin)=>h.request('/api/bookings/'+id,{status:'cancelled'},{cookie:admin,origin:headers.origin},'PATCH');
 test('cancellation during provider creation is serialized; open session expires before cancellation releases FIRST15',async t=>{
  const h=await harness(t),a=await register(h),admin=await adminSession(h),r=await reserve(h,{promoCode:'FIRST15'},{cookie:cookie(a)}),id=r.body.bookingId;
@@ -263,6 +347,7 @@ test('lost response then later provider rejection retains generic attempt and id
  const h=await harness(t),r=await reserve(h),id=r.body.bookingId,access=r.headers.getSetCookie().find(x=>x.includes('er_booking_access')).split(';')[0];
  const pay=()=>h.request('/api/booking/'+id+'/checkout',{}, {...headers,cookie:access});
  h.state.loseResponse=true;assert.equal((await pay()).status,503);const key=h.records()[0].checkoutAttempt.key;
+ assertOrdinaryCallbacks(h.records()[0].checkoutAttempt.parameters,id);
  h.state.fail={type:'StripeInvalidRequestError',statusCode:400,code:'parameter_invalid_integer'};
  assert.equal((await pay()).status,503);assert.equal(h.records()[0].checkoutAttempt.key,key);
  const worker=await harness(t,{},'[]',h.testStore);worker.state.sessions=h.state.sessions;
