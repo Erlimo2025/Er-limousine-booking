@@ -2787,7 +2787,7 @@ async function checkoutStoredBooking(body,booking,req,storedOnly=true,adminPayme
         },
 
         success_url:adminPaymentLink?`${SITE_URL}/payment-link-result.html`:
-          `${SITE_URL}/success.html?booking=${booking.id}&session_id={CHECKOUT_SESSION_ID}`,
+          `${SITE_URL}/success.html?booking=${booking.id}`,
 
         cancel_url:adminPaymentLink?`${SITE_URL}/payment-link-result.html`:
           `${SITE_URL}/success.html?booking=${booking.id}&cancelled=1`
