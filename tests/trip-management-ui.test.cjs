@@ -23,7 +23,7 @@ test('My Trips management follows only server eligibility; paid/unpaid inside 24
   assert.equal(h.nodes.find(n=>n.href?.startsWith('tel:')).href,'tel:9738474128');assert.equal(h.nodes.find(n=>n.href?.startsWith('mailto:')).href,'mailto:bookings@example.test');
   assert.ok(h.find('Book Again'));assert.equal(!!h.find('Complete Payment'),paymentStatus==='unpaid');
  }
- const inactive=ui({status:'cancelled',management:{canChangePickupTime:false,canCancel:false,cancelReason:'inactive'}});assert.ok(!inactive.find('Change Pickup Time'));assert.ok(!inactive.find('Cancel Trip'));assert.ok(!inactive.nodes.some(n=>n.className==='trip-management'));assert.equal(inactive.find('Manage Trip').href,'/manage-reservation.html?reservation='+inactive.trip.reference);
+ const inactive=ui({status:'cancelled',management:{canChangePickupTime:false,canCancel:false,cancelReason:'inactive'}});assert.ok(!inactive.find('Change Pickup Time'));assert.ok(!inactive.find('Cancel Trip'));assert.ok(!inactive.nodes.some(n=>n.className==='trip-management'));assert.equal(inactive.find('Manage My Trip').href,'/manage-reservation.html?reservation='+inactive.trip.reference);
  const paid=ui({paymentStatus:'paid'});assert.ok(paid.find('Cancel Trip'));assert.ok(paid.find('Change Pickup Time'));assert.ok(!paid.find('Complete Payment'));assert.ok(!paid.nodes.some(n=>/Online refunds are not available yet/.test(n.textContent)));assert.ok(!paid.nodes.some(n=>n.textContent==='Refunded'));
 });
 

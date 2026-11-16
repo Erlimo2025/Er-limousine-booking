@@ -65,7 +65,70 @@ async function screenshot(page, name, fullPage = true) {
   await page.screenshot({path: path.join(directory, name + '.png'), fullPage, animations: 'disabled'});
 }
 
-for (const width of [320, 390, 430, 1440]) {
+async function assertTripActions(card, id, canPay, goldStyle) {
+  const again = card.getByRole('link', {name: 'Book Again', exact: true});
+  assert.equal(await again.count(), 1);
+  assert.equal(await card.locator('.trip-card-head .trip-book-again').count(), 1);
+  assert.equal(await again.getAttribute('href'), '/?bookAgain=' + id + '#book');
+  const [head, date, repeat] = await Promise.all([
+    card.locator('.trip-card-head').boundingBox(), card.locator('.trip-date').boundingBox(),
+    again.boundingBox()
+  ]);
+  assert.ok(repeat.x >= date.x + date.width - 1, 'Book Again clears the pickup date');
+  assert.ok(repeat.y < date.y + date.height, 'Book Again is on the pickup row');
+  assert.ok(Math.abs(repeat.x + repeat.width - head.x - head.width) <= 1, 'Book Again is at the right edge');
+
+  const cardActions = card.locator('.trip-card-action');
+  const detail = cardActions.filter({hasText: /^View Trip Details$/});
+  const manage = cardActions.filter({hasText: /^Manage My Trip$/});
+  const pay = card.getByRole('button', {name: 'Complete Payment', exact: true});
+  const [left, right] = await Promise.all([detail.boundingBox(), manage.boundingBox()]);
+  assert.ok(Math.abs(left.y - right.y) <= 1, 'Both card actions are side by side');
+  assert.ok(left.x + left.width < right.x, 'Card actions have a gap');
+  assert.ok(left.height >= 44 && right.height >= 44, 'Both card actions have comfortable touch targets');
+  assert.ok(Math.abs(left.height - right.height) <= 1, 'Both card actions have the same height');
+  const style = locator => locator.evaluate(element => {
+    const computed = getComputedStyle(element);
+    return [computed.backgroundColor, computed.backgroundImage, computed.color, computed.borderRadius];
+  });
+  for (const action of [detail, manage]) {
+    assert.equal(await action.evaluate(element => {
+      const text = document.createRange();
+      text.selectNodeContents(element);
+      const box = element.getBoundingClientRect();
+      return Array.from(text.getClientRects()).every(rect =>
+        rect.left >= box.left - 1 && rect.right <= box.right + 1 &&
+        rect.top >= box.top - 1 && rect.bottom <= box.bottom + 1
+      );
+    }), true, 'Action text fits inside its touch target');
+  }
+  assert.equal(await pay.count(), canPay ? 1 : 0);
+  if (canPay) {
+    const payment = await pay.boundingBox();
+    assert.ok(payment.y >= Math.max(left.y + left.height, right.y + right.height), 'Payment is below both actions');
+    assert.ok(Math.abs(payment.x - left.x) <= 1 && Math.abs(payment.x + payment.width - right.x - right.width) <= 1,
+      'Payment spans the full action row');
+    goldStyle = await style(pay);
+  }
+  assert.deepEqual(await style(detail), goldStyle);
+  assert.deepEqual(await style(manage), goldStyle);
+  return goldStyle;
+}
+
+async function assertPanelBelowActions(card, selector) {
+  const [detail, manage, panel, payment] = await Promise.all([
+    card.locator('.trip-card-action').first().boundingBox(),
+    card.locator('.trip-card-action').last().boundingBox(),
+    card.locator(selector).boundingBox(),
+    card.locator('.trip-payment').boundingBox()
+  ]);
+  assert.ok(Math.abs(detail.y - manage.y) <= 1, 'Opening a panel keeps both controls on the same row');
+  assert.ok(panel.y >= Math.max(detail.y + detail.height, manage.y + manage.height),
+    'The expanded panel does not overlap either action');
+  assert.ok(payment.y >= panel.y + panel.height, 'Payment remains below the expanded panel');
+}
+
+for (const width of [320, 390, 430, 768, 1440]) {
   test(engine + ' dashboard navigation and private reservation actions at ' + width + 'px', {...pg, timeout: 90000}, async t => {
     const f = await seed(t);
     const mobile = width < 500;
@@ -126,6 +189,8 @@ for (const width of [320, 390, 430, 1440]) {
     ]);
     assert.equal(await first.locator('.trip-vehicle').innerText(), 'Luxury SUV');
     const accepted = await f.store.getForDisplay(f.upcoming);
+    const goldStyle = await assertTripActions(first, f.upcoming, true);
+    await assertTripActions(cards.nth(1), f.confirmed, false, goldStyle);
     assert.equal(await first.locator('.trip-reference-row .booking-reference-value').innerText(), accepted.bookingReference);
     const copy = first.getByRole('button', {name: 'Copy booking reference ' + accepted.bookingReference});
     await activate(copy);
@@ -169,25 +234,65 @@ for (const width of [320, 390, 430, 1440]) {
     await menuTo('Past Trips');
     assert.equal(await page.locator('#pastTrips').getAttribute('aria-pressed'), 'true');
     assert.equal(await cards.count(), 1);
-    assert.equal(await cards.first().getByRole('link', {name: 'Book Again'}).getAttribute('href'), '/?bookAgain=' + f.past + '#book');
+    await assertTripActions(cards.first(), f.past, false, goldStyle);
+    await layout();
+    if (width === 1440) {
+      const managementUrl = '/api/booking/manage/account/' + f.past;
+      const [managed] = await Promise.all([
+        page.waitForResponse(f.h.url + managementUrl),
+        activate(cards.first().getByRole('link', {name: 'Manage My Trip', exact: true}))
+      ]);
+      assert.equal(managed.status(), 200);
+      assert.equal(new URL(page.url()).searchParams.get('reservation'), f.past);
+      await page.goto(f.h.url + '/account/dashboard');
+      await toggle.waitFor();
+      await menuTo('Past Trips');
+      const [template] = await Promise.all([
+        page.waitForResponse(f.h.url + '/api/customer/trips/' + f.past + '/book-again'),
+        activate(cards.first().getByRole('link', {name: 'Book Again', exact: true}))
+      ]);
+      assert.equal(template.status(), 200);
+      await page.waitForFunction(() =>
+        document.getElementById('pickup')?.value === '100 International Boulevard, Elizabeth, NJ');
+      assert.equal(await page.locator('#dropoff').inputValue(), '455 Madison Avenue, New York, NY');
+      assert.equal(new URL(page.url()).hash, '#book');
+      await page.goto(f.h.url + '/account/dashboard');
+      await toggle.waitFor();
+      await menuTo('Past Trips');
+    }
     await activate(page.locator('#cancelledTrips'));
     await finished();
     assert.equal(await cards.count(), 2);
     assert.equal(await cards.getByText('Cancelled', {exact: true}).count(), 2);
+    for (const id of [f.cancelled, f.cancelledPast]) {
+      const link = page.locator('a[href="/?bookAgain=' + id + '#book"]');
+      await assertTripActions(cards.filter({has: link}), id, false, goldStyle);
+    }
+    await layout();
     assert.equal(await cards.getByRole('button', {name: 'Complete Payment', exact: true}).count(), 0);
     await menuTo('Cancelled Trips');
     assert.equal(await page.locator('#cancelledTrips').getAttribute('aria-pressed'), 'true');
     await menuTo('Upcoming Trips');
-    await activate(first.getByText('View Trip Details', {exact: true}));
+    const showDetails = first.getByText('View Trip Details', {exact: true});
+    await showDetails.focus();
+    await page.keyboard.press('Enter');
+    assert.equal(await showDetails.evaluate(element =>
+      element === document.activeElement && getComputedStyle(element).outlineStyle !== 'none'), true);
     const detailReference = first.locator('.trip-details .booking-reference-value');
     await detailReference.waitFor();
     await first.locator('.trip-reference-row').waitFor({state: 'hidden'});
+    await assertPanelBelowActions(first, '.trip-details dl');
     assert.equal(await detailReference.innerText(), accepted.bookingReference);
     assert.equal(await first.getByRole('button', {name: 'Copy booking reference ' + accepted.bookingReference}).count(), 1);
     assert.equal(await first.getByText(f.upcoming, {exact: true}).isVisible(), false);
-    await activate(first.getByText('View Trip Details', {exact: true}));
-    await activate(first.getByText('Manage Trip', {exact: true}));
+    await page.keyboard.press('Enter');
+    const showManagement = first.getByText('Manage My Trip', {exact: true});
+    await showManagement.focus();
+    await page.keyboard.press('Enter');
+    assert.equal(await showManagement.evaluate(element =>
+      element === document.activeElement && getComputedStyle(element).outlineStyle !== 'none'), true);
     assert.equal(await first.getByRole('button', {name: 'Change Pickup Time'}).isVisible(), true);
+    await assertPanelBelowActions(first, '.trip-management-actions');
     assert.equal(await first.getByRole('button', {name: 'Cancel Trip', exact: true}).isVisible(), true);
     assert.equal(await first.getByRole('link', {name: 'Manage My Reservation'}).getAttribute('href'),
       '/manage-reservation.html?reservation=' + f.upcoming);
@@ -239,7 +344,7 @@ for (const width of [320, 390, 430, 1440]) {
     await page.goto(f.h.url + '/account/dashboard');
     await toggle.waitFor();
     await finished();
-    await activate(cards.first().getByText('Manage Trip', {exact: true}));
+    await activate(cards.first().getByText('Manage My Trip', {exact: true}));
     await activate(cards.first().getByRole('button', {name: 'Cancel Trip', exact: true}));
     await activate(cards.first().getByRole('button', {name: 'Confirm Cancellation'}));
     await page.getByText('Your trip has been cancelled.', {exact: true}).waitFor();
