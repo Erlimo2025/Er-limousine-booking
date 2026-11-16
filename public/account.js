@@ -239,7 +239,13 @@ function tripCard(trip,view='upcoming'){
  const head=node('div','trip-card-head'),schedule=node('div','trip-schedule');
  const pickupTime=TripDateFormat.date(trip.date)+' · '+TripDateFormat.time(trip.time);
  schedule.append(node('p','trip-label','Pickup date & time · New York'),node('h3','trip-date',pickupTime));
- head.append(schedule,badges);
+ head.append(schedule);
+ if(trip.canBookAgain===true){
+  const again=node('a','trip-book-again','Book Again');
+  again.href='/?bookAgain='+encodeURIComponent(trip.reference)+'#book';
+  head.append(again);
+ }
+ head.append(badges);
  const route=node('dl','trip-route'),fareRow=node('dl','trip-fare-row');
  const field=(label,text,className)=>{
   const row=node('div');
@@ -259,7 +265,7 @@ function tripCard(trip,view='upcoming'){
  const referenceValue=()=>globalThis.BookingReference?.control(reference) || node('span','booking-reference-value',reference);
  referenceRow.append(node('span','trip-label','Booking reference'),referenceValue());
  card.append(head,route,fareRow,referenceRow);
- const details=node('details','trip-details'),summary=node('summary','', 'View Trip Details'),list=node('dl');
+ const details=node('details','trip-details'),summary=node('summary','primary trip-card-action','View Trip Details'),list=node('dl');
  const detailsReference=node('div'),detailsValue=node('dd');
  detailsValue.append(referenceValue());
  detailsReference.append(node('dt','','Booking reference'),detailsValue);
@@ -296,11 +302,12 @@ function tripCard(trip,view='upcoming'){
  details.append(summary,list);
  const primaryActions=node('div','trip-primary-actions');
  primaryActions.append(details);
- const reservationLink=node('a','trip-action-link','Manage Trip');
+ const reservationLink=node('a','primary trip-card-action','Manage My Trip');
  reservationLink.href='/manage-reservation.html?reservation='+encodeURIComponent(trip.reference)+(view==='requests'?'#manageRequestsHeading':'');
  const management=trip.management;
  if(view==='requests'){
   reservationLink.textContent='View Requests';
+  reservationLink.className='trip-card-action trip-action-link';
   primaryActions.append(reservationLink);
  }else if(management&&(management.canChangePickupTime===true||management.canCancel===true||
    ['within_24_hours','payment_processing'].includes(management.cancelReason))){
@@ -308,9 +315,6 @@ function tripCard(trip,view='upcoming'){
   reservationLink.className='trip-management-button';
   primaryActions.append(tripManagement(trip,node,reservationLink));
  }else primaryActions.append(reservationLink);
- if(trip.canBookAgain===true){
-  const again=node('a','trip-action-link trip-book-again','Book Again');again.href='/?bookAgain='+encodeURIComponent(trip.reference)+'#book';primaryActions.append(again);
- }
  if(refund)card.append(node('p','trip-payment-review',refund==='confirmed'?'This trip is cancelled. Your full refund has been confirmed.':refund==='processing'?'This trip is cancelled. Your full refund is processing; it has not been confirmed yet. You do not need to pay again.':'This trip is cancelled. Your refund requires review. Please contact ER Limousine Service; no refund has been confirmed.'));
  else if(trip.status==='cancelled'&&trip.paymentStatus==='paid')card.append(node('p','trip-payment-review','Payment received for this cancelled trip. Please contact ER Limousine Service for payment review.'));
  if(processing&&trip.status!=='cancelled')card.append(node('p','trip-payment-review','We’re confirming your payment. You do not need to pay again.'));
@@ -330,7 +334,7 @@ function canCompletePayment(trip){
  return trip.paymentStatus!=='paid' && trip.status!=='cancelled' && trip.paymentVerificationPending!==true;
 }
 function tripManagement(trip,node,reservationLink){
- const management=trip.management,section=node('details','trip-management'),summary=node('summary','','Manage Trip');
+ const management=trip.management,section=node('details','trip-management'),summary=node('summary','primary trip-card-action','Manage My Trip');
  section.append(summary);
  const generation=accountGeneration,tripGeneration=tripsGeneration;
  const current=()=>generation===accountGeneration&&tripGeneration===tripsGeneration&&!el('dashboardView').hidden;

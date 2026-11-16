@@ -105,6 +105,14 @@ form{display:grid;gap:18px}.form-field{display:grid;gap:7px;min-width:0}label{fo
 .trip-card-head{
   display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:6px 14px;
 }
+.trip-card-head:has(>.trip-book-again){
+  display:grid;grid-template-columns:minmax(0,1fr) auto;
+}
+.trip-book-again{
+  display:inline-flex;align-items:center;min-height:44px;
+  font-size:13px;font-weight:bold;white-space:nowrap;
+}
+.trip-book-again+.trip-badges{grid-column:1/-1}
 .trip-label{
   margin:0 0 2px;color:var(--muted);font-size:10px;font-weight:bold;
   letter-spacing:.6px;line-height:1.3;text-transform:uppercase;
@@ -135,23 +143,27 @@ form{display:grid;gap:18px}.form-field{display:grid;gap:7px;min-width:0}label{fo
 .trip-total{color:#785617;font-size:20px;line-height:1.2}
 .trip-payment-review{margin:0;color:var(--muted);font-size:13px}
 .trip-primary-actions{
-  display:flex;align-items:flex-start;flex-wrap:wrap;gap:2px 12px;
-  padding-top:4px;border-top:1px solid #e6ebef;
+  --trip-action-width:calc((100% - 10px)/2);
+  position:relative;padding-top:8px;border-top:1px solid #e6ebef;
 }
-.trip-primary-actions>details{min-width:0}
-.trip-primary-actions>details[open]{flex:1 0 100%}
-.trip-details>summary,.trip-management>summary,.trip-action-link{
-  min-height:44px;padding:11px 0;color:#745114;
-  font-size:13px;font-weight:bold;line-height:1.6;cursor:pointer;
+/* Keep the native disclosure panels full-width while their controls share a row. */
+.trip-card-action{
+  display:flex;align-items:center;justify-content:center;
+  width:var(--trip-action-width);min-height:44px;padding:6px 8px;
+  font-size:13px;font-weight:bold;line-height:1.25;text-align:center;cursor:pointer;
 }
-.trip-action-link{display:inline-flex;align-items:center}
+.trip-card-action::-webkit-details-marker{display:none}
+.trip-primary-actions>.trip-card-action,.trip-management>.trip-card-action{
+  position:absolute;inset-block-start:8px;inset-inline-end:0;
+}
+.trip-management[open]{padding-top:8px}
 .trip-details dl{
   display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:14px;
-  padding:0 10px;border-radius:7px;background:#f5f7fa;
+  margin-top:8px;padding:0 10px;border-radius:7px;background:#f5f7fa;
 }
 .trip-details dl>div{padding:8px 0}
 .trip-details dd{font-size:13px;font-weight:normal}
-.trip-payment{min-height:44px;margin-left:auto;padding:8px 14px;font-size:13px;white-space:normal}
+.trip-payment{width:100%;min-height:44px;margin:8px 0 0;padding:8px 14px;font-size:13px;white-space:normal}
 .trip-actions{display:flex;align-items:center;flex-wrap:wrap;gap:10px}
 .trip-actions .primary{min-height:44px;margin:4px 0 0;padding:9px 15px;font-size:13px}
 
@@ -194,9 +206,7 @@ a.trip-management-button{display:inline-flex;align-items:center;text-decoration:
   .trip-route{grid-template-columns:minmax(0,1fr);gap:7px;padding-left:10px;border-left:1px solid #c8a763}
   .trip-address{font-size:13px}
   .trip-fare-row{padding:7px 0 0;border-left:0;border-top:1px solid #e6ebef}
-  .trip-primary-actions{column-gap:9px}
-  .trip-details>summary,.trip-management>summary,.trip-action-link{font-size:12px}
-  .trip-payment{flex:1 1 100%;margin:0}
+  .trip-card-action,.trip-book-again{font-size:12px}
   .profile-details{grid-template-columns:minmax(0,1fr)}
 }
 @media(max-width:430px){
@@ -206,7 +216,6 @@ a.trip-management-button{display:inline-flex;align-items:center;text-decoration:
 }
 @media(max-width:350px){
   .trip-management-actions{display:grid;grid-template-columns:minmax(0,1fr)}
-  .trip-payment{flex-basis:132px}
   .trip-management-button{width:100%}
   .trip-time-form input{padding:10px 8px}
   .trip-cancel-confirmation .trip-management-button{margin-right:0}
