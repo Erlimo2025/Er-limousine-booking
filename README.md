@@ -22,7 +22,7 @@ Create:
 
 1. A **Stripe** account
 2. A **Google Cloud** project with the **Routes API** enabled
-3. A web host that can run Node.js 20+ (for example Render, Railway, Fly.io, or a VPS)
+3. A web host that can run Node.js 24.x (for example Render, Railway, Fly.io, or a VPS)
 4. Your domain pointed to that host
 
 ## Reservation storage
@@ -31,7 +31,7 @@ The server now requires PostgreSQL and a privately configured `DATABASE_URL`, in
 
 ## 2. Local setup
 
-Install Node.js 20 or newer and pnpm 11.25.0.
+Install Node.js 24.x (validated with 24.22.3) and pnpm 11.25.0.
 
 Use the committed `pnpm-lock.yaml` for reproducible installs; keep secrets in an ignored `.env` file and reservation data in the ignored `data/` directory.
 
