@@ -32,14 +32,70 @@ Verify counts through a restricted operator connection, reconcile paid bookings 
 
 ## Retention policy
 
-There is deliberately no automated deletion or redaction in this change. A retention deadline is a review date, never permission to delete. This prevents accidental loss of upcoming trips, active reservations, disputes, refunds, accounting records or FIRST15 eligibility.
+Operational reservation data, accounting data and eligibility data serve different purposes and are stored separately. Reservation records remain stored after completion, cancellation or administrative archiving. The current application has no automated disposal or redaction based on the review checkpoints below.
 
-- Operational trip/contact/dispatch data: review for minimization 90 days after completed/cancelled service and the final scheduled leg. Abandoned unpaid reservations: review after 30 days and after their final scheduled date, only if no payment/reconciliation remains pending. Active/upcoming reservations are excluded.
-- Accounting/payment ledger: retain at least 7 years from payment. The database records retain_until and a legal_hold flag; disputes, refunds or legal requirements extend retention. The business must approve any longer legally required period before removal.
-- FIRST15/security eligibility: retain minimal normalized identity hashes and booking reference while FIRST15 first-ride enforcement operates; no automatic expiry. Keep access limited and do not expose hashes publicly.
-- Import audit: retain counts/timestamps at least 7 years; it contains no customer payload.
+Keep accounting, payment, tax, insurance, transportation and contractual records according to applicable obligations. The payment ledger calculates its seven-year `retain_until` marker from the recorded payment timestamp, falling back to booking creation when that timestamp is missing. The marker is a business setting and does not authorize or trigger deletion. The ledger also has a `legal_hold` field. Its presence does not enforce holds across related records or copies. The import audit records counts and timestamps without customer payloads. The existing seven-year import-audit guidance is separate from the payment ledger marker and should be checked against applicable obligations.
 
-Operational reservation data, accounting data and eligibility data have separate tables/purposes. Full operational records currently remain intact until an authorized, audited minimization process is approved. Any future cleanup must be transactional, exclude active/upcoming/legal-hold/payment-pending records, preserve accounting/eligibility records and log counts only. The application does not claim to fulfill deletion requests automatically.
+Retain minimal normalized identity hashes and booking references for FIRST15 while the business relies on first-ride eligibility enforcement. Access remains restricted. There is no automatic expiry for those eligibility records.
+
+## Proposed customer data retention and privacy lifecycle
+
+**Local draft — pending final owner and legal review before publication or implementation.** The checkpoints below are approved for review of individual records. The draft adds no runtime behavior.
+
+### Record review checkpoints
+
+| Records | When staff review |
+| --- | --- |
+| Completed reservations | Five years after the final scheduled trip date. |
+| Cancelled reservations | Five years after the final scheduled trip date. Preserve payment, refund, dispute and accounting evidence when required. |
+| Abandoned unpaid bookings | Once 30 days have passed since abandonment was confirmed, the final scheduled trip leg has elapsed, and applicable payment and dispute checks are complete. Exclude active or upcoming bookings and unresolved or uncertain payments. |
+
+A checkpoint starts a manual review. It does not cancel, archive, redact or delete a booking or remove it from My Trips. Existing operational cancellation rules remain separate. The business owner approves retention decisions and any eventual disposal. Review active service needs, financial evidence, open complaints, disputes, refunds, chargebacks and any applicable obligations or holds before making a decision. Retain the evidence and frozen Checkout parameters needed for payment reconciliation and safe retries. Any future batch cleanup would require a separately approved, audited transaction that excludes active, upcoming, held and payment-pending records, preserves accounting and eligibility evidence, and limits batch logs to counts.
+
+Stored business records and customer-visible trip history serve different purposes. My Trips queries records linked to the account by trip schedule and paginates the results. There is no five-year rule in the current My Trips query. This establishes neither a guaranteed five years of customer-visible history nor indefinite access. Account ownership and current access rules still apply. Archiving changes visibility in Dispatch while retaining the underlying record. Eligible guests can seek fresh verification for some retained older trips.
+
+Expired access links and sessions can no longer be used even when metadata remains. The application prunes some expired verification records. There is no general account-erasure workflow. Guest contact information saved at the customer's choice remains in the browser until forgotten or cleared.
+
+### Legal holds and copies
+
+The business owner authorizes placement and release of each legal hold. Authorized staff document the scope, reason, relevant records, dates, owner decisions and release in a secure log. Preserve relevant records and prevent intentional deletion while the hold is active. Consider linked records, exports, backups, mailbox copies and provider-held records where required and technically possible. Confirm the controls or assistance available for provider-held copies before relying on them. Local changes do not automatically reach provider or mailbox copies.
+
+Limit access to precise locations, contact details, financial evidence, exports and backups to staff who need it. Keep reservation ownership, guest verification, Dispatch authorization and Charts protections intact. Before using a restore, reconcile payments and reapply applicable holds and prior retention decisions. A restore can reintroduce records that were previously minimized.
+
+### Customer access and reviews
+
+Completed-trip customer booking responses omit the driver phone number. Cancelled-trip customer booking responses omit driver assignment details. Authorized Dispatch retains operational access, and underlying records remain stored. The owner reports that ER Limousine does not currently assign reservations to independent chauffeurs or outside limousine companies. Authorized staff and service providers still receive data needed for their roles.
+
+Published reviews exclude structured contact, itinerary, reservation and payment fields. Customers can voluntarily put personal information in free-text comments. Screening and staff moderation reduce that risk. Removing a review from publication changes its visibility and can leave the review and moderation records stored. A request to remove a review from public display is separate from a request about the underlying records.
+
+### Providers, cookies and tracking
+
+- Stripe processes payments and card entry. New ordinary Checkout sessions use generic service descriptions. Some Dispatch payment links and historical frozen attempts may include pickup, destination and scheduled trip information. Keep the payment references and attempt evidence needed for reconciliation.
+- Google Places, Geocoding and Routes support address suggestions, place selection, address lookup and route calculations. An optional current-location lookup sends coordinates after the customer chooses to share them and grants browser permission.
+- Resend delivers transactional customer and staff emails. Message content can include reservation details, payment links or access links. Some local outboxes retain content for retries and clear it in terminal states. Delivery metadata and external copies may remain. The repository documents that Resend click and open tracking should stay disabled. Verify the provider setting separately.
+- Render hosts the application and PostgreSQL. Confirm deployed logging, ingress, retention, backup coverage, access, encryption, recovery windows and restore procedures with the provider.
+- Yahoo hosts the proposed privacy request mailbox for manual intake. Customer messages sent to that address can be processed and stored by Yahoo. Confirm mailbox permissions and retention separately.
+
+When a customer chooses to set up a saved payment card, the website loads Stripe.js to securely handle the setup. Authorized ER Limousine Dispatch staff can view internal trip and payment reports through Business Analytics. These reports are used only for internal business operations.
+
+The repository audit found no implemented advertising pixels or visitor analytics tags. Injected tags, external tracking and provider-side telemetry remain unverified. Functional cookies support sign-in, verification, recovery, quotes and booking access. Browser storage supports optional remembered guest contact details and a temporary saved-card setup reference. Verify provider retention, deletion and contract terms before making claims about those practices.
+
+### Manual privacy requests
+
+1. Authorized ER Limousine staff monitor [erlimousinellc@yahoo.com](mailto:erlimousinellc@yahoo.com). Staff acknowledge requests promptly and track applicable legal response deadlines. The mailbox is a manual intake process.
+2. Verify identity and authority as appropriate before disclosing or deleting information. Collect only the information needed to verify and respond. Do not ask for passwords, private links or full card details.
+3. Check the relevant records and copies, open service or financial obligations, and legal holds. The business owner reviews every request and approves the final decision and response.
+4. Authorized staff communicate securely and record the request and outcome in a secure, access-restricted log. Confirm the operational location and access controls for the case log and the continuity plan for owner review.
+
+### Approved future notice links
+
+The owner approved links in the website footer, booking flow, customer registration, customer login and My Trips dashboard, along with the existing customer review form link. The review form link already exists. Implement the additional links in a separate approved phase after document review.
+
+### Approval before use
+
+Qualified advisers should confirm New Jersey and New York privacy applicability, consumer rights and deadlines, appropriate identity verification, and treatment of sensitive location and sharing. Review security, breach notification and disposal duties, as well as tax, transportation, insurance, contractual and other recordkeeping obligations. [New Jersey privacy statute](https://pub.njleg.state.nj.us/Bills/2022/PL23/266_.HTM) · [New Jersey sensitive-data amendment](https://pub.njleg.gov/Bills/2026/AL26/25_.HTM) · [New York security protections](https://www.nysenate.gov/legislation/laws/GBS/899-BB) · [New York breach notification](https://www.nysenate.gov/legislation/laws/GBS/899-AA) · [IRS recordkeeping guidance](https://www.irs.gov/businesses/small-businesses-self-employed/how-long-should-i-keep-records) · [NYC TLC trip records guidance](https://www.nyc.gov/site/tlc/tlc-online/fhv-trip-record-submission.page)
+
+Before publishing or implementing changes, verify Render backup and log settings, provider retention and deletion capabilities, Resend click and open tracking, and any external tracking or injected tags. Revisit the notice against confirmed practices and qualified legal review.
 
 ## Protected backups and recovery
 
