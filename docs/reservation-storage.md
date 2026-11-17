@@ -87,6 +87,60 @@ The repository audit found no implemented advertising pixels or visitor analytic
 3. Check the relevant records and copies, open service or financial obligations, and legal holds. The business owner reviews every request and approves the final decision and response.
 4. Authorized staff communicate securely and record the request and outcome in a secure, access-restricted log. Confirm the operational location and access controls for the case log and the continuity plan for owner review.
 
+### M-08C Phase 1 owner retention review inventory
+
+Phase 1 provides a local, owner-operated inventory and a manual review procedure. The original M-08C finding was unavailable during the audit, so this phase does not establish closure of the entire finding. The owner establishes who may run the command, the secure location and access controls for its output and the manual review log, and the evidence required for a final decision.
+
+Use the existing privately configured `DATABASE_URL` for an authorized database role with read access. The command follows the application's connection and TLS policy. It does not load a local `.env` file. Keep credentials out of command arguments, shell history, output and review logs. For routine operation, use a dedicated read-only database role. Schema migrations must already have been applied through the normal deployment process.
+
+Run from the repository root with the existing Node dependencies installed:
+
+```sh
+node scripts/review-reservation-retention.cjs --limit 100
+```
+
+The command returns one JSON page. For a reproducible checkpoint calculation, pass an explicit UTC instant with milliseconds:
+
+```sh
+node scripts/review-reservation-retention.cjs --as-of 2026-11-17T17:00:00.000Z --limit 100
+```
+
+Continue using the returned `nextCursor` with the same `asOf` value, for example `--as-of 2026-11-17T17:00:00.000Z --limit 100 --cursor <nextCursor>`. Treat the cursor as report metadata. It does not grant reservation access. Each page uses a read-only repeatable-read database transaction, stable UUID keyset ordering, a maximum of 250 output records, a 12-second statement timeout and a 5-second lock timeout. The command runs no migrations, application workers or provider requests and writes no application records. Its `asOf` sets the calendar review date; financial and linked-record evidence reflects the database when the page is read. A paginated run is an inventory, and records can change between pages.
+
+Routine output omits customer contacts, exact locations, trip notes, access credentials, payment identifiers and frozen provider payloads. Store any saved report outside the repository, public directories, shared downloads and unprotected email. The owner must establish an access-restricted location before saving reports. Use protected Dispatch views to inspect the reservation's details.
+
+#### Dates, outcomes and limitations
+
+- Completed and cancelled reservations reach their five-year checkpoint from the verified final scheduled New York date. Round trips use the return leg. Hourly trips use the service-end date, including the later date when service crosses midnight. A February 29 anniversary falls on March 1 if the fifth year has no February 29. The date must agree with the stored schedule. Missing or inconsistent legacy dates, nonexistent spring-forward times and ambiguous fall-back times require investigation.
+- The checkpoint date and whether it has been reached are separate from financial and hold blockers. `Review due` means the date supports an owner review. `Defer` identifies an existing local blocker, `Evidence required` identifies unavailable or inconsistent evidence, and `Not yet due` means the date threshold has not been reached. Active, upcoming and in-progress service stays outside the due shortlist. No result authorizes disposal.
+- The current schema has no general record of owner-confirmed abandonment. The live report cannot calculate the 30-day abandoned-unpaid checkpoint and reports that confirmation is required where applicable. Unpaid status, creation date, expired FIRST15 holds, cancellation, elapsed pickup and archive status do not establish abandonment. Test-only classification inputs demonstrate the timing rule without creating an application workflow or accepting imported dates as proof.
+- Recorded ledger holds and retention markers remain distinct from the five-year checkpoint. A false or missing ledger hold does not clear disputes, other holds or external obligations. Pending or uncertain Checkout, payment reviews, unpaid or partially paid balances, refunds and evidence gaps require investigation. An unpaid fare is not proof that a debt remains enforceable; its treatment requires owner review. Confirmed full or partial refunds still require preservation of the associated financial evidence. The command does not contact Stripe to discover external activity.
+- Linked counts and states identify records that need checking. They do not certify that every external copy is known. Verify exports, staff mailboxes, the privacy mailbox, provider-held records and applicable Render backups and logs separately. A restore can reintroduce earlier data or access state.
+
+#### Manual owner review procedure
+
+1. Generate a page using authorized read access. Record the policy version, report time and checkpoint `asOf`. Secure the report and continue its cursor until the required scope is covered. Keep exception and deferred records visible for follow-up.
+2. Locate the booking by reference in authenticated Dispatch, including its archived view when needed. Verify the actual reservation status, the final scheduled leg and account or guest association. Do not infer completion or abandonment from elapsed time or archival.
+3. Check accepted fare, verified payments, frozen attempts, current payment reviews, refunds, open requests and related history. Use authorized provider records to check disputes or other activity absent locally. Check accounting, tax, transportation, insurance, contractual and legal needs with the appropriate advisers.
+4. Check holds across the reservation, financial records and linked copies. The business owner authorizes hold placement and release. Staff record the authority and scope and preserve relevant evidence while any hold is active. Confirm provider or backup capabilities before relying on them.
+5. Rerun the inventory before recording a final decision. Compare the reservation version or fingerprint, date basis, local financial evidence and linked states. Reinspect a changed record and refresh external evidence. A report alone does not freeze the reservation or its related records.
+6. The owner records a decision to retain, defer or investigate, the rationale and a next review date in the secure manual log. Record confirmed abandonment and its verification evidence there when established. Its absence must not be replaced by an inferred date.
+7. Review relevant export, mailbox, provider and backup copies and restoration implications. Record evidence references securely rather than copying itineraries, private access links or payment identifiers. Any later disposal or minimization requires a separately approved scope and implementation that preserves required financial and audit evidence.
+
+Use this minimal manual log template in the owner-established secure location:
+
+| Field | What to record |
+| --- | --- |
+| Booking reference and policy version | Reference used in Dispatch and the inventory policy version. |
+| Date basis and checkpoint | Verified final scheduled date or confirmed abandonment date, source, checkpoint and `asOf`. |
+| Owner, reviewer and review time | Responsible people and the timestamp of the review. |
+| Version or fingerprint | Inventory value rechecked before the decision, plus any changes investigated. |
+| Categories checked | Service, payments, refunds, disputes, obligations, holds, access, requests, reviews, communications and linked copies, as applicable. |
+| Evidence references | Access-controlled references to verification evidence, without duplicating contacts, locations, credentials or financial identifiers. |
+| Decision and reason | Retain, defer or investigate, with the business owner's rationale and approval. |
+| Next review date | Follow-up date chosen by the owner and any evidence still required. |
+| Hold authority | Placement or release approval, scope and dates where applicable. |
+
 ### Approved future notice links
 
 The owner approved links in the website footer, booking flow, customer registration, customer login and My Trips dashboard, along with the existing customer review form link. The review form link already exists. Implement the additional links in a separate approved phase after document review.
