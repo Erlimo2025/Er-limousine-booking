@@ -2,13 +2,20 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const {summaryInput, tripsInput, summaryResult, csvTrip} = require('../services/dispatch-analytics');
+const {summaryInput, tripsInput, summaryResult, csvHeader, csvTrip} = require('../services/dispatch-analytics');
 const {analyticsFixture, dateQuery, endpoint} = require('./helpers/dispatch-analytics.cjs');
 const {guestBooking} = require('./helpers/reservation-management.cjs');
 
 const pg = {skip: !process.env.ER_TEST_DATABASE_URL && 'Requires an isolated PostgreSQL test database'};
 const now = Date.parse('2026-01-01T04:59:59.999Z');
 const range = (from, to = from) => ({from, to});
+const financialCsvHeader = 'Booking reference,Pickup date (New York),Vehicle,Reservation status,Payment status,' +
+  'Accepted fare (USD),Captured payments (USD),Refunded amount (USD)';
+
+function expectedFinancialCsvRow(trip, amounts) {
+  const textFields = [trip.reference, trip.pickupDate, trip.vehicleLabel, trip.status, trip.paymentStatus];
+  return [...textFields.map(value => '"' + value + '"'), ...amounts].join(',');
+}
 
 test('all date presets resolve in New York across the year boundary', () => {
   const expected = {
@@ -85,13 +92,13 @@ test('invalid and injected date, search, sort and pagination values are rejected
   }
 });
 
-test('CSV escapes formulas, Unicode invisible prefixes, quotes and commas', () => {
-  const result = csvTrip({reference: 'ER-123456', pickupDate: '2026-11-11', pickup: '\u2060=1+1',
-    destination: 'Apt "B", 7th Street', vehicleLabel: 'Luxury SUV / Suburban', status: 'confirmed',
+test('Financial CSV omits addresses and escapes retained formula, quote and comma fields', () => {
+  assert.equal(csvHeader, financialCsvHeader + '\r\n');
+  const result = csvTrip({reference: '\u2060=1+1', pickupDate: '2026-11-11', pickup: '1 Example Place, Newark, NJ',
+    destination: '2 Sample Avenue, New York, NY', vehicleLabel: 'Luxury "SUV", Suburban', status: 'confirmed',
     paymentStatus: 'review', fareCents: '900719925474099195', capturedCents: null, refundedCents: '0'});
-  assert.match(result, /"'\u2060=1\+1"/);
-  assert.match(result, /"Apt ""B"", 7th Street"/);
-  assert.match(result, /9007199254740991\.95,Unavailable,0\.00\r\n$/);
+  assert.equal(result, "\"'\u2060=1+1\"" +
+    ',"2026-11-11","Luxury ""SUV"", Suburban","confirmed","review",9007199254740991.95,Unavailable,0.00\r\n');
 });
 
 test('quarter and full-year summaries reconcile dates, historical fares, statuses, requests and cash', pg, async t => {
@@ -330,6 +337,12 @@ test('verified settlement ignores stale Checkout processing and preserves refund
     [full.id, ['refunded', '15000', '15000']], [partial.id, ['partially_refunded', '15000', '4500']],
     [pending.id, ['processing', '15000', '0']], [review.id, ['review', '15000', '0']]
   ]));
+  const partialRow = trips.body.trips.find(row => row.id === partial.id);
+  assert.equal(partialRow.fareCents, '15000');
+  const csvQuery = dateQuery('2026-03-01', '2026-03-31', {payment: 'partially_refunded'});
+  const csv = await f.get(endpoint + '/trips.csv?' + csvQuery, admin);
+  assert.equal(csv.status, 200);
+  assert.equal(csv.body, [financialCsvHeader, expectedFinancialCsvRow(partialRow, ['150.00', '150.00', '45.00']), ''].join('\r\n'));
 });
 
 test('duplicate refund identifiers count once and pending attempts never become completed refunds', pg, async t => {
@@ -570,8 +583,10 @@ test('Charts requires an active Dispatch session, same origin, bounded rates and
 
 test('report pagination, filters, sorting and CSV use the same authorized dataset', pg, async t => {
   const f = await analyticsFixture(t);
-  const a = await f.trip({status: 'completed', fareCents: 13000, pickup: '=1+1'});
-  const b = await f.trip({status: 'completed', fareCents: 9500, pickup: 'Apt "B", Sample Avenue'});
+  const a = await f.trip({status: 'completed', fareCents: 13000, pickup: '41 Example Plaza, Newark, NJ',
+    destination: '92 Test Landing, New York, NY'});
+  const b = await f.trip({status: 'completed', fareCents: 9500, pickup: '7 Sample Avenue, Jersey City, NJ',
+    destination: '38 Example Street, New York, NY'});
   await f.trip({status: 'completed', fareCents: 8500, vehicle: 'escalade'});
   await f.trip({status: 'cancelled', fareCents: 7500});
   const query = dateQuery('2026-03-01', '2026-03-31', {status: 'completed', payment: 'unpaid', vehicle: 'suv', sort: 'fare', order: 'asc'});
@@ -592,18 +607,27 @@ test('report pagination, filters, sorting and CSV use the same authorized datase
   assert.equal(second.body.hasNext, false);
   assert.equal(first.headers.get('cache-control'), 'no-store');
   assert.doesNotMatch(JSON.stringify(first.body), /rider@example|2015550140|stripeSessionId|customerAccess/);
+  const reportTrips = [...first.body.trips, ...second.body.trips];
+  assert.deepEqual(reportTrips.map(trip => [trip.pickup, trip.destination]),
+    [b, a].map(({record}) => [record.trip.pickup, record.trip.dropoff]));
+  assert.deepEqual(reportTrips.map(trip => [trip.fareCents, trip.capturedCents, trip.refundedCents]),
+    [['9500', '0', '0'], ['13000', '0', '0']]);
 
   const csv = await f.get(endpoint + '/trips.csv?' + query, admin);
   assert.equal(csv.status, 200, JSON.stringify(csv.body));
   assert.match(csv.headers.get('content-type'), /^text\/csv/);
   assert.match(csv.headers.get('content-disposition'), /attachment; filename="er-dispatch-trips-2026-03-01_2026-03-31\.csv"/);
   assert.equal(csv.headers.get('cache-control'), 'no-store');
-  const lines = csv.body.trimEnd().split('\r\n');
-  assert.equal(lines.length, 3);
-  assert.ok(lines[1].startsWith('"' + b.reference + '"'));
-  assert.ok(lines[2].startsWith('"' + a.reference + '"'));
-  assert.match(lines[1], /"Apt ""B"", Sample Avenue"/);
-  assert.match(lines[2], /"'=1\+1"/);
+  assert.equal(csv.body, [
+    financialCsvHeader,
+    expectedFinancialCsvRow(reportTrips[0], ['95.00', '0.00', '0.00']),
+    expectedFinancialCsvRow(reportTrips[1], ['130.00', '0.00', '0.00']),
+    ''
+  ].join('\r\n'));
+  for (const {pickup, destination} of reportTrips) {
+    assert.ok(!csv.body.includes(pickup));
+    assert.ok(!csv.body.includes(destination));
+  }
   assert.doesNotMatch(csv.body, /rider@example|2015550140|cs_|pi_/);
   const rejected = await f.get(endpoint + '/trips.csv?' + query + '&page=1', admin);
   assert.equal(rejected.status, 400);
@@ -611,24 +635,40 @@ test('report pagination, filters, sorting and CSV use the same authorized datase
   assert.equal(literal.body.trips.length, 0);
 });
 
-test('CSV streams every matching row across cursor batches and keeps spreadsheet fields private', pg, async t => {
+test('CSV streams every matching row across cursor batches without exporting the searched address', pg, async t => {
   const f = await analyticsFixture(t);
-  const seed = await f.trip({pickup: 'Synthetic export fixture'});
+  const pickup = '12 Synthetic Export Lane, Newark, NJ';
+  const destination = '34 Synthetic Destination Lane, New York, NY';
+  const seed = await f.trip({pickup, destination});
+  const unrelated = await f.trip();
   await f.pool.query(
     'INSERT INTO er_reservations(id,record,created_at,scheduled_start_at,scheduled_end_at,booking_reference) ' +
     "SELECT id,jsonb_set($1::jsonb,'{id}',to_jsonb(id)),$2,$3,$3,'ER-' || (700000+n) " +
     'FROM (SELECT gen_random_uuid() AS id, n FROM generate_series(1,253) n) fixture',
     [seed.record, seed.record.createdAt, seed.pickupAt]);
   const admin = await f.adminLogin();
-  const query = dateQuery('2026-03-15', '2026-03-15', {search: 'Synthetic export fixture', sort: 'reference', order: 'asc'});
+  const query = dateQuery('2026-03-15', '2026-03-15', {search: pickup, sort: 'reference', order: 'asc'});
+  const report = await f.get(endpoint + '/trips?' + query + '&limit=1', admin);
+  assert.equal(report.status, 200);
+  assert.equal(report.body.hasNext, true);
+  const [row] = report.body.trips;
+  assert.equal(row.reference, seed.reference);
+  assert.equal(row.pickup, pickup);
+  assert.equal(row.destination, destination);
+
   const csv = await f.get(endpoint + '/trips.csv?' + query, admin);
   assert.equal(csv.status, 200);
   const lines = csv.body.trimEnd().split('\r\n');
   assert.equal(lines.length, 255);
-  assert.ok(lines[1].startsWith('"' + seed.reference + '"'));
-  assert.ok(lines.at(-1).startsWith('"ER-700253"'));
+  assert.equal(lines[0], financialCsvHeader);
+  assert.equal(lines[1], expectedFinancialCsvRow(row, ['150.00', '0.00', '0.00']));
+  assert.equal(lines.at(-1), expectedFinancialCsvRow({...row, reference: 'ER-700253'}, ['150.00', '0.00', '0.00']));
+  assert.ok(!csv.body.includes(pickup));
+  assert.ok(!csv.body.includes(destination));
+  assert.ok(!csv.body.includes(unrelated.reference));
   assert.doesNotMatch(csv.body, /rider@example|2015550140|customerAccess/);
-  const empty = await f.get(endpoint + '/trips.csv?' + query.replace('Synthetic+export+fixture', 'No+match'), admin);
+  const emptyQuery = dateQuery('2026-03-15', '2026-03-15', {search: 'No match', sort: 'reference', order: 'asc'});
+  const empty = await f.get(endpoint + '/trips.csv?' + emptyQuery, admin);
   assert.equal(empty.status, 200);
-  assert.equal(empty.body.trimEnd().split('\r\n').length, 1);
+  assert.equal(empty.body, financialCsvHeader + '\r\n');
 });

@@ -268,7 +268,7 @@ function chartsResult(evidence, input) {
   };
 }
 
-const csvColumns = ['Booking reference', 'Pickup date (New York)', 'Pickup', 'Destination', 'Vehicle',
+const csvColumns = ['Booking reference', 'Pickup date (New York)', 'Vehicle',
   'Reservation status', 'Payment status', 'Accepted fare (USD)', 'Captured payments (USD)', 'Refunded amount (USD)'];
 const csvHeader = csvColumns.join(',') + '\r\n';
 
@@ -284,8 +284,7 @@ function decimal(cents) {
 }
 function csvTrip(trip) {
   return [
-    trip.reference, trip.pickupDate, trip.pickup, trip.destination, trip.vehicleLabel, trip.status,
-    trip.paymentStatus
+    trip.reference, trip.pickupDate, trip.vehicleLabel, trip.status, trip.paymentStatus
   ].map(csvText).concat([trip.fareCents, trip.capturedCents, trip.refundedCents].map(decimal)).join(',') + '\r\n';
 }
 
