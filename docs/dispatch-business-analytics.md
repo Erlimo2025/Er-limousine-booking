@@ -40,6 +40,8 @@ Activity charts are daily for up to 31 days, weekly for 32–120 days, and month
 
 ## Access and exports
 
-Analytics uses the existing authenticated Dispatch session. The report and CSV use the applied date range and the same trip search, filters and sort. Pagination affects only the screen. The export includes all matching rows and escapes spreadsheet formula text. Pickup and destination are sensitive operational data. Keep downloaded CSVs private.
+Analytics uses the existing authenticated Dispatch session. The report and CSV use the applied date range and the same trip search, filters and sort. Pagination affects only the screen. Authorized Dispatch users can still view pickup and destination addresses in the on-screen report and use them to search and sort.
+
+The trip CSV includes all matching rows and exports the booking reference, New York pickup date, vehicle, reservation status, payment status, accepted fare, captured payments and refunded amount. It omits pickup and destination addresses even when an address matches the search. Text fields are protected against spreadsheet formulas. Keep downloaded CSVs private.
 
 Analytics uses read-only PostgreSQL transactions on the existing schema. It has no Stripe calls, new credentials or database migration.
