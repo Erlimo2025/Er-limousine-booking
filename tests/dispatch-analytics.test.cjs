@@ -184,6 +184,116 @@ test('PostgreSQL local days include leap day and both sides of DST changes', pg,
   }
 });
 
+for (const entry of [
+  {name: 'ledger before New York midnight', recorded: '2026-04-01T04:00:00Z', ledger: '2026-04-01T03:59:59Z',
+    from: '2026-03-31', to: '2026-04-01'},
+  {name: 'ledger after New York midnight', recorded: '2026-04-01T03:59:59Z', ledger: '2026-04-01T04:00:00Z',
+    from: '2026-03-31', to: '2026-04-01'},
+  {name: 'separated historical dates', recorded: '2026-03-30T16:00:00Z', ledger: '2026-04-02T16:00:00Z',
+    from: '2026-03-30', to: '2026-04-02', between: '2026-03-31'},
+  {name: 'conflicting instants on the same New York date', recorded: '2026-04-01T04:00:00Z', ledger: '2026-04-01T04:01:00Z',
+    from: '2026-04-01', to: '2026-04-01'}
+]) test('conflicting capture dates stay unavailable: ' + entry.name, pg, async t => {
+  const f = await analyticsFixture(t);
+  const trip = await f.trip({capture: 12345, fareCents: 15000, paidAt: entry.recorded,
+    pickupAt: '2026-04-10T16:00:00Z', pickupDate: '2026-04-10', archived: true});
+  await f.pool.query('UPDATE er_payment_ledger SET paid_at=$2 WHERE booking_id=$1', [trip.id, entry.ledger]);
+  const snapshot = async () => ({
+    reservations: (await f.pool.query('SELECT * FROM er_reservations ORDER BY id')).rows,
+    payments: (await f.pool.query('SELECT * FROM er_payment_ledger ORDER BY booking_id')).rows
+  });
+  const before = await snapshot();
+  const admin = await f.adminLogin();
+  const periods = [...new Set([entry.from, entry.to, entry.between].filter(Boolean))].map(day => [day, day]);
+  if (entry.from !== entry.to) periods.push([entry.from, entry.to]);
+  for (const [from, to] of periods) {
+    const query = dateQuery(from, to);
+    const summary = await f.get(endpoint + '?' + query, admin);
+    const charts = await f.get(endpoint + '/charts?' + query, admin);
+    assert.equal(summary.status, 200);
+    assert.equal(charts.status, 200);
+    assert.equal(summary.body.summary.collectedCents, null);
+    assert.equal(summary.body.summary.netCollectedCents, null);
+    assert.equal(summary.body.summary.refundsCents, '0');
+    assert.equal(summary.body.summary.coverage.paymentGaps, 1);
+    assert.ok(summary.body.activity.buckets.every(row => row.collectedCents === null));
+    assert.equal(charts.body.summary.collectedCents, null);
+    assert.equal(charts.body.summary.netCollectedCents, null);
+    assert.equal(charts.body.trend, null);
+    assert.equal(charts.body.services, null);
+  }
+  // Cash dates do not turn a pickup-filtered report or CSV into a cash export.
+  const candidate = dateQuery(entry.from, entry.from);
+  const trips = await f.get(endpoint + '/trips?' + candidate, admin);
+  const candidateCsv = await f.get(endpoint + '/trips.csv?' + candidate, admin);
+  assert.equal(trips.status, 200);
+  assert.deepEqual(trips.body.trips, []);
+  assert.equal(candidateCsv.status, 200);
+  assert.equal(candidateCsv.body, financialCsvHeader + '\r\n');
+  const outside = dateQuery('2026-04-03', '2026-04-03');
+  const empty = await f.get(endpoint + '?' + outside, admin);
+  const emptyCharts = await f.get(endpoint + '/charts?' + outside, admin);
+  assert.equal(empty.body.summary.collectedCents, '0');
+  assert.equal(empty.body.summary.coverage.paymentGaps, 0);
+  assert.equal(emptyCharts.body.summary.collectedCents, '0');
+
+  const query = dateQuery('2026-04-10', '2026-04-10', {payment: 'review', search: trip.reference});
+  const report = await f.get(endpoint + '/trips?' + query, admin);
+  assert.equal(report.status, 200);
+  assert.equal(report.body.trips.length, 1);
+  const row = report.body.trips[0];
+  assert.deepEqual([row.id, row.archived, row.fareCents, row.capturedCents, row.refundedCents],
+    [trip.id, true, '15000', null, '0']);
+  const csv = await f.get(endpoint + '/trips.csv?' + query, admin);
+  assert.equal(csv.status, 200);
+  assert.equal(csv.body, [financialCsvHeader, expectedFinancialCsvRow(row, ['150.00', 'Unavailable', '0.00']), ''].join('\r\n'));
+  assert.deepEqual(await snapshot(), before, 'Read-only analytics must not repair historical payment evidence');
+});
+
+test('verified capture instants use New York midnight and explicit offsets across DST', pg, async t => {
+  const f = await analyticsFixture(t);
+  f.setNow('2026-12-02T17:00:00Z');
+  const entries = [
+    ['2026-03-31T23:59:59-04:00', '2026-04-01T03:59:59Z', '2026-03-31', 12345],
+    ['2026-04-01T00:00:00-04:00', '2026-04-01T04:00:00Z', '2026-04-01', 15000],
+    ['2026-11-01T01:30:00-04:00', '2026-11-01T05:30:00Z', '2026-11-01', 7500],
+    ['2026-11-01T01:30:00-05:00', '2026-11-01T06:30:00Z', '2026-11-01', 8000],
+    ['2026-11-30T23:59:59-05:00', '2026-12-01T04:59:59Z', '2026-11-30', 9000],
+    ['2026-12-01T00:00:00-05:00', '2026-12-01T05:00:00Z', '2026-12-01', 10000]
+  ];
+  const expected = new Map();
+  for (const [paidAt, ledgerAt, day, capture] of entries) {
+    const trip = await f.trip({capture, fareCents: 15000, paidAt, pickupDate: '2026-04-10', pickupAt: '2026-04-10T16:00:00Z'});
+    await f.pool.query('UPDATE er_payment_ledger SET paid_at=$2 WHERE booking_id=$1', [trip.id, ledgerAt]);
+    expected.set(day, (expected.get(day) || 0) + capture);
+  }
+  const admin = await f.adminLogin();
+  for (const [day, cents] of expected) {
+    const query = dateQuery(day, day);
+    const summary = await f.get(endpoint + '?' + query, admin);
+    const charts = await f.get(endpoint + '/charts?' + query, admin);
+    assert.equal(summary.status, 200);
+    assert.equal(charts.status, 200);
+    assert.equal(summary.body.summary.collectedCents, String(cents));
+    assert.equal(summary.body.summary.netCollectedCents, String(cents));
+    assert.equal(summary.body.summary.coverage.paymentGaps, 0);
+    assert.equal(charts.body.summary.collectedCents, String(cents));
+    assert.equal(charts.body.trend.buckets[0].collectedCents, String(cents));
+  }
+  const total = entries.reduce((sum, entry) => sum + entry[3], 0);
+  const year = await f.get(endpoint + '?preset=thisYear', admin);
+  assert.equal(year.body.summary.collectedCents, String(total));
+  const pickup = dateQuery('2026-04-10', '2026-04-10', {sort: 'reference', order: 'asc'});
+  const report = await f.get(endpoint + '/trips?' + pickup, admin);
+  const csv = await f.get(endpoint + '/trips.csv?' + pickup, admin);
+  assert.equal(report.status, 200);
+  assert.equal(csv.status, 200);
+  assert.equal(report.body.trips.reduce((sum, row) => sum + Number(row.capturedCents), 0), total);
+  assert.equal(csv.body, [financialCsvHeader, ...report.body.trips.map((row, index) =>
+    expectedFinancialCsvRow(row, ['150.00', (entries[index][3] / 100).toFixed(2), '0.00'])), ''].join('\r\n'));
+  assert.equal((await f.get(endpoint + '?' + dateQuery('2026-04-10', '2026-04-10'), admin)).body.summary.collectedCents, '0');
+});
+
 test('signed Stripe replay produces one capture and unsettled payments stay out of collected funds', pg, async t => {
   const f = await analyticsFixture(t);
   const result = await f.post('/api/checkout', {...guestBooking, paymentChoice: 'now'});
@@ -192,8 +302,13 @@ test('signed Stripe replay produces one capture and unsettled payments stay out 
   session.status = 'complete';
   session.payment_status = 'paid';
   const first = await f.h.webhook(session);
+  const paidAt = (await f.store.get(result.body.bookingId)).paidAt;
+  const ledger = (await f.pool.query('SELECT * FROM er_payment_ledger WHERE booking_id=$1', [result.body.bookingId])).rows;
+  f.h.advance(60_000);
   const replay = await f.h.webhook(session);
   assert.deepEqual([first.status, replay.status], [200, 200]);
+  assert.equal((await f.store.get(result.body.bookingId)).paidAt, paidAt);
+  assert.deepEqual((await f.pool.query('SELECT * FROM er_payment_ledger WHERE booking_id=$1', [result.body.bookingId])).rows, ledger);
   const count = await f.pool.query('SELECT count(*)::int FROM er_payment_ledger WHERE booking_id=$1', [result.body.bookingId]);
   assert.equal(count.rows[0].count, 1);
   await f.reserve(null, {...guestBooking, time: '15:00'});
