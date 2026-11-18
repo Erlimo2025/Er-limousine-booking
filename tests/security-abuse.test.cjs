@@ -148,6 +148,7 @@ async function harness(t, env = {}, saved = "[]", injectedStore, startedAt = Dat
       if (name === "./services/reservation-refunds") return require("../services/reservation-refunds");
       if (name === "./services/cancellation-policy") return require("../services/cancellation-policy");
       if (name === "./services/trip-management") return require("../services/trip-management");
+      if (name === "./services/dispatch-security-logging") return require("../services/dispatch-security-logging");
       if (name === "./storage/customer-trips") return require("../storage/customer-trips");
       if (name === "./storage/admin-reservations") return require("../storage/admin-reservations");
       if (name === "./storage/admin-archives") return require("../storage/admin-archives");
@@ -2047,4 +2048,214 @@ test('Terminal C fallback retains every General EWR identity, classification, ge
 test('normal Terminal C Round Trip routes back to verified General EWR and preserves chauffeur instructions',async t=>{
  const h=await harness(t),body={...booking,pickup:'Terminal C',pickupPlaceId:'ChIJMYEleJSwokRawcDBeH8NVg',pickupTerminal:'c',tripType:'roundtrip',returnDate:'2026-11-11',returnTime:'12:00'};
  h.state.rejectTerminalCDetails=true;assert.equal((await h.request('/api/checkout',body)).status,200);assert.equal(h.state.routes[0].origin.placeId,booking.pickupPlaceId);assert.equal(h.state.routes[1].destination.placeId,booking.pickupPlaceId);assert.match(h.records()[0].trip.pickup,/Terminal C/);assert.equal(h.records()[0].quote.total,200);
+});
+
+const dispatchAuditEvents = (h, referenceId) => h.state.logs.flatMap(line => {
+  try {
+    const entry = JSON.parse(line);
+    return entry.category === 'dispatch_security' && (!referenceId || entry.referenceId === referenceId) ? [entry] : [];
+  } catch (_) { return []; }
+});
+const dispatchAuditKeys = ['timestamp', 'referenceId', 'operation', 'category', 'action', 'outcome', 'actorId', 'recordId'];
+function assertDispatchAudit(entry, response, action, outcome, actorId, recordId) {
+  assert.ok(entry, 'Expected a Dispatch security event');
+  assert.equal(entry.referenceId, response.headers.get('x-request-id'));
+  assert.match(entry.referenceId, referenceUuid);
+  assert.equal(entry.operation, 'admin');
+  assert.equal(entry.category, 'dispatch_security');
+  assert.equal(entry.action, action);
+  assert.equal(entry.outcome, outcome);
+  assert.equal(entry.actorId, actorId);
+  assert.equal(entry.recordId, recordId);
+  assert.ok(Object.keys(entry).every(key => dispatchAuditKeys.includes(key)));
+  assert.equal(new Date(entry.timestamp).toISOString(), entry.timestamp);
+}
+async function auditStaff(h) {
+  const response = await h.request('/api/admin/login', {token: 'local-test-token'}, {'x-request-id': 'PRIVATE-FORGED-ID'});
+  assert.equal(response.status, 200);
+  const cookie = response.headers.get('set-cookie').split(';')[0];
+  const event = dispatchAuditEvents(h, response.headers.get('x-request-id')).find(entry => entry.action === 'dispatch_sign_in');
+  assertDispatchAudit(event, response, 'dispatch_sign_in', 'succeeded', event?.actorId);
+  assert.match(event.actorId, referenceUuid);
+  return {cookie, actorId: event.actorId};
+}
+async function auditReservation(h, paymentChoice = 'later') {
+  const result = await h.request('/api/checkout', {...booking, paymentChoice});
+  assert.equal(result.status, 200);
+  return result.body.bookingId;
+}
+
+test('Dispatch security sign-in and logout correlate requests with non-credential session actors', async t => {
+  const h = await harness(t);
+  const first = await auditStaff(h);
+  const token = first.cookie.split('=')[1];
+  const digest = crypto.createHash('sha256').update(token).digest('hex');
+  h.context.auditSessionDigest = digest;
+  assert.equal(vm.runInContext('adminSessions.get(auditSessionDigest).auditActorId', h.context), first.actorId);
+  const logout = await h.request('/api/admin/logout', {}, {cookie: first.cookie});
+  assert.equal(logout.status, 200);
+  const entries = dispatchAuditEvents(h, logout.headers.get('x-request-id'));
+  assert.equal(entries.length, 1);
+  assertDispatchAudit(entries[0], logout, 'dispatch_logout', 'succeeded', first.actorId);
+  assert.equal((await h.request('/api/bookings', undefined, {cookie: first.cookie})).status, 401);
+  const second = await auditStaff(h);
+  assert.notEqual(second.actorId, first.actorId);
+  assert.doesNotMatch(h.state.logs.join('\n'), new RegExp(token + '|' + digest + '|local-test-token|PRIVATE-FORGED-ID'));
+  const repeat = await h.request('/api/admin/logout', {});
+  assert.equal(repeat.status, 200);
+  const repeated = dispatchAuditEvents(h, repeat.headers.get('x-request-id'));
+  assert.equal(repeated.length, 1);
+  assertDispatchAudit(repeated[0], repeat, 'dispatch_logout', 'unchanged', undefined);
+});
+
+test('Dispatch security denied requests preserve authentication and expose no supplied identities', async t => {
+  const h = await harness(t);
+  const invalid = await h.request('/api/admin/login', {token: 'PRIVATE-CREDENTIAL', actorId: 'PRIVATE-ACTOR'});
+  assert.equal(invalid.status, 401);
+  assertDispatchAudit(dispatchAuditEvents(h, invalid.headers.get('x-request-id'))[0], invalid,
+    'dispatch_sign_in', 'denied', undefined);
+  const cross = await h.request('/api/admin/login', {token: 'local-test-token'}, {origin: 'https://private.example.test'});
+  assert.equal(cross.status, 403);
+  assertDispatchAudit(dispatchAuditEvents(h, cross.headers.get('x-request-id'))[0], cross,
+    'dispatch_sign_in', 'denied', undefined);
+  const staff = await auditStaff(h), id = await auditReservation(h);
+  const originalStatus = h.records().find(row => row.id === id).status;
+  for (const headers of [{}, {cookie: staff.cookie, origin: 'https://private.example.test'}]) {
+    const denied = await h.request('/api/bookings/' + id, {status: 'assigned'}, headers, 'PATCH');
+    assert.ok([401, 403].includes(denied.status));
+    const entries = dispatchAuditEvents(h, denied.headers.get('x-request-id'));
+    assert.equal(entries.length, 1);
+    assert.equal(entries[0].action, 'reservation_status_update');
+    assert.equal(entries[0].outcome, 'denied');
+  }
+  h.advance(31 * 60_000);
+  const expired = await h.request('/api/bookings/' + id, {status: 'assigned'}, {cookie: staff.cookie}, 'PATCH');
+  assert.equal(expired.status, 401);
+  assert.equal(dispatchAuditEvents(h, expired.headers.get('x-request-id'))[0].outcome, 'denied');
+  assert.equal(h.records().find(row => row.id === id).status, originalStatus);
+  assert.doesNotMatch(h.state.logs.join('\n'), /PRIVATE-CREDENTIAL|PRIVATE-ACTOR|private\.example/);
+});
+
+test('Dispatch status and assignment events describe committed actions without copying their values', async t => {
+  const h = await harness(t), id = await auditReservation(h), staff = await auditStaff(h);
+  const dispatch = {driver: 'PRIVATE-DRIVER', driverPhone: 'PRIVATE-PHONE', vehicle: 'PRIVATE-VEHICLE', plate: 'PRIVATE-PLATE'};
+  const result = await h.request('/api/bookings/' + id, {status: 'assigned', dispatch}, {cookie: staff.cookie}, 'PATCH');
+  assert.equal(result.status, 200);
+  const entries = dispatchAuditEvents(h, result.headers.get('x-request-id'));
+  assert.equal(entries.length, 2);
+  for (const action of ['reservation_status_update', 'driver_assignment_update']) {
+    assertDispatchAudit(entries.find(entry => entry.action === action), result, action, 'succeeded', staff.actorId, id);
+  }
+  assert.deepEqual(h.records().find(row => row.id === id).dispatch, dispatch);
+  assert.equal(h.records().find(row => row.id === id).status, 'assigned');
+  const changed = await h.request('/api/bookings/' + id, {dispatch: {...dispatch, plate: 'PRIVATE-SECOND-PLATE'}}, {cookie: staff.cookie}, 'PATCH');
+  assert.equal(changed.status, 200);
+  const assignment = dispatchAuditEvents(h, changed.headers.get('x-request-id'));
+  assert.equal(assignment.length, 1);
+  assertDispatchAudit(assignment[0], changed, 'driver_assignment_update', 'succeeded', staff.actorId, id);
+  const repeated = await h.request('/api/bookings/' + id,
+    {status: 'assigned', dispatch: {...dispatch, plate: 'PRIVATE-SECOND-PLATE'}}, {cookie: staff.cookie}, 'PATCH');
+  assert.equal(repeated.status, 200);
+  const unchanged = dispatchAuditEvents(h, repeated.headers.get('x-request-id'));
+  assert.equal(unchanged.length, 2);
+  assert.ok(unchanged.every(entry => entry.outcome === 'unchanged'));
+  assert.doesNotMatch(h.state.logs.join('\n'), /PRIVATE-|test@example\.test|2015550199|cs_mock|pi_mock/);
+});
+
+test('Dispatch successful mutation events wait for persistence and failed writes never claim success', async t => {
+  const h = await harness(t), id = await auditReservation(h), staff = await auditStaff(h);
+  const originalStatus = h.records().find(row => row.id === id).status;
+  const update = h.testStore.update;
+  let enter, release;
+  const entered = new Promise(resolve => {enter = resolve;});
+  const gate = new Promise(resolve => {release = resolve;});
+  h.testStore.update = async (...args) => {enter(); await gate; return update(...args);};
+  const request = h.request('/api/bookings/' + id, {status: 'assigned'}, {cookie: staff.cookie}, 'PATCH');
+  await entered;
+  try {
+    assert.equal(dispatchAuditEvents(h).filter(entry => entry.action === 'reservation_status_update').length, 0);
+    assert.equal(h.records().find(row => row.id === id).status, originalStatus);
+  } finally {release();}
+  const result = await request;
+  assert.equal(result.status, 200);
+  assertDispatchAudit(dispatchAuditEvents(h, result.headers.get('x-request-id'))[0], result,
+    'reservation_status_update', 'succeeded', staff.actorId, id);
+  h.testStore.update = update;
+  h.storageFailures.write = true;
+  const failed = await h.request('/api/bookings/' + id,
+    {status: 'driver_en_route', dispatch: {driver: 'PRIVATE-FAILED-DRIVER'}}, {cookie: staff.cookie}, 'PATCH');
+  assert.equal(failed.status, 503);
+  const failures = dispatchAuditEvents(h, failed.headers.get('x-request-id'));
+  assert.equal(failures.length, 2);
+  assert.ok(failures.every(entry => entry.outcome === 'failed'));
+  assert.equal(h.records().find(row => row.id === id).status, 'assigned');
+  assert.doesNotMatch(h.state.logs.join('\n'), /PRIVATE-FAILED-DRIVER/);
+});
+
+test('Dispatch validation and missing-record failures do not produce successful mutation events', async t => {
+  const h = await harness(t), id = await auditReservation(h), staff = await auditStaff(h);
+  const originalStatus = h.records().find(row => row.id === id).status;
+  for (const [target, status, expected] of [[id, 'PRIVATE-INVALID-STATUS', 400], [crypto.randomUUID(), 'assigned', 404]]) {
+    const response = await h.request('/api/bookings/' + target, {status}, {cookie: staff.cookie}, 'PATCH');
+    assert.equal(response.status, expected);
+    const entries = dispatchAuditEvents(h, response.headers.get('x-request-id'));
+    assert.equal(entries.length, 1);
+    assertDispatchAudit(entries[0], response, 'reservation_status_update', 'failed', staff.actorId, target);
+  }
+  assert.equal(h.records().find(row => row.id === id).status, originalStatus);
+  assert.doesNotMatch(h.state.logs.join('\n'), /PRIVATE-INVALID-STATUS/);
+});
+
+test('Dispatch cancellation audit follows each actual commit in the existing two-stage update', async t => {
+  const h = await harness(t), id = await auditReservation(h), staff = await auditStaff(h);
+  const update = h.testStore.update;
+  let writes = 0;
+  h.testStore.update = async (...args) => {
+    if (++writes === 2) throw new (require('../storage/postgres').StorageError)();
+    return update(...args);
+  };
+  const response = await h.request('/api/bookings/' + id,
+    {status: 'cancelled', dispatch: {driver: 'PRIVATE-UNCOMMITTED-DRIVER'}}, {cookie: staff.cookie}, 'PATCH');
+  assert.equal(response.status, 503);
+  const entries = dispatchAuditEvents(h, response.headers.get('x-request-id'));
+  assert.equal(entries.length, 2);
+  assertDispatchAudit(entries.find(entry => entry.action === 'reservation_cancellation'), response,
+    'reservation_cancellation', 'succeeded', staff.actorId, id);
+  assertDispatchAudit(entries.find(entry => entry.action === 'driver_assignment_update'), response,
+    'driver_assignment_update', 'failed', staff.actorId, id);
+  assert.equal(h.records().find(row => row.id === id).status, 'cancelled');
+  assert.equal(h.records().find(row => row.id === id).dispatch.driver, '');
+  assert.doesNotMatch(h.state.logs.join('\n'), /PRIVATE-UNCOMMITTED-DRIVER/);
+});
+
+test('Dispatch cancelled-request write failure has no successful cancellation audit', async t => {
+  const h = await harness(t), id = await auditReservation(h), staff = await auditStaff(h);
+  const originalStatus = h.records().find(row => row.id === id).status;
+  h.storageFailures.write = true;
+  const response = await h.request('/api/bookings/' + id, {status: 'cancelled'}, {cookie: staff.cookie}, 'PATCH');
+  assert.equal(response.status, 503);
+  const events = dispatchAuditEvents(h, response.headers.get('x-request-id'));
+  assert.equal(events.length, 1);
+  assertDispatchAudit(events[0], response, 'reservation_cancellation', 'failed', staff.actorId, id);
+  assert.equal(h.records().find(row => row.id === id).status, originalStatus);
+});
+
+test('Dispatch M-04 rechecks log completion after stored review and do not imply payment settlement', async t => {
+  const h = await harness(t), id = await auditReservation(h, 'now'), staff = await auditStaff(h);
+  const headers = {cookie: staff.cookie, origin: 'http://localhost:3000', 'sec-fetch-site': 'same-origin'};
+  const result = await h.request('/api/bookings/' + id + '/reconcile', {}, headers);
+  assert.equal(result.status, 200);
+  assertDispatchAudit(dispatchAuditEvents(h, result.headers.get('x-request-id'))[0], result,
+    'payment_recheck', 'completed', staff.actorId, id);
+  const stored = h.records().find(row => row.id === id);
+  assert.ok(stored.paymentConfirmationReview);
+  assert.equal(stored.paymentStatus, 'unpaid');
+  h.advance(6 * 60_000);
+  h.storageFailures.write = true;
+  const failed = await h.request('/api/bookings/' + id + '/reconcile', {}, headers);
+  assert.equal(failed.status, 503);
+  const events = dispatchAuditEvents(h, failed.headers.get('x-request-id'));
+  assert.equal(events.length, 1);
+  assertDispatchAudit(events[0], failed, 'payment_recheck', 'failed', staff.actorId, id);
+  assert.doesNotMatch(h.state.logs.join('\n'), /cs_mock|pi_mock|checkout\.example|test@example\.test|2015550199/);
 });

@@ -2,6 +2,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const {EventEmitter} = require('node:events');
+const {randomUUID} = require('node:crypto');
 const {summaryInput, tripsInput, summaryResult, csvHeader, csvTrip} = require('../services/dispatch-analytics');
 const {analyticsFixture, dateQuery, endpoint} = require('./helpers/dispatch-analytics.cjs');
 const {guestBooking} = require('./helpers/reservation-management.cjs');
@@ -671,4 +673,178 @@ test('CSV streams every matching row across cursor batches without exporting the
   const empty = await f.get(endpoint + '/trips.csv?' + emptyQuery, admin);
   assert.equal(empty.status, 200);
   assert.equal(empty.body, financialCsvHeader + '\r\n');
+});
+
+// Exercise the installed route's transport callbacks without timers or sockets:
+// res.end queues a response, while finish/close are separate observable outcomes.
+function csvAuditHarness({exporter, authenticated = true, crossOrigin = false,
+  rateLimited = false, query = {}, writeError = false, sinkError = false} = {}) {
+  const {installDispatchAnalytics} = require('../routes/dispatch-analytics');
+  const {createDispatchSecurityLogger} = require('../services/dispatch-security-logging');
+  const routes = new Map(), lines = [];
+  const actorId = randomUUID();
+  let allowed = authenticated, calls = 0;
+  const req = Object.assign(new EventEmitter(), {
+    referenceId: randomUUID(), method: 'GET', aborted: false,
+    originalUrl: '/api/admin/business-analytics/trips.csv?search=PRIVATE-SEARCH',
+    query: {from: '2026-03-01', to: '2026-03-31', ...query},
+    get(name) {return {origin: crossOrigin ? 'https://PRIVATE-ORIGIN.example.test' : 'https://er.example.test',
+      'sec-fetch-site': crossOrigin ? 'cross-site' : 'same-origin', cookie: 'PRIVATE-COOKIE'}[name];}
+  });
+  const res = Object.assign(new EventEmitter(), {
+    statusCode: 200, headers: {}, chunks: [], headersSent: false, destroyed: false, writableFinished: false,
+    set(name, value) {if (typeof name === 'object') Object.assign(this.headers, name);else this.headers[name] = value;return this;},
+    status(value) {this.statusCode = value;return this;},
+    attachment(value) {this.filename = value;return this;},
+    write(value, callback) {this.headersSent = true;this.chunks.push(value);callback(writeError ? new Error('PRIVATE-WRITE-ERROR') : undefined);},
+    end() {this.ended = true;return this;},
+    json(value) {this.body = value;return this.end();},
+    destroy() {this.destroyed = true;this.emit('close');return this;}
+  });
+  const securityEvent = createDispatchSecurityLogger({
+    write: line => {if (sinkError) throw new Error('PRIVATE-SINK-ERROR');lines.push(line);},
+    now: () => Date.parse('2026-11-17T17:00:00.000Z')
+  });
+  const route = handler => async (request, response) => {
+    try {await handler(request, response);}
+    catch (_) {if (response.headersSent) response.destroy();else response.status(503).json({error: 'Unavailable'});}
+  };
+  installDispatchAnalytics({get(path, ...handlers) {routes.set(path, handlers);}}, {
+    store: {async exportDispatchAnalyticsTrips(...args) {calls++;return exporter ? exporter(...args) : args[2]([]);}},
+    route, securityEvent, siteUrl: 'https://er.example.test', now: () => Date.parse('2026-11-17T17:00:00.000Z'),
+    requireAdmin(request, response, next) {
+      if (!allowed) return response.status(401).json({error: 'Unauthorized'});
+      request.adminArchiveAuthority = {actorId, authorized: () => allowed};
+      return next();
+    },
+    rateLimit: () => (request, response, next) => rateLimited
+      ? response.status(429).json({error: 'Too many requests'}) : next()
+  });
+  const handlers = routes.get(endpoint + '/trips.csv');
+  async function invoke(index = 0) {
+    if (index >= handlers.length) return;
+    let following;
+    await handlers[index](req, res, () => {following = invoke(index + 1);return following;});
+    await following;
+  }
+  return {req, res, actorId, run: invoke, calls: () => calls,
+    entries: () => lines.map(line => JSON.parse(line)), text: () => lines.join('\n'),
+    revoke: () => {allowed = false;},
+    finish: () => {res.writableFinished = true;res.emit('finish');res.emit('close');}};
+}
+
+const auditedCsvTrip = {reference: 'ER-510001', pickupDate: '2026-03-15', vehicleLabel: 'Luxury SUV',
+  status: 'completed', paymentStatus: 'partially_refunded', fareCents: '15000', capturedCents: '15000', refundedCents: '4500'};
+
+test('financial CSV audit waits for finish and records exactly one completed terminal event', async () => {
+  const f = csvAuditHarness({exporter: async (input, active, send) => {assert.equal(active(), true);await send([auditedCsvTrip]);}});
+  await f.run();
+  assert.equal(f.res.ended, true);
+  assert.equal(f.entries().length, 0, 'Calling end is not evidence that a stream finished');
+  assert.equal(f.res.chunks.join(''), csvHeader + csvTrip(auditedCsvTrip));
+  f.finish();
+  assert.equal(f.entries().length, 1);
+  assert.deepEqual(f.entries()[0], {timestamp: '2026-11-17T17:00:00.000Z', referenceId: f.req.referenceId,
+    operation: 'admin', category: 'dispatch_security', action: 'financial_csv_export', outcome: 'completed', actorId: f.actorId});
+  assert.equal(Object.hasOwn(f.entries()[0], 'recordId'), false);
+  assert.doesNotMatch(f.text(), /PRIVATE-|510001|2026-03|15000|4500|partially_refunded/);
+  const empty = csvAuditHarness();
+  await empty.run();empty.finish();
+  assert.equal(empty.res.chunks.join(''), csvHeader);
+  assert.equal(empty.entries()[0].outcome, 'completed');
+});
+
+test('financial CSV audit distinguishes client interruption and in-flight session revocation', async () => {
+  let interrupted;
+  interrupted = csvAuditHarness({exporter: async (input, active, send) => {
+    await send([auditedCsvTrip]);interrupted.req.aborted = true;interrupted.res.destroy();
+  }});
+  await interrupted.run();
+  interrupted.res.emit('close');
+  assert.equal(interrupted.entries().length, 1);
+  assert.equal(interrupted.entries()[0].outcome, 'interrupted');
+  assert.equal(interrupted.entries()[0].actorId, interrupted.actorId);
+
+  for (const afterChunk of [false, true]) {
+    let revoked;
+    revoked = csvAuditHarness({exporter: async (input, active, send) => {
+      if (afterChunk) await send([auditedCsvTrip]);
+      revoked.revoke();assert.equal(active(), false);
+    }});
+    await revoked.run();
+    if (!afterChunk) {assert.equal(revoked.res.statusCode, 401);revoked.finish();}
+    assert.equal(revoked.entries().length, 1);
+    assert.equal(revoked.entries()[0].outcome, 'interrupted');
+    assert.equal(revoked.entries()[0].actorId, revoked.actorId);
+  }
+});
+
+test('financial CSV audit records failed query, partial-stream and write errors without error details', async () => {
+  for (const failure of ['before_rows', 'after_rows', 'write']) {
+    const f = csvAuditHarness({writeError: failure === 'write', exporter: async (input, active, send) => {
+      if (failure !== 'before_rows') await send([auditedCsvTrip]);
+      if (failure !== 'write') throw new Error('PRIVATE-STORAGE-ERROR');
+    }});
+    await f.run();
+    if (!f.res.destroyed) f.finish();
+    assert.equal(f.entries().length, 1);
+    assert.equal(f.entries()[0].outcome, 'failed');
+    assert.doesNotMatch(f.text(), /PRIVATE-|message|stack|search|cookie|url/);
+  }
+});
+
+test('financial CSV audit retains initial denial and validation responses without claiming completion', async () => {
+  for (const option of [{authenticated: false}, {crossOrigin: true}, {rateLimited: true}]) {
+    const f = csvAuditHarness(option);
+    await f.run();f.finish();
+    assert.equal(f.calls(), 0);
+    assert.ok([401, 403, 429].includes(f.res.statusCode));
+    assert.equal(f.entries().length, 1);
+    assert.equal(f.entries()[0].outcome, 'denied');
+    assert.doesNotMatch(f.text(), /PRIVATE-/);
+  }
+  const invalid = csvAuditHarness({query: {page: '1'}});
+  await invalid.run();invalid.finish();
+  assert.equal(invalid.res.statusCode, 400);
+  assert.equal(invalid.calls(), 0);
+  assert.equal(invalid.entries().length, 1);
+  assert.equal(invalid.entries()[0].outcome, 'failed');
+});
+
+test('financial CSV content and completion remain available if the security log sink fails', async () => {
+  const f = csvAuditHarness({sinkError: true});
+  await f.run();f.finish();
+  assert.equal(f.res.statusCode, 200);
+  assert.equal(f.res.chunks.join(''), csvHeader);
+  assert.equal(f.res.destroyed, false);
+});
+
+test('PostgreSQL financial CSV events share server request and session references without searched data', pg, async t => {
+  const f = await analyticsFixture(t);
+  const pickup = 'PRIVATE-EXACT-SEARCH-ADDRESS';
+  const trip = await f.trip({pickup, destination: 'PRIVATE-DESTINATION-ADDRESS', status: 'completed', capture: 15000});
+  const admin = await f.adminLogin();
+  const events = reference => f.h.state.logs.flatMap(line => {
+    try {const event = JSON.parse(line);return event.category === 'dispatch_security' && (!reference || event.referenceId === reference) ? [event] : [];}
+    catch (_) {return [];}
+  });
+  const actor = events().find(event => event.action === 'dispatch_sign_in').actorId;
+  const path = endpoint + '/trips.csv?' + dateQuery('2026-03-15', '2026-03-15', {search: pickup});
+  const response = await f.get(path, admin);
+  assert.equal(response.status, 200);
+  const [event] = events(response.headers.get('x-request-id'));
+  assert.equal(event.action, 'financial_csv_export');assert.equal(event.outcome, 'completed');
+  assert.equal(event.actorId, actor);assert.equal(event.recordId, undefined);
+  assert.ok(response.body.includes(trip.reference));
+  const denied = await f.get(path);
+  assert.equal(denied.status, 401);
+  assert.equal(events(denied.headers.get('x-request-id'))[0].outcome, 'denied');
+  const original = f.store.exportDispatchAnalyticsTrips;
+  f.store.exportDispatchAnalyticsTrips = async () => {throw new Error('PRIVATE-DB-ERROR');};
+  const failed = await f.get(path, admin);
+  f.store.exportDispatchAnalyticsTrips = original;
+  assert.equal(failed.status, 500);
+  const failedEvents = events(failed.headers.get('x-request-id'));
+  assert.equal(failedEvents.length, 1);assert.equal(failedEvents[0].outcome, 'failed');
+  assert.doesNotMatch(f.h.state.logs.join('\n'), /PRIVATE-|rider@example\.test|2015550140|cs_|pi_|re_|er_admin_session=/);
 });
