@@ -237,3 +237,53 @@ for (const width of [320, 390, 1440]) {
     await quote(session, corrected);
   });
 }
+
+test('booking addresses and current location can be selected with the keyboard', async t => {
+  const {page} = await setup(t, 1440);
+  await page.route('**/api/address-suggestions?*', route => route.fulfill({
+    json:{suggestions:[
+      {description:corrected, placeId:'ChIJ_corrected_selection'},
+      {description:wrong, placeId:'ChIJ_neighbor_selection'}
+    ]}
+  }));
+  const focused = () => page.locator(':focus');
+  const pickup = page.locator('#pickup');
+  const dropoff = page.locator('#dropoff');
+  const location = page.locator('#pickupSuggestions .current-location-option');
+
+  await pickup.fill('Test pickup');
+  await page.keyboard.press('Tab');
+  // Wait for suggestions to arrive while the current-location button has focus.
+  await page.locator('#pickupSuggestions').getByRole('button', {name:corrected}).waitFor();
+  assert.equal(await focused().getAttribute('class'), await location.getAttribute('class'));
+  await page.keyboard.press('Enter');
+  assert.equal(await page.locator('#pickupLocationStatus').innerText(), 'Detecting your location…');
+  assert.equal(await focused().getAttribute('id'), 'pickup');
+
+  await pickup.fill('Test pickup again');
+  await page.locator('#pickupSuggestions').getByRole('button', {name:corrected}).waitFor();
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('ArrowDown');
+  assert.equal(await focused().innerText(), corrected);
+  await page.keyboard.press('Enter');
+  assert.equal(await pickup.inputValue(), corrected);
+  assert.equal(await pickup.getAttribute('data-place-id'), 'ChIJ_corrected_selection');
+  assert.equal(await focused().getAttribute('id'), 'pickup');
+
+  await dropoff.fill('Test drop-off');
+  await page.locator('#dropoffSuggestions').getByRole('button', {name:wrong}).waitFor();
+  await page.keyboard.press('ArrowUp');
+  assert.equal(await focused().innerText(), wrong);
+  await page.keyboard.press('Escape');
+  assert.equal(await focused().getAttribute('id'), 'dropoff');
+  assert.equal(await page.locator('#dropoffSuggestions button').count(), 0);
+
+  await dropoff.fill('Test drop-off again');
+  await page.locator('#dropoffSuggestions').getByRole('button', {name:corrected}).waitFor();
+  await page.keyboard.press('Tab');
+  assert.equal(await focused().innerText(), corrected);
+  await page.keyboard.press('Space');
+  assert.equal(await dropoff.inputValue(), corrected);
+  assert.equal(await dropoff.getAttribute('data-place-id'), 'ChIJ_corrected_selection');
+  assert.equal(await focused().getAttribute('id'), 'dropoff');
+});
