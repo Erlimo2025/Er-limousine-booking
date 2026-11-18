@@ -7,7 +7,7 @@ function adminPaymentLinkStorage(pool,transaction,safe,validate,assertActionLock
  const clear="payload=NULL,claim_token=NULL,lease_until=NULL";
  return {
   recordAdminPaymentLink:(auth,id,action,sessionId,expiresAt,message,now)=>transaction(async client=>{
-   if(!auth.authorized())throw unavailable(401);
+   if(!await auth.authorized())throw unavailable(401);
    const booking=(await client.query('SELECT record FROM er_reservations WHERE id=$1 FOR UPDATE',[id])).rows[0];if(!booking)throw unavailable(404);
    const record=validate(booking.record);assertActionLock(record.checkoutFingerprint || 'reservation:'+id);
    if(!active({stripe_session_id:sessionId,expires_at:expiresAt},record,now))throw unavailable(409);
@@ -18,7 +18,7 @@ function adminPaymentLinkStorage(pool,transaction,safe,validate,assertActionLock
     if(!message)throw unavailable(409);
     await client.query("UPDATE er_admin_payment_links SET state='pending',payload=$2::jsonb,email_requested_at=$3,email_requested_by=$4,next_attempt_at=$3,updated_at=$3 WHERE id=$1",[row.id,JSON.stringify(message),at,auth.actorId]);row.state='pending';
    }
-   if(!auth.authorized())throw unavailable(401);return {state:row.state};
+   if(!await auth.authorized())throw unavailable(401);return {state:row.state};
   }),
   claimAdminPaymentLinkEmail:now=>transaction(async client=>{
    const at=new Date(now),row=(await client.query("SELECT l.*,r.record FROM er_admin_payment_links l JOIN er_reservations r ON r.id=l.booking_id WHERE (l.state='pending' AND l.next_attempt_at<=$1) OR (l.state='sending' AND l.lease_until<=$1) ORDER BY l.next_attempt_at,l.id LIMIT 1 FOR UPDATE OF l SKIP LOCKED",[at])).rows[0];if(!row)return null;

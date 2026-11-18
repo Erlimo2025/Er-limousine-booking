@@ -2,13 +2,13 @@
 const crypto=require('node:crypto');
 const {LEASE,RETRY_WINDOW}=require('./booking-emails');
 const {fail,invalidLink,displayName,reviewPage,publicReviewPage,PUBLIC_REVIEW_SCAN_LIMIT,uuid,requirePublicationPrivacy}=require('../services/customer-reviews');
-const authorized=auth=>{if(!auth || !uuid.test(auth.actorId) || typeof auth.authorized!=='function' || !auth.authorized())throw fail(401,'Authentication required.');};
+const authorized=async auth=>{if(!auth || !uuid.test(auth.actorId) || typeof auth.authorized!=='function' || !await auth.authorized())throw fail(401,'Authentication required.');};
 async function enqueueReviewInvitation(client,record,auth,now){
- authorized(auth);
+ await authorized(auth);
  if(record.status!=='completed' || typeof record.customer.email!=='string' || record.customer.email.length>200 || !/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(record.customer.email))return;
  const at=new Date(now);
  await client.query('INSERT INTO er_review_invitations(id,booking_id,completed_by,completed_at,recipient,next_attempt_at,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$4,$4,$4) ON CONFLICT(booking_id) DO NOTHING',[crypto.randomUUID(),record.id,auth.actorId,at,record.customer.email]);
- authorized(auth);
+ await authorized(auth);
 }
 function customerReviewStorage(pool,transaction,safe){
  const clear='claim_token=NULL,lease_until=NULL';
@@ -42,29 +42,29 @@ function customerReviewStorage(pool,transaction,safe){
    await client.query('UPDATE er_review_invitations SET used_at=$2,updated_at=$2 WHERE id=$1',[row.id,at]);return {accepted:true};
   }),
   listCustomerReviews:(q,auth)=>safe(async()=>{
-   if(!q.publicView)authorized(auth);
+   if(!q.publicView)await authorized(auth);
    const field=q.publicView?'v.published_at':'v.submitted_at',values=[q.status,new Date(q.at),q.publicView?PUBLIC_REVIEW_SCAN_LIMIT+1:q.limit+1];
    let cursor='';if(q.cursor){values.push(new Date(q.cursor.time),q.cursor.id);cursor=' AND ('+field+',v.id)<($4,$5::uuid)';}
    const fields=q.publicView?'v.id,v.rating,v.comment,v.display_name,v.published_at':'v.id,v.customer_name,v.rating,v.comment,v.booking_id,v.submitted_at,v.status,v.version';
    const query='SELECT '+fields+' FROM er_customer_reviews v JOIN er_review_invitations i ON i.id=v.invitation_id JOIN er_reservations r ON r.id=v.booking_id WHERE v.status=$1 AND '+field+'<=$2'+(q.publicView?" AND r.record->>'status'='completed'":'')+cursor+' ORDER BY '+field+' DESC,v.id DESC LIMIT $3';
    const rows=(await pool.query(query,values)).rows;
-   if(!q.publicView)authorized(auth);return q.publicView?publicReviewPage(rows,q):reviewPage(rows,q);
+   if(!q.publicView)await authorized(auth);return q.publicView?publicReviewPage(rows,q):reviewPage(rows,q);
   }),
   moderateCustomerReview:(auth,id,input,now)=>transaction(async client=>{
-   authorized(auth);
+   await authorized(auth);
    const row=(await client.query("SELECT v.*,r.record->>'status' AS booking_status FROM er_customer_reviews v JOIN er_reservations r ON r.id=v.booking_id WHERE v.id=$1 FOR UPDATE OF v",[id])).rows[0];if(!row)throw fail(404,'Review not found.');
    if(input.action==='publish')requirePublicationPrivacy(row.comment);
    const prior=(await client.query('SELECT * FROM er_review_moderation_events WHERE review_id=$1 AND request_id=$2',[id,input.requestId])).rows[0];
-   if(prior){if(prior.actor_id!==auth.actorId || prior.action!==input.action || prior.reason!==input.reason || prior.expected_version!==input.version)throw fail(409,'Moderation request conflicts with an earlier action.');authorized(auth);return {status:row.status,version:row.version};}
+   if(prior){if(prior.actor_id!==auth.actorId || prior.action!==input.action || prior.reason!==input.reason || prior.expected_version!==input.version)throw fail(409,'Moderation request conflicts with an earlier action.');await authorized(auth);return {status:row.status,version:row.version};}
    if(row.version!==input.version || row.status==='published' && !input.confirmed)throw fail(409,'This review changed. Refresh before moderating it.');
    if(input.action==='publish' && row.booking_status!=='completed')throw fail(409,'Only feedback for an eligible completed trip can be published.');
    if(input.action==='remove' && row.status==='pending')throw fail(409,'This review is not public.');
    const status=input.action==='publish'?'published':'held',at=new Date(now);
    await client.query('INSERT INTO er_review_moderation_events(id,review_id,request_id,actor_id,action,reason,from_status,to_status,expected_version,version,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',[crypto.randomUUID(),id,input.requestId,auth.actorId,input.action,input.reason,row.status,status,row.version,row.version+1,at]);
    await client.query("UPDATE er_customer_reviews SET status=$2,version=version+1,published_at=CASE WHEN $2='published' THEN $3::timestamptz ELSE NULL END,first_published_at=CASE WHEN $2='published' THEN COALESCE(first_published_at,$3::timestamptz) ELSE first_published_at END WHERE id=$1",[id,status,at]);
-   authorized(auth);return {status,version:row.version+1};
+   await authorized(auth);return {status,version:row.version+1};
   }),
-  customerReviewHistory:(auth,id)=>safe(async()=>{authorized(auth);const rows=(await pool.query('SELECT id,request_id,actor_id,action,reason,from_status,to_status,version,created_at FROM er_review_moderation_events WHERE review_id=$1 ORDER BY version LIMIT 100',[id])).rows;authorized(auth);return rows;})
+  customerReviewHistory:(auth,id)=>safe(async()=>{await authorized(auth);const rows=(await pool.query('SELECT id,request_id,actor_id,action,reason,from_status,to_status,version,created_at FROM er_review_moderation_events WHERE review_id=$1 ORDER BY version LIMIT 100',[id])).rows;await authorized(auth);return rows;})
  };
 }
 module.exports={customerReviewStorage,enqueueReviewInvitation};

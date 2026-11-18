@@ -50,7 +50,11 @@ function logDiagnostic(req,status,category='request_rejected',provider) {
   console.error(JSON.stringify(entry));
 }
 const dispatchSecurityEvent=require('./services/dispatch-security-logging').createDispatchSecurityLogger({
-  write:line=>console.error(line),now:()=>Date.now()
+  write:line=>{
+    console.error(line);
+    if(process.env.DISPATCH_OWNER_ENABLED==='true' && reservationStore?.dispatchAppendAudit)
+      return reservationStore.dispatchAppendAudit(JSON.parse(line)).catch(()=>console.error('Dispatch audit storage unavailable.'));
+  },now:()=>Date.now()
 });
 app.use((req,res,next)=>{
   req.referenceId=crypto.randomUUID();
@@ -210,6 +214,7 @@ app.use((req, res, next) => {
 const abuseCounters = new Map();
 const checkoutActions = new Map();
 const adminSessions = new Map();
+let dispatchOwnerAccess;
 const MINUTE = 60 * 1000;
 const ADMIN_SESSION_ABSOLUTE_MS = 8 * 60 * MINUTE;
 const ADMIN_SESSION_IDLE_MS = 30 * MINUTE;
@@ -1800,6 +1805,7 @@ function validAdminOrigin(req) {
 }
 
 function requireAdmin(req, res, next) {
+  if(dispatchOwnerAccess?.enabled)return Promise.resolve(dispatchOwnerAccess.requireOwner(req,res,next)).catch(next);
   res.set("Cache-Control", "no-store");
   if (!["GET", "HEAD"].includes(req.method) && !validAdminOrigin(req)) {
     return res.status(403).json({error: "Unauthorized"});
@@ -1988,6 +1994,12 @@ app.use(
   })
 );
 
+dispatchOwnerAccess=require('./auth/dispatch-owner').installDispatchOwner(app,{
+  store:reservationStore,route,validOrigin:validAdminOrigin,secure:adminCookieSecure,clientKey,
+  now:()=>Date.now(),emit:dispatchSecurityEvent,env:process.env
+});
+app.get('/api/admin/owner/config',(req,res)=>res.json({enabled:dispatchOwnerAccess.enabled,legacyLoginEnabled:!dispatchOwnerAccess.enabled}));
+
 const customerAuth=require('./auth/customers').installCustomerAuth(app,{store:reservationStore,route,rateLimit,
   validOrigin:validAdminOrigin,secure:adminCookieSecure,siteUrl:SITE_URL,clientKey,emailProvider:enrollmentEmailProvider,
   reportFailure:(req,provider)=>logDiagnostic(req,503,provider==='resend'?'provider_error':'storage_unavailable',provider),
@@ -2063,6 +2075,7 @@ app.use(
 
 /* Admin session credentials are accepted only at login, never on normal APIs. */
 app.post("/api/admin/login", dispatchAudit('dispatch_sign_in'), (req, res) => {
+  if(dispatchOwnerAccess.enabled)return res.status(403).json({error:'Use the owner sign-in.'});
   if (!validAdminOrigin(req) || !req.is("application/json")) {
     return res.status(403).json({error: "Unauthorized"});
   }
@@ -2093,7 +2106,13 @@ app.post("/api/admin/login", dispatchAudit('dispatch_sign_in'), (req, res) => {
   res.json({authenticated: true});
 });
 
-app.get("/api/admin/session", (req, res) => {
+app.get("/api/admin/session", route(async (req, res) => {
+  if(dispatchOwnerAccess.enabled){
+    if(!validAdminOrigin(req))return res.status(403).json({error:'Unauthorized'});
+    const owner=await dispatchOwnerAccess.resolve(req,{touch:req.query.mode!=='charts'});
+    if(!owner)return res.status(401).json({error:'Unauthorized'});
+    return res.json({authenticated:true,owner:{id:owner.id,name:owner.name,email:owner.email,mfaEnabled:true},expiresAt:owner.expiresAt,serverNow:Date.now()});
+  }
   if (req.query.mode !== "charts") {
     return requireAdmin(req, res, () => res.json({authenticated: true}));
   }
@@ -2107,7 +2126,7 @@ app.get("/api/admin/session", (req, res) => {
   // Checking Charts authority must neither renew the session nor replace a session cookie.
   if (expiresAt <= serverNow) return res.status(401).json({error: "Unauthorized"});
   return res.json({authenticated: true, expiresAt, serverNow});
-});
+}));
 require('./routes/dispatch-analytics').installDispatchAnalytics(app,{
   store:reservationStore,route,rateLimit,requireAdmin,siteUrl:SITE_URL,now:()=>Date.now(),securityEvent:dispatchSecurityEvent
 });
@@ -2133,7 +2152,12 @@ app.post('/api/admin/toll-validation/estimate',requireAdmin,async(req,res)=>{
   }
 });
 
-app.post("/api/admin/logout", dispatchAudit('dispatch_logout'), (req, res) => {
+app.post("/api/admin/logout", dispatchAudit('dispatch_logout'), route(async (req, res) => {
+  if(dispatchOwnerAccess.enabled){
+    if(!validAdminOrigin(req) || !req.is('application/json'))return res.status(403).json({error:'Unauthorized'});
+    await dispatchOwnerAccess.logout(req,res);
+    return res.json({authenticated:false});
+  }
   if (!validAdminOrigin(req) || !req.is("application/json")) {
     return res.status(403).json({error: "Unauthorized"});
   }
@@ -2143,7 +2167,7 @@ app.post("/api/admin/logout", dispatchAudit('dispatch_logout'), (req, res) => {
   clearAdminCookie(res);
   req.dispatchAudit.emit('dispatch_logout',actorId?'succeeded':'unchanged',{actorId});
   res.json({authenticated: false});
-});
+}));
 
 
 /* =========================================
@@ -2489,11 +2513,13 @@ app.post('/api/bookings/:id/reconcile',dispatchAudit('payment_recheck'),requireA
   }
   const booking = await reservationStore.get(req.params.id);
   if (!booking) return res.status(404).json({error:'Booking not found.'});
+  if(!await req.adminArchiveAuthority.authorized())return res.status(401).json({error:'Unauthorized'});
   if (booking.quote.promotion?.code === 'FIRST15') await reconcileFirstRide(booking.id);
   else await paymentConfirmationRecovery.check(booking);
   // Completion means the check (including any awaited persistence) finished;
   // it is not evidence that the provider paid or that a mutation was necessary.
   req.dispatchAudit.emit('payment_recheck','completed',{recordId:booking.id});
+  if(!await req.adminArchiveAuthority.authorized())return res.status(401).json({error:'Unauthorized'});
   res.json({ok:true});
 }));
 
@@ -2569,7 +2595,7 @@ async function runReservationRefunds(){
   await runBookingEmails();
 }
 const refundTimer=setInterval(()=>{void runReservationRefunds().catch(()=>logDiagnostic({referenceId:crypto.randomUUID()},503,'provider_error','stripe'));},60000);refundTimer.unref();
-async function cancelUnderLock(booking,abandoned=false,afterPersist){
+async function cancelUnderLock(booking,abandoned=false,afterPersist,authority){
  if(booking.status==='cancelled')return true;
  const a=booking.checkoutAttempt;
  let safe=!booking.stripeSessionId && (!a || a.firstSubmittedAt===null && a.submissionCount===0),review=false;
@@ -2579,7 +2605,8 @@ async function cancelUnderLock(booking,abandoned=false,afterPersist){
   if(abandoned && !safe)return false;
  }else if(!safe){if(abandoned)return false;review=true;}
  if(booking.paymentStatus==='paid'){if(abandoned)return false;review=true;}
- const updated=await reservationStore.update(booking.id,r=>{
+ const updated=await reservationStore.update(booking.id,async r=>{
+  if(authority && !await authority.authorized())throw Object.assign(new Error('Authentication required.'),{status:401});
   if(abandoned && r.paymentStatus==='paid')return;
   r.status='cancelled';r.cancellationReason=abandoned?'first15_hold_expired':'admin_cancelled';
   if(review || r.paymentStatus==='paid')r.paymentReviewRequired=true;
@@ -3030,13 +3057,16 @@ app.get(
       quote: booking.quote,
       dispatch: booking.dispatch
     }));
+    if(!await req.adminArchiveAuthority.authorized())return res.status(401).json({error:'Unauthorized'});
     res.json({bookings, nextCursor: page.nextCursor});
   })
 );
 
 app.get('/api/bookings/search',requireAdmin,rateLimit('admin-search',30),route(async(req,res)=>{
  const query=require('./storage/admin-reservations').adminQuery(req.query,Date.now());
- res.json(await reservationStore.searchAdminReservations(query));
+ const result=await reservationStore.searchAdminReservations(query);
+ if(!await req.adminArchiveAuthority.authorized())return res.status(401).json({error:'Unauthorized'});
+ res.json(result);
 }));
 
 for(const action of ['archive','restore'])app.post('/api/bookings/:id/'+action,requireAdmin,rateLimit('admin-archive',30),route(async(req,res)=>{
@@ -3073,15 +3103,17 @@ app.patch(
     if(!initial)return res.status(404).json({error:'Booking not found.'});
     let statusChanged=false,driverChanged=false;
     const mutate=async()=>{
+    if(!await req.adminArchiveAuthority.authorized())throw Object.assign(new Error('Authentication required.'),{status:401});
     if(req.body.status && !['cancelled','completed'].includes(req.body.status) && (await reservationStore.adminArchiveState(req.params.id))?.archived_at)throw Object.assign(new Error('Restore this trip before reactivating dispatch.'),{status:409});
     if(req.body.status && req.body.status!=='cancelled' && initial.status==='cancelled' &&
       await reservationStore.managedCancellation?.(initial.id))throw Object.assign(new Error('Trip update unavailable. Please refresh and try again.'),{status:409});
     if(req.body.status==='cancelled'){
       const fresh=await reservationStore.get(req.params.id);
-      await cancelUnderLock(fresh,false,()=>req.dispatchAudit.emit('reservation_cancellation','succeeded',{recordId:fresh.id}));
+      await cancelUnderLock(fresh,false,()=>req.dispatchAudit.emit('reservation_cancellation','succeeded',{recordId:fresh.id}),req.adminArchiveAuthority);
       if(fresh.status==='cancelled')req.dispatchAudit.emit('reservation_cancellation','unchanged',{recordId:fresh.id});
     }
     const updated=await reservationStore.update(req.params.id, async booking => {
+    if(!await req.adminArchiveAuthority.authorized())throw Object.assign(new Error('Authentication required.'),{status:401});
     if (req.body.status) {
       if (
         !allowedStatuses.includes(

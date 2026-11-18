@@ -47,16 +47,16 @@ function installDispatchAnalytics(app, {store, route, rateLimit, requireAdmin, s
       }
     })];
   const sessionActive = req => req.adminArchiveAuthority.authorized();
-  const reply = (req, res, result) => sessionActive(req) ? res.json(result) : res.status(401).json({error: 'Unauthorized'});
+  const reply = async (req, res, result) => await sessionActive(req) ? res.json(result) : res.status(401).json({error: 'Unauthorized'});
 
   app.get(endpoint, ...protect(20, async (req, res) => {
-    reply(req, res, await store.dispatchAnalytics(summaryInput(req.query, now())));
+    await reply(req, res, await store.dispatchAnalytics(summaryInput(req.query, now())));
   }));
   app.get(endpoint + '/charts', ...protect(20, async (req, res) => {
-    reply(req, res, await store.dispatchAnalyticsCharts(summaryInput(req.query, now())));
+    await reply(req, res, await store.dispatchAnalyticsCharts(summaryInput(req.query, now())));
   }));
   app.get(endpoint + '/trips', ...protect(45, async (req, res) => {
-    reply(req, res, await store.dispatchAnalyticsTrips(tripsInput(req.query, now())));
+    await reply(req, res, await store.dispatchAnalyticsTrips(tripsInput(req.query, now())));
   }));
   app.get(endpoint + '/trips.csv', observeExport, ...protect(4, async (req, res) => {
     const audit = req[exportAudit];
@@ -64,9 +64,9 @@ function installDispatchAnalytics(app, {store, route, rateLimit, requireAdmin, s
     try {
       const input = tripsInput(req.query, now(), true);
       let started = false;
-      const active = () => !res.destroyed && !req.aborted && sessionActive(req);
+      const active = async () => !res.destroyed && !req.aborted && await sessionActive(req);
       await store.exportDispatchAnalyticsTrips(input, active, async rows => {
-        if (!active()) return;
+        if (!await active()) return;
         const chunk = (started ? '' : csvHeader) + rows.map(csvTrip).join('');
         if (!started) {
           res.set('Content-Type', 'text/csv; charset=utf-8');
@@ -78,7 +78,7 @@ function installDispatchAnalytics(app, {store, route, rateLimit, requireAdmin, s
         });
       });
       if (res.destroyed) return;
-      if (!sessionActive(req)) {
+      if (!await sessionActive(req)) {
         if (started) return res.destroy();
         return res.status(401).json({error: 'Unauthorized'});
       }

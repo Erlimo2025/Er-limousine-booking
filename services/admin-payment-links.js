@@ -16,19 +16,19 @@ function linkMessage(record,url,expiresAt,contact){
 function adminPaymentLinks({store,checkout,actionKey,provider,contact,siteUrl,now=Date.now,reportFailure=()=>{}}){
  const queue=require('./booking-emails').createBookingEmails({store:{claimBookingEmail:time=>store.claimAdminPaymentLinkEmail(time),prepareBookingEmail:(...args)=>store.prepareAdminPaymentLinkEmail(...args),finishBookingEmail:(...args)=>store.finishAdminPaymentLinkEmail(...args)},provider,contact,siteUrl,now,reportFailure});
  async function request(auth,id,action){
-  if(!auth || !uuid.test(auth.actorId) || typeof auth.authorized!=='function' || !auth.authorized())throw error(401,'Authentication required.');
+  if(!auth || !uuid.test(auth.actorId) || typeof auth.authorized!=='function' || !await auth.authorized())throw error(401,'Authentication required.');
   if(!uuid.test(id) || !['copy','email'].includes(action))throw error(400,'Invalid payment-link request.');
   if(action==='email' && !provider?.enabled)throw error(503,'Booking email delivery is unavailable. You can copy the payment link instead.');
   const initial=await store.get(id);if(!initial)throw error(404,'Booking not found.');
   return store.withActionLock(actionKey(initial),async()=>{
-   const record=await store.get(id);if(!auth.authorized())throw error(401,'Authentication required.');if(!eligible(record))throw error(409);
+   const record=await store.get(id);if(!await auth.authorized())throw error(401,'Authentication required.');if(!eligible(record))throw error(409);
    if(action==='email')linkMessage(record,'',new Date(now()).toISOString(),contact);
    // An empty customer context cannot expose saved cards or acquire account ownership.
    const result=await checkout(record.trip,record,{},true,true),fresh=await store.get(id);
-   if(!auth.authorized())throw error(401,'Authentication required.');if(!eligible(fresh))throw error(409);
+   if(!await auth.authorized())throw error(401,'Authentication required.');if(!eligible(fresh))throw error(409);
    const url=hostedUrl(result.url,fresh.stripeSessionId),expiresAt=result.expiresAt;
    const saved=await store.recordAdminPaymentLink(auth,id,action,fresh.stripeSessionId,expiresAt,action==='email'?linkMessage(fresh,url,expiresAt,contact):null,now());
-   if(!auth.authorized())throw error(401,'Authentication required.');
+   if(!await auth.authorized())throw error(401,'Authentication required.');
    return {...(action==='copy'?{url}:{}),expiresAt,state:saved.state};
   });
  }

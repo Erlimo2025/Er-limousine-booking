@@ -191,6 +191,7 @@ function installReservationManagement(app, options) {
     const {status, cursor} = queueOptions(req.query);
     const limit = 20;
     const rows = await store.listReservationRequests(status, cursor, limit);
+    if (!await req.adminArchiveAuthority.authorized()) return res.status(401).json({error: 'Unauthorized'});
     const page = rows.slice(0, limit);
     const last = page.at(-1);
     const nextCursor = rows.length > limit ? Buffer.from(JSON.stringify({
