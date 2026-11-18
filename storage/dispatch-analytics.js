@@ -165,8 +165,11 @@ WITH ${facts},
       FROM refunds r JOIN trips t ON t.id=r.booking_id WHERE r.verified AND NOT t.refund_amount_conflict
   ),
   coverage_gaps AS (
-    SELECT 'payment_gap' AS kind, COALESCE(${localDay('recorded_paid_at')}, received_day) AS day,
-      COALESCE(${localDay('recorded_paid_at')}, greatest(received_day, today)) AS last_day
+    -- Conflicting capture dates leave the whole candidate interval uncertain.
+    SELECT 'payment_gap' AS kind,
+      least(COALESCE(${localDay('recorded_paid_at')}, received_day), ${localDay('ledger_paid_at')}) AS day,
+      greatest(COALESCE(${localDay('recorded_paid_at')}, greatest(received_day, today)),
+        ${localDay('ledger_paid_at')}) AS last_day
     FROM trips CROSS JOIN params WHERE captured_cents IS NULL
     UNION ALL SELECT 'payment_gap', ${localDay('paid_at')}, ${localDay('paid_at')}
       FROM captures WHERE reservation_id IS NULL
