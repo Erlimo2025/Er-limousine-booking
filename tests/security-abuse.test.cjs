@@ -152,6 +152,7 @@ async function harness(t, env = {}, saved = "[]", injectedStore, startedAt = Dat
       if (name === "./storage/customer-trips") return require("../storage/customer-trips");
       if (name === "./storage/admin-reservations") return require("../storage/admin-reservations");
       if (name === "./storage/admin-archives") return require("../storage/admin-archives");
+      if (name === "./auth/dispatch-owner") return require("../auth/dispatch-owner");
       if (name === "./auth/customers") return require("../auth/customers");
       if (name === "./auth/recovery") return require("../auth/recovery");
       if (name === "./routes/customer-payment-methods") return require("../routes/customer-payment-methods");

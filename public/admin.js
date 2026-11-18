@@ -30,6 +30,7 @@ function setLoggedIn(value) {
   window.erCustomerReviews?.setAuthenticated(value,adminFetch);
   window.erReservationRequests?.setAuthenticated(value,adminFetch);
   window.erBusinessAnalytics?.setAuthenticated(value,adminFetch,openDispatchTrip);
+  window.erDispatchOwner?.setAuthenticated(value);
   if (!value) {
     archiveRequests.clear();
     paymentLinkActions.clear();
@@ -49,7 +50,8 @@ async function adminFetch(url, {asBlob = false, ...options} = {}) {
   });
   const data = response.ok && asBlob ? await response.blob() : await response.json();
   if (!response.ok) {
-    if (generation===authGeneration && (response.status === 401 || response.status === 403)) setLoggedIn(false);
+    if (generation===authGeneration && (response.status === 401 ||
+        response.status === 403 && !window.erDispatchOwner?.enabled)) setLoggedIn(false);
     throw new Error(data.error || "Request failed. Please try again.");
   }
   return data;
@@ -145,6 +147,10 @@ async function restoreSession() {
   setLoggedIn(false);
   loadBtn.disabled = true;
   try {
+    if (await window.erDispatchOwner?.initialize({
+      onAuthenticated:async()=>{setLoggedIn(true);await loadBookings();},
+      onSignedOut:()=>setLoggedIn(false),onLogout:logout
+    })) return;
     await adminFetch("/api/admin/session");
     setLoggedIn(true);
     await loadBookings();
@@ -165,7 +171,8 @@ async function logout() {
   authGeneration++;
   bookingsEl.innerHTML = "";
   try {
-    await adminFetch("/api/admin/logout", {method: "POST", body: "{}"});
+    if (window.erDispatchOwner?.enabled) await window.erDispatchOwner.logout();
+    else await adminFetch("/api/admin/logout", {method: "POST", body: "{}"});
     setLoggedIn(false);
     showNotice("Signed out.", "success");
   } catch (err) {

@@ -8,7 +8,13 @@ const outcomes = Object.freeze({
   driver_assignment_update: ['succeeded', 'unchanged', 'failed', 'denied'],
   reservation_cancellation: ['succeeded', 'unchanged', 'failed', 'denied'],
   payment_recheck: ['completed', 'failed', 'denied'],
-  financial_csv_export: ['completed', 'failed', 'interrupted', 'denied']
+  financial_csv_export: ['completed', 'failed', 'interrupted', 'denied'],
+  owner_mfa_enrollment: ['succeeded', 'failed', 'denied'],
+  owner_recovery: ['succeeded', 'failed', 'denied'],
+  owner_recovery_codes: ['succeeded', 'failed', 'denied'],
+  owner_sessions_revoked: ['succeeded', 'failed', 'denied'],
+  owner_emergency_recovery: ['succeeded', 'failed', 'denied'],
+  owner_provisioned: ['succeeded', 'failed', 'denied']
 });
 
 // The actor is a server-owned login-session UUID, not a named staff identity or
@@ -22,6 +28,8 @@ function createDispatchSecurityLogger({write = line => console.error(line), now 
       const entry = {timestamp: new Date(now()).toISOString(), referenceId: req.referenceId.toLowerCase(),
         operation: 'admin', category: 'dispatch_security', action, outcome};
       const actorId = options.actorId ?? req.adminArchiveAuthority?.actorId;
+      const staffId = options.staffId ?? req.adminArchiveAuthority?.staffId ?? req.dispatchOwner?.id;
+      if (typeof staffId === 'string' && staffId.length === 36 && uuid.test(staffId)) entry.staffId = staffId.toLowerCase();
       if (typeof actorId === 'string' && actorId.length === 36 && uuid.test(actorId)) entry.actorId = actorId.toLowerCase();
       if (typeof options.recordId === 'string' && options.recordId.length === 36 && uuid.test(options.recordId)) entry.recordId = options.recordId.toLowerCase();
       const result = write(JSON.stringify(entry));

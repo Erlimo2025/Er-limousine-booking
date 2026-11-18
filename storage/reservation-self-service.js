@@ -187,7 +187,7 @@ function reservationSelfServiceStorage({transaction, safe, validateRecord, query
       'AND next_attempt_at<=$1 ORDER BY next_attempt_at,created_at,id LIMIT $2', [new Date(now), limit])).rows),
 
     startManagedRefundReconciliation: (id, at, operator) => transaction(async client => {
-      if (operator && !operator.authorized()) throw new ManagementError(401, 'Sign in to Dispatch.');
+      if (operator && !await operator.authorized()) throw new ManagementError(401, 'Sign in to Dispatch.');
       const row = await lockedRefund(client, id, at);
       if (!row) return null;
       if (!operator) {

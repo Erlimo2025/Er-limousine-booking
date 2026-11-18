@@ -737,7 +737,7 @@ const auditedCsvTrip = {reference: 'ER-510001', pickupDate: '2026-03-15', vehicl
   status: 'completed', paymentStatus: 'partially_refunded', fareCents: '15000', capturedCents: '15000', refundedCents: '4500'};
 
 test('financial CSV audit waits for finish and records exactly one completed terminal event', async () => {
-  const f = csvAuditHarness({exporter: async (input, active, send) => {assert.equal(active(), true);await send([auditedCsvTrip]);}});
+  const f = csvAuditHarness({exporter: async (input, active, send) => {assert.equal(await active(), true);await send([auditedCsvTrip]);}});
   await f.run();
   assert.equal(f.res.ended, true);
   assert.equal(f.entries().length, 0, 'Calling end is not evidence that a stream finished');
@@ -769,7 +769,7 @@ test('financial CSV audit distinguishes client interruption and in-flight sessio
     let revoked;
     revoked = csvAuditHarness({exporter: async (input, active, send) => {
       if (afterChunk) await send([auditedCsvTrip]);
-      revoked.revoke();assert.equal(active(), false);
+      revoked.revoke();assert.equal(await active(), false);
     }});
     await revoked.run();
     if (!afterChunk) {assert.equal(revoked.res.statusCode, 401);revoked.finish();}

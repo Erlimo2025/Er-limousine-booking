@@ -11,6 +11,7 @@
   <link rel="stylesheet" href="/reservation-management.css">
   <link rel="stylesheet" href="/dispatch-analytics.css">
   <link rel="stylesheet" href="/booking-stops.css">
+  <link rel="stylesheet" href="/dispatch-owner.css">
 </head>
 <body>
   <nav class="nav">
@@ -28,7 +29,7 @@
         <p>Sign in to view reservations, assign chauffeurs and update trip status.</p>
       </div>
 
-      <div class="booking-card" style="margin-bottom:18px">
+      <div class="booking-card" id="legacyAdminCard" style="margin-bottom:18px">
         <div class="form-grid">
           <div class="field full" id="adminLoginField">
             <label for="token">Admin credential</label>
@@ -41,6 +42,101 @@
         </div>
         <div id="notice" class="notice"></div>
       </div>
+
+      <section id="ownerSignIn" class="owner-surface owner-sign-in" aria-labelledby="ownerSignInHeading" hidden>
+        <h2 id="ownerSignInHeading">Owner sign in</h2>
+        <p>Your private Dispatch account requires a password and an authenticator code.</p>
+        <form id="ownerLoginForm" class="owner-form">
+          <label for="ownerEmail">Login email<input id="ownerEmail" name="email" type="email" maxlength="254" autocomplete="username" required></label>
+          <label for="ownerPassword">Password<input id="ownerPassword" name="password" type="password" maxlength="128" autocomplete="current-password" required></label>
+          <button class="owner-gold" type="submit">Continue</button>
+        </form>
+        <form id="ownerVerifyForm" class="owner-form" hidden>
+          <label for="ownerCode">Authenticator code<input id="ownerCode" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required></label>
+          <button class="owner-gold" type="submit">Verify and sign in</button>
+          <button class="owner-text" id="ownerRestartLogin" type="button">Start again</button>
+        </form>
+        <section id="ownerEnrollment" hidden aria-labelledby="ownerEnrollmentHeading">
+          <h3 id="ownerEnrollmentHeading">Set up your authenticator</h3>
+          <p>Add a time-based, six-digit account named ER Limousine Dispatch in your authenticator app and enter this setup key. Keep the key private.</p>
+          <p class="owner-secret" id="ownerSetupKey" aria-label="Authenticator setup key"></p>
+          <form id="ownerEnrollForm" class="owner-form">
+            <label for="ownerEnrollCode">New authenticator code<input id="ownerEnrollCode" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required></label>
+            <button class="owner-gold" type="submit">Confirm authenticator</button>
+          </form>
+        </section>
+        <button class="owner-text" id="ownerShowRecovery" type="button">Lost access to your authenticator?</button>
+        <form id="ownerRecoveryForm" class="owner-form" hidden>
+          <h3>Recover your owner account</h3>
+          <p>Use your password and one unused recovery code. You must set up a replacement authenticator before accessing Dispatch.</p>
+          <label for="ownerRecoveryEmail">Recovery login email<input id="ownerRecoveryEmail" type="email" maxlength="254" autocomplete="username" required></label>
+          <label for="ownerRecoveryPassword">Account password<input id="ownerRecoveryPassword" type="password" maxlength="128" autocomplete="current-password" required></label>
+          <label for="ownerRecoveryCode">Single-use recovery code<input id="ownerRecoveryCode" type="text" maxlength="80" autocomplete="off" spellcheck="false" required></label>
+          <button class="owner-gold" type="submit">Start recovery</button>
+          <button class="owner-text" id="ownerCancelRecovery" type="button">Back to sign in</button>
+        </form>
+        <p id="ownerAuthStatus" class="owner-status" role="status" aria-live="polite"></p>
+      </section>
+
+      <nav id="ownerNavigation" class="owner-navigation" aria-label="Owner Dispatch sections" hidden>
+        <div class="owner-nav-brand">ER <span>DISPATCH</span></div>
+        <p id="ownerIdentity" class="owner-identity"></p>
+        <p id="ownerGlobalStatus" class="owner-status" role="status" aria-live="polite"></p>
+        <button type="button" data-owner-view="reservations" aria-current="page">Reservations</button>
+        <button type="button" data-owner-view="reports">Reports</button>
+        <button type="button" data-owner-view="account">Owner account</button>
+        <button type="button" data-owner-view="audit">Audit log</button>
+        <button type="button" id="ownerSignOut">Sign out</button>
+      </nav>
+
+      <section id="ownerAccountPanel" class="owner-surface" aria-labelledby="ownerAccountHeading" hidden>
+        <h2 id="ownerAccountHeading" tabindex="-1">Owner account</h2>
+        <p id="ownerAccountIdentity"></p>
+        <p class="owner-good">Authenticator MFA enabled</p>
+        <p>This release has one owner account. Staff invitations and custom roles are not enabled.</p>
+        <h3>Signed-in sessions</h3>
+        <p>Signing out other sessions keeps this session active. Previously downloaded information cannot be recalled.</p>
+        <p>Sessions end after 30 minutes of inactivity or eight hours from sign-in, whichever comes first.</p>
+        <ul id="ownerSessionList" class="owner-session-list"></ul>
+        <button type="button" id="ownerRefreshSessions" class="owner-outline">Refresh sessions</button>
+        <form id="ownerSecurityForm" class="owner-form">
+          <h3>Confirm a security change</h3>
+          <label for="ownerCurrentPassword">Current password<input id="ownerCurrentPassword" type="password" maxlength="128" autocomplete="current-password" required></label>
+          <label for="ownerCurrentCode">Fresh authenticator code<input id="ownerCurrentCode" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required></label>
+          <p>A code accepted during sign-in or a previous change cannot be used again. Wait for the next code in your authenticator.</p>
+          <div class="owner-actions">
+            <button type="submit" name="securityAction" value="revoke" class="owner-gold">Sign out other sessions</button>
+            <button type="submit" name="securityAction" value="codes" class="owner-outline">Replace recovery codes</button>
+          </div>
+          <p>Replacing recovery codes invalidates all previous recovery codes.</p>
+        </form>
+        <p id="ownerAccountStatus" class="owner-status" role="status" aria-live="polite"></p>
+      </section>
+
+      <section id="ownerAuditPanel" class="owner-surface" aria-labelledby="ownerAuditHeading" hidden>
+        <h2 id="ownerAuditHeading" tabindex="-1">Audit log</h2>
+        <p>Owner activity and security outcomes. Times are shown in New York time.</p>
+        <form id="ownerAuditFilters" class="owner-audit-filters">
+          <div class="owner-field"><label for="ownerAuditStaff">Staff member</label><select id="ownerAuditStaff"><option value="">All identities</option><option value="owner">Owner account</option></select></div>
+          <div class="owner-field"><label for="ownerAuditAction">Action</label><select id="ownerAuditAction"><option value="">All actions</option></select></div>
+          <label for="ownerAuditFrom">From date<input id="ownerAuditFrom" type="date" min="2000-01-01" max="9999-12-31"></label>
+          <label for="ownerAuditTo">To date<input id="ownerAuditTo" type="date" min="2000-01-01" max="9999-12-31"></label>
+          <button class="owner-gold" type="submit">Apply filters</button>
+        </form>
+        <p id="ownerAuditCoverage" class="owner-muted"></p>
+        <p class="owner-muted">This view contains available stored events. Log collection failures can leave gaps; an empty result does not prove that no activity occurred.</p>
+        <p id="ownerAuditStatus" class="owner-status" role="status" aria-live="polite"></p>
+        <div id="ownerAuditList" class="owner-audit-list"></div>
+        <button type="button" class="owner-outline" id="ownerAuditMore" hidden>Load more activity</button>
+        <p class="owner-muted">A completed payment check is not proof of payment. Export completion means the server finished its stream, not confirmed receipt by a device. Historical shared sessions cannot identify an individual.</p>
+      </section>
+
+      <section id="ownerRecoveryCodesPanel" class="owner-surface owner-recovery-codes" aria-labelledby="ownerRecoveryCodesHeading" hidden>
+        <h2 id="ownerRecoveryCodesHeading" tabindex="-1">Save your recovery codes</h2>
+        <p>These codes are shown once. Store them securely away from this browser. Each code can be used only once. They will disappear when you continue or leave this page.</p>
+        <pre id="ownerRecoveryCodes" class="owner-secret"></pre>
+        <button id="ownerDismissCodes" type="button" class="owner-gold">I have saved my recovery codes</button>
+      </section>
 
       <details id="businessAnalytics" class="booking-card ba" hidden>
         <summary>Business Analytics</summary>
@@ -287,6 +383,7 @@
   <script src="/reservation-self-service.js?v=recovery-1"></script>
   <script src="/admin-reservation-requests.js?v=recovery-1"></script>
   <script src="/dispatch-analytics.js"></script>
+  <script src="/dispatch-owner.js"></script>
   <script src="/admin.js?v=payment-confirmation-1"></script>
 </body>
 </html>

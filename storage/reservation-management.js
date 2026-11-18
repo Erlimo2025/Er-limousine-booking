@@ -145,7 +145,7 @@ function reservationManagementStorage(transaction, safe, validateRecord, queryCl
     }),
 
     decideReservationRequest: (authority, id, status, now, checkApproval) => transaction(async client => {
-      if (!authority?.authorized()) throw new ManagementError(401, 'Sign in to Dispatch.');
+      if (!await authority?.authorized()) throw new ManagementError(401, 'Sign in to Dispatch.');
       const request = (await client.query(
         'SELECT booking_id FROM er_reservation_management_requests WHERE id=$1', [id]
       )).rows[0];
@@ -157,7 +157,7 @@ function reservationManagementStorage(transaction, safe, validateRecord, queryCl
         'SELECT * FROM er_reservation_management_requests WHERE id=$1 FOR UPDATE', [id]
       )).rows[0];
       if (!row || !reservation) throw new ManagementError(404, 'Request unavailable.');
-      if (!authority.authorized()) throw new ManagementError(401, 'Sign in to Dispatch.');
+      if (!await authority.authorized()) throw new ManagementError(401, 'Sign in to Dispatch.');
       if (row.status === status) return row;
       if (row.status !== 'pending') throw new ManagementError(409, 'A decision has already been recorded.');
       if (status === 'approved') {
@@ -166,7 +166,7 @@ function reservationManagementStorage(transaction, safe, validateRecord, queryCl
           throw new ManagementError(409, 'The reservation changed after this request. Decline it and ask the customer to submit a new request.');
         }
         const action = await checkApproval(record, row);
-        if (!authority.authorized()) throw new ManagementError(401, 'Sign in to Dispatch.');
+        if (!await authority.authorized()) throw new ManagementError(401, 'Sign in to Dispatch.');
         if (action?.cancel === true) {
           await assertActionLock(record.checkoutFingerprint || 'reservation:' + record.id);
           if (row.kind !== 'cancellation' || record.status === 'cancelled' || action.proof?.safe !== true ||

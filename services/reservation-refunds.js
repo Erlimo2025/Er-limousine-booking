@@ -122,7 +122,7 @@ function reservationRefunds({store,stripe,now=Date.now,reportFailure=()=>{},meta
   });
  }
  async function recheck(bookingId,authority){
-  if(!managed || !stripe || !authority?.authorized())throw unavailable();
+  if(!managed || !stripe || !await authority?.authorized())throw unavailable();
   return managed.submit(bookingId,authority);
  }
  return {capture,submit,run,webhook,receive,...(managed?{recheck}:{})};

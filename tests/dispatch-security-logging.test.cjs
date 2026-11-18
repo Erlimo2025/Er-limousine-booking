@@ -80,3 +80,17 @@ test('a failed logging sink cannot change the business operation', async () => {
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(calls, 1);
 });
+
+
+test('owner-mode events retain session attribution and add only a validated stable staff reference', () => {
+  const lines = [];
+  const emit = createDispatchSecurityLogger({write: line => lines.push(line), now: () => time});
+  const staffId = randomUUID(), actorId = randomUUID(), referenceId = randomUUID();
+  emit({referenceId, adminArchiveAuthority: {staffId, actorId, name: 'PRIVATE-OWNER-NAME', email: 'PRIVATE-EMAIL'}},
+    'owner_sessions_revoked', 'succeeded');
+  assert.deepEqual(JSON.parse(lines[0]), {timestamp: new Date(time).toISOString(), referenceId, operation: 'admin',
+    category: 'dispatch_security', action: 'owner_sessions_revoked', outcome: 'succeeded', staffId, actorId});
+  emit({referenceId: randomUUID(), dispatchOwner: {id: 'PRIVATE-FORGED-ID'}}, 'owner_recovery', 'denied');
+  assert.equal(Object.hasOwn(JSON.parse(lines[1]), 'staffId'), false);
+  assert.doesNotMatch(lines.join(''), /PRIVATE-/);
+});

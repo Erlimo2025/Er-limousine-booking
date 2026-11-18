@@ -60,16 +60,16 @@ function createTollValidation({enabled = false, key, googleJson, lookupPlace, pa
       departure: new Date(departure).toISOString(), returned: returned === undefined ? null : new Date(returned).toISOString()};
   }
   async function run(input, authority) {
-    const authorize = () => { if (!authority?.authorized?.()) fail('unauthorized'); };
-    authorize();
+    const authorize = async () => { if (!await authority?.authorized?.()) fail('unauthorized'); };
+    await authorize();
     if (!key) fail('unavailable');
     // Resolve each distinct location once. No autocomplete calls are made per keystroke.
     const locations = new Map();
     for (const address of [input.pickup, input.dropoff, ...(input.via ? [input.via] : [])]) {
       if (locations.has(address)) continue;
-      authorize();
+      await authorize();
       const place = await lookupPlace(address, true);
-      authorize();
+      await authorize();
       const state = verifiedState(place);
       if (!state) fail('location');
       locations.set(address, {placeId: place.id, address: place.formattedAddress, state});
@@ -79,7 +79,7 @@ function createTollValidation({enabled = false, key, googleJson, lookupPlace, pa
     const routes = [];
     for (const [direction, from, to, departure] of [['outbound', pickup, dropoff, input.departure],
       ...(input.returned ? [['return', dropoff, pickup, input.returned]] : [])]) {
-      authorize();
+      await authorize();
       const data = await googleJson('https://routes.googleapis.com/directions/v2:computeRoutes', {
         method: 'POST', headers: {'Content-Type': 'application/json', 'X-Goog-Api-Key': key,
           'X-Goog-FieldMask': 'routes.description,routes.distanceMeters,routes.duration,routes.travelAdvisory.tollInfo,routes.legs.steps.navigationInstruction.instructions,routes.warnings'},
@@ -88,7 +88,7 @@ function createTollValidation({enabled = false, key, googleJson, lookupPlace, pa
           travelMode: 'DRIVE', routingPreference: 'TRAFFIC_AWARE', computeAlternativeRoutes: false,
           extraComputations: ['TOLLS'], routeModifiers: {vehicleInfo: {emissionType: input.emissionType}, tollPasses: ['US_NJ_EZPASSNJ']}})
       });
-      authorize();
+      await authorize();
       const route = data?.routes?.[0];
       if (!route || !Number.isFinite(route.distanceMeters) || route.distanceMeters < 0 ||
           typeof route.duration !== 'string' || !/^\d+(?:\.\d{1,9})?s$/.test(route.duration) || !Number.isFinite(Number(route.duration.slice(0, -1)))) fail('provider');
@@ -110,7 +110,7 @@ function createTollValidation({enabled = false, key, googleJson, lookupPlace, pa
   }
   async function estimate(body, authority, client) {
     const input = parse(body);
-    if (!authority?.authorized?.() || typeof authority.actorId !== 'string') fail('unauthorized');
+    if (!await authority?.authorized?.() || typeof authority.actorId !== 'string') fail('unauthorized');
     prune();
     const id = authority.actorId + ':' + input.requestId;
     const signature = crypto.createHash('sha256').update(JSON.stringify(input)).digest('hex');
@@ -134,7 +134,7 @@ function createTollValidation({enabled = false, key, googleJson, lookupPlace, pa
     } finally {
       entry.running = false; entry.expiresAt = now() + ttl;
       activeActors.delete(authority.actorId); activeClients.delete(client);
-      if (!authority.authorized()) cache.delete(id);
+      if (!await authority.authorized()) cache.delete(id);
     }
   }
   return {config, estimate, prune, clear};

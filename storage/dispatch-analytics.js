@@ -315,9 +315,9 @@ function dispatchAnalyticsStorage(transaction) {
       const query = tripQuery(input, false);
       // One cursor preserves the query snapshot and avoids loading an entire export into Node.
       await client.query('DECLARE analytics_trips NO SCROLL CURSOR FOR ' + query.text, query.values);
-      while (active()) {
+      while (await active()) {
         const {rows} = await client.query('FETCH FORWARD 250 FROM analytics_trips');
-        if (!active()) break;
+        if (!await active()) break;
         await write(rows.map(tripView));
         if (rows.length < 250) break;
       }

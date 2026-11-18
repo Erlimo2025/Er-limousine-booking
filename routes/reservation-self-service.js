@@ -167,6 +167,7 @@ function reservationSelfService({app, store, mutation, rateLimit, handle, requir
     if (status !== undefined && status !== 'reconciliation') throw stale();
     const {cursor} = queueOptions(query);
     const rows = await store.listManagedCancellations(cursor, 20, status === 'reconciliation');
+    if (!await req.adminArchiveAuthority.authorized()) return res.status(401).json({error: 'Unauthorized'});
     const page = rows.slice(0, 20);
     const last = page.at(-1);
     const nextCursor = rows.length > page.length ? Buffer.from(JSON.stringify({
@@ -187,9 +188,9 @@ function reservationSelfService({app, store, mutation, rateLimit, handle, requir
       if (!settlement || !Number(settlement.captured_cents)) throw unavailable();
       const admin = req.adminArchiveAuthority;
       const result = await lock(record, async () => {
-        if (!admin.authorized()) throw new ManagementError(401, 'Sign in to Dispatch.');
+        if (!await admin.authorized()) throw new ManagementError(401, 'Sign in to Dispatch.');
         await recheckRefund(record.id, admin);
-        if (!admin.authorized()) throw new ManagementError(401, 'Sign in to Dispatch.');
+        if (!await admin.authorized()) throw new ManagementError(401, 'Sign in to Dispatch.');
         return store.managedCancellation(record.id);
       });
       res.json({cancellation: settlementView(result, record)});

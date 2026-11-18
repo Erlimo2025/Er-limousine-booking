@@ -46,3 +46,13 @@ Named staff accounts, individually revocable access, MFA, separate viewing/expor
 ## Validation
 
 Use the existing synthetic security and analytics fixtures plus the focused formatter tests. PostgreSQL integration tests require a separate, verified loopback test database through `ER_TEST_DATABASE_URL`; never use customer records for these checks. Relevant suites cover attribution, redaction, denials, failed or partially persisted operations, export completion/interruption, existing audit records, customer access and payment behavior. Run the full supported Node test suite before release.
+
+## Owner-only Phase 2 mode (local implementation)
+
+See [Dispatch owner access](dispatch-owner-access.md) for private provisioning, MFA, recovery, database-backed sessions, the owner Audit Log and the staging cutover checklist. When explicitly enabled, this mode rejects the shared login and legacy session authority. Deployment and real owner enrollment require separate authorization.
+
+New owner-mode events retain the non-secret session `actorId` and add a stable `staffId`. Existing shared-session events cannot be retrospectively assigned to an individual. New feature-specific audit rows retain their existing session actor; a durable actor-to-owner mapping preserves the named association after revocation.
+
+Owner authentication and recovery successes are stored with their database transaction. The existing post-persistence operational event sink also appends minimized events to the Audit Log in owner mode, deduplicated by request and action. Network finish and a subsequent database append cannot be atomic: abrupt process/storage failure can leave a collection gap. The application does not label a committed business action failed merely because a later log write failed, and an Audit Log entry does not prove delivery to the downloading device. Existing feature-specific histories remain in their protected workflows.
+
+No automatic audit deletion or retention period is introduced. Security-event retention is a separate owner decision from reservation review checkpoints and ledger markers. Staff invitations, custom roles, individual staff management, and verified Render collection/access/retention remain deferred.
