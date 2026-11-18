@@ -1683,21 +1683,24 @@ test('New audit 3: normal hotel/street bookings remain normal; special vehicle/j
 
 test('New audit 3: autocomplete retains selected identity and manual edits clear it without redesign',()=>{
   const appSource=fs.readFileSync(path.join(root,'public/app.js'),'utf8');
-  const handlers={},input={value:'EWR',dataset:{placeId:booking.pickupPlaceId},addEventListener:(event,fn)=>handlers[event]=fn};
-  const context={pickup:input,dropoff:{},syncPickupTerminal(){},syncDropoffTerminal(){},suggestionTimers:{},clearTimeout(){},setTimeout(){return 1;},specialOfferActive:()=>true};
+  const handlers={},input={value:'EWR',dataset:{placeId:booking.pickupPlaceId},focus(){},addEventListener:(event,fn)=>handlers[event]=fn};
+  const choices=[];
+  const container={
+    parentElement:{addEventListener(){}},contains(){return false;},
+    replaceChildren(){choices.length=0;},appendChild:choice=>choices.push(choice)
+  };
+  const context={pickup:input,dropoff:{},pickupLocation:null,
+    document:{createElement:()=>({addEventListener(event,fn){this[event]=fn;}})},
+    resetQuote(){},syncPickupTerminal(){},syncDropoffTerminal(){},suggestionTimers:{},clearTimeout(){},setTimeout(){return 1;},specialOfferActive:()=>true};
   vm.createContext(context);
-  const start=appSource.indexOf('function enableAddressAutocomplete('),end=appSource.indexOf('/* =========================================',start);
-  vm.runInContext(appSource.slice(start,end),context);context.enableAddressAutocomplete(input,{innerHTML:''},'pickup');
+  const start=appSource.indexOf('function renderSuggestions('),end=appSource.indexOf('/* =========================================',start);
+  vm.runInContext(appSource.slice(start,end),context);
+  context.enableAddressAutocomplete(input,container,'pickup');
   input.value='Hotel';handlers.input();assert.equal(input.dataset.placeId,undefined);
-  const clicks=[],container={innerHTML:'',appendChild:x=>clicks.push(x)};
-  context.document={createElement:()=>({addEventListener(event,fn){this.click=fn;}})};context.resetQuote=()=>{};
-  const renderStart=appSource.indexOf('function renderSuggestions('),renderEnd=appSource.indexOf('function enableAddressAutocomplete(',renderStart);
-  vm.runInContext(appSource.slice(renderStart,renderEnd),context);
   context.renderSuggestions(container,input,[{description:'EWR',placeId:booking.pickupPlaceId}]);
-  clicks[0].click({preventDefault(){}});assert.equal(input.dataset.placeId,booking.pickupPlaceId);assert.equal(input.value,'EWR');
+  choices[0].click();assert.equal(input.dataset.placeId,booking.pickupPlaceId);assert.equal(input.value,'EWR');
   assert.match(appSource,/if \(pickup.dataset.placeId\) data.pickupPlaceId = pickup.dataset.placeId/);
 });
-
 
 test('EWR terminal selector: general/terminal autocomplete, exact dropdown IDs, clearing and mobile placement',()=>{
   const app=fs.readFileSync(path.join(root,'public/app.js'),'utf8');
@@ -1756,21 +1759,24 @@ test('EWR terminal selector: normal Round Trip return routes to same terminal; h
 
 test('EWR drop-off selector: general and A/B/C autocomplete, exact IDs, independent sides, edits and mobile steps',()=>{
   const app=fs.readFileSync(path.join(root,'public/app.js'),'utf8'),handlers={};
-  const makeInput=()=>({value:'',dataset:{},addEventListener(event,fn){this[event]=fn;}});
+  const makeInput=()=>({value:'',dataset:{},focus(){},addEventListener(event,fn){this[event]=fn;}});
   const pickupInput=makeInput(),dropoffInput=makeInput();
   const makeField=()=>({hidden:true,classList:{toggle(name,hide){this.owner.hidden=hide;}}});
   const pickupField=makeField(),dropoffField=makeField();pickupField.classList.owner=pickupField;dropoffField.classList.owner=dropoffField;
   const makeSelect=key=>({value:'',disabled:true,addEventListener(event,fn){handlers[key]=fn;}});
   const pickupSelect=makeSelect('pickup'),dropoffSelect=makeSelect('dropoff');
   const elements={pickupTerminal:pickupSelect,pickupTerminalField:pickupField,dropoff:dropoffInput,dropoffTerminal:dropoffSelect,dropoffTerminalField:dropoffField,bookingStepLabel:{textContent:''},bookingBack:{}};
-  const context={pickup:pickupInput,document:{getElementById:id=>elements[id],createElement:()=>({addEventListener(event,fn){this.click=fn;}})},
+  const context={pickup:pickupInput,document:{getElementById:id=>elements[id],createElement:()=>({addEventListener(event,fn){this[event]=fn;}})},
     resetQuote(){},clearTimeout(){},setTimeout(){},suggestionTimers:{},specialOfferActive:()=>false,
     mobileBooking:{matches:true},bookingPanel:{dataset:{}},reservationBusy:false,tripStep:{},customerStep:{},summaryStep:{},hasCurrentQuote:()=>false,updatePaymentControls(){}};
   vm.createContext(context);vm.runInContext(app.slice(app.indexOf('const pickupTerminalField'),app.indexOf('const dropoffField')),context);
   vm.runInContext(app.slice(app.indexOf('function renderSuggestions('),app.indexOf('async function requestQuote(',app.indexOf('function renderSuggestions('))),context);
-  const rendered=[],container={innerHTML:'',appendChild:x=>rendered.push(x)};
+  const rendered=[],container={
+    parentElement:{addEventListener(){}},contains(){return false;},
+    replaceChildren(){rendered.length=0;},appendChild:choice=>rendered.push(choice)
+  };
   for(const [id,entry] of Object.entries(approvedEwr)) {
-    context.renderSuggestions(container,dropoffInput,[{description:entry.label,placeId:id}]);rendered.at(-1).click({preventDefault(){}});
+    context.renderSuggestions(container,dropoffInput,[{description:entry.label,placeId:id}]);rendered.at(-1).click();
     assert.equal(dropoffField.hidden,false);assert.equal(dropoffSelect.disabled,false);
     assert.equal(dropoffSelect.value,entry.kind==='airport' ? '' : entry.label.slice(-1).toLowerCase());
   }
@@ -1787,7 +1793,7 @@ test('EWR drop-off selector: general and A/B/C autocomplete, exact IDs, independ
   context.showBookingStep(2);context.showBookingStep(1);assert.deepEqual(dropoffInput.dataset,originalDropoff);
   context.enableAddressAutocomplete(dropoffInput,container,'dropoff');dropoffInput.value='Hotel';dropoffInput.input();
   assert.equal(dropoffInput.dataset.placeId,undefined);assert.equal(dropoffField.hidden,true);assert.equal(dropoffSelect.value,'');
-  context.renderSuggestions(container,dropoffInput,[{description:'Hotel',placeId:'hotel_id'}]);rendered.at(-1).click({preventDefault(){}});
+  context.renderSuggestions(container,dropoffInput,[{description:'Hotel',placeId:'hotel_id'}]);rendered.at(-1).click();
   assert.equal(dropoffField.hidden,true);assert.equal(dropoffSelect.disabled,true);
   const html=fs.readFileSync(path.join(root,'public/index.html'),'utf8');
   assert.ok(html.indexOf('id="dropoffTerminalField"')>html.indexOf('id="dropoffSuggestions"'));

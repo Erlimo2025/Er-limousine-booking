@@ -350,7 +350,7 @@ const pickupLocation=typeof createPickupLocation==='function'?createPickupLocati
   input:pickup,button:document.getElementById('currentLocationBtn'),status:document.getElementById('pickupLocationStatus'),
   review:document.getElementById('pickupLocationReview'),proposed:document.getElementById('pickupLocationProposed'),
   confirmButton:document.getElementById('confirmPickupLocation'),editButton:document.getElementById('editPickupLocation'),
-  beforeStart(){pickup._addressGeneration=(pickup._addressGeneration || 0)+1;clearTimeout(suggestionTimers.pickup);pickupSuggestions.innerHTML='';pickupLocation.clearOption();},
+  beforeStart(){if(pickupSuggestions.contains(document.activeElement))pickup.focus();pickup._addressGeneration=(pickup._addressGeneration || 0)+1;clearTimeout(suggestionTimers.pickup);pickupSuggestions.innerHTML='';pickupLocation.clearOption();},
   onSelect(address){pickup._addressGeneration=(pickup._addressGeneration || 0)+1;pickup.value=address.description;delete pickup.dataset.placeId;if(address.placeId)pickup.dataset.placeId=address.placeId;syncPickupTerminal();pickupSuggestions.innerHTML='';pickupLocation.clearOption();resetQuote();}
 }):null;
 form.addEventListener('reset',()=>{if(pickupLocation)pickupLocation.cancel();});
@@ -1040,18 +1040,26 @@ function renderSuggestions(
   suggestions
 ) {
 
-  container.innerHTML = "";
-
-  if(input===pickup && typeof pickupLocation!=='undefined' && pickupLocation)pickupLocation.addOption(container);
+  const focusedOption = document.activeElement;
+  const keepLocation = container.contains(focusedOption) && focusedOption.matches('.current-location-option');
+  if (keepLocation) {
+    for (const child of Array.from(container.children)) {
+      if (child !== focusedOption) child.remove();
+    }
+  } else {
+    container.replaceChildren();
+    if (input === pickup && pickupLocation) pickupLocation.addOption(container);
+  }
 
   suggestions.forEach(
     (item) => {
 
       const suggestion =
         document.createElement(
-          "div"
+          "button"
         );
 
+      suggestion.type = "button";
       suggestion.className =
         "address-suggestion";
 
@@ -1063,11 +1071,11 @@ function renderSuggestions(
       suggestion.textContent =
         description;
 
+      suggestion.addEventListener("mousedown", event => event.preventDefault());
       suggestion.addEventListener(
-        "mousedown",
-        (event) => {
-
-          event.preventDefault();
+        "click",
+        () => {
+          input.focus();
 
           input._addressGeneration=(input._addressGeneration || 0)+1;
           if(input===pickup && typeof pickupLocation!=='undefined' && pickupLocation)pickupLocation.cancel();
@@ -1078,8 +1086,7 @@ function renderSuggestions(
           if (input === pickup) syncPickupTerminal();
           if (input === dropoff) syncDropoffTerminal();
 
-          container.innerHTML =
-            "";
+          container.replaceChildren();
 
           if(input===pickup && typeof pickupLocation!=='undefined' && pickupLocation)pickupLocation.clearOption();
 
@@ -1105,6 +1112,14 @@ function enableAddressAutocomplete(
     return;
   }
 
+  const field = container.parentElement;
+  function closeSuggestions() {
+    input._addressGeneration = (input._addressGeneration || 0) + 1;
+    clearTimeout(suggestionTimers[key]);
+    container.replaceChildren();
+    if (input === pickup && pickupLocation) pickupLocation.clearOption();
+  }
+
   input.addEventListener(
     "input",
     () => {
@@ -1121,15 +1136,8 @@ function enableAddressAutocomplete(
       const query = specialOfferActive() && /^(?:terminal\s+)?[abc]$/i.test(typedQuery)
         ? `Newark Liberty International Airport Terminal ${typedQuery.slice(-1).toUpperCase()}` : typedQuery;
 
-      if (query.length < 3) {
-
-        container.innerHTML =
-          "";
-
-        if(input===pickup && typeof pickupLocation!=='undefined' && pickupLocation)renderSuggestions(container,input,[]);
-
-        return;
-      }
+      renderSuggestions(container, input, []);
+      if (query.length < 3) return;
 
       suggestionTimers[key] =
         setTimeout(
@@ -1140,7 +1148,7 @@ function enableAddressAutocomplete(
                 query
               );
 
-            if(generation!==input._addressGeneration || input.value.trim()!==typedQuery || input._addressFocused===false)return;
+            if(generation!==input._addressGeneration || input.value.trim()!==typedQuery || !field.contains(document.activeElement))return;
 
             renderSuggestions(
               container,
@@ -1153,26 +1161,28 @@ function enableAddressAutocomplete(
     }
   );
 
-  input.addEventListener(
-    "blur",
-    () => {
-      input._addressFocused=false;
-
-      setTimeout(
-        () => {
-          if(input._addressFocused)return;
-
-          container.innerHTML =
-            "";
-          if(input===pickup && typeof pickupLocation!=='undefined' && pickupLocation)pickupLocation.clearOption();
-        },
-        150
-      );
+  field.addEventListener('focusout', event => {
+    if (!field.contains(event.relatedTarget)) closeSuggestions();
+  });
+  input.addEventListener('focus', event => {
+    if (input === pickup && pickupLocation &&
+        (!field.contains(event.relatedTarget) || !container.firstElementChild)) {
+      renderSuggestions(container, input, []);
     }
-  );
-  input.addEventListener('focus',()=>{
-    input._addressFocused=true;
-    if(input===pickup && typeof pickupLocation!=='undefined' && pickupLocation)renderSuggestions(container,input,[]);
+  });
+  field.addEventListener('keydown', event => {
+    if (event.target !== input && !container.contains(event.target)) return;
+    const options = Array.from(container.querySelectorAll('button:not(:disabled)'));
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      input.focus();
+      closeSuggestions();
+    } else if (options.length && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
+      event.preventDefault();
+      const index = options.indexOf(event.target);
+      const next = event.key === 'ArrowDown' ? index + 1 : index < 0 ? options.length - 1 : index - 1;
+      (options[next] || input).focus();
+    }
   });
 }
 
