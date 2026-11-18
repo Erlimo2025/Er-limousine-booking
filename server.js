@@ -49,6 +49,9 @@ function logDiagnostic(req,status,category='request_rejected',provider) {
   if(req.diagnosticTollReason)entry.tollReason=routeTollPricing.failureReason(req.diagnosticTollReason);
   console.error(JSON.stringify(entry));
 }
+const dispatchSecurityEvent=require('./services/dispatch-security-logging').createDispatchSecurityLogger({
+  write:line=>console.error(line),now:()=>Date.now()
+});
 app.use((req,res,next)=>{
   req.referenceId=crypto.randomUUID();
   res.set('X-Request-ID',req.referenceId);
@@ -1814,6 +1817,42 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+// Denials and failed responses are recorded after the existing error diagnostic.
+// Successful mutations are explicitly marked only after their storage promise
+// commits. If a client disconnects during storage work, wait for that work to
+// settle rather than guessing whether a mutation persisted.
+function dispatchAudit(actions) {
+  return (req,res,next)=>{
+    const pending=new Set(typeof actions==='function'?actions(req):[actions]);
+    const recordId=req.params.id;
+    let settled=false;
+    const emit=(action,outcome,options={})=>{
+      if(!pending.delete(action))return;
+      dispatchSecurityEvent(req,action,outcome,{recordId,...options});
+    };
+    const failure=()=>{
+      const outcome=[401,403,429].includes(res.statusCode)?'denied':'failed';
+      for(const action of [...pending])emit(action,outcome);
+    };
+    res.once('finish',()=>{if(res.statusCode>=400)failure();});
+    res.once('close',()=>{if(res.statusCode>=400 || settled)failure();});
+    req.dispatchAudit={emit,settled:()=>{settled=true;if(res.destroyed)failure();}};
+    next();
+  };
+}
+function dispatchAuditedRoute(handler) {
+  return route(async(req,res)=>{
+    try{return await handler(req,res);}
+    finally{req.dispatchAudit?.settled();}
+  });
+}
+function reservationAuditActions(req) {
+  const actions=[];
+  if(req.body?.status)actions.push(req.body.status==='cancelled'?'reservation_cancellation':'reservation_status_update');
+  if(req.body?.dispatch)actions.push('driver_assignment_update');
+  return actions;
+}
+
 
 /* =========================================
    STRIPE WEBHOOK
@@ -2023,7 +2062,7 @@ app.use(
 
 
 /* Admin session credentials are accepted only at login, never on normal APIs. */
-app.post("/api/admin/login", (req, res) => {
+app.post("/api/admin/login", dispatchAudit('dispatch_sign_in'), (req, res) => {
   if (!validAdminOrigin(req) || !req.is("application/json")) {
     return res.status(403).json({error: "Unauthorized"});
   }
@@ -2045,10 +2084,12 @@ app.post("/api/admin/login", (req, res) => {
   if (adminSessions.size >= 2000) return res.status(503).json({error: "Authentication unavailable."});
   const id = crypto.randomBytes(32).toString("base64url");
   const now = Date.now();
+  const auditActorId=crypto.randomUUID();
   adminSessions.set(crypto.createHash("sha256").update(id).digest("hex"), {
-    expiresAt: now + ADMIN_SESSION_ABSOLUTE_MS, lastSeen: now, auditActorId:crypto.randomUUID()
+    expiresAt: now + ADMIN_SESSION_ABSOLUTE_MS, lastSeen: now, auditActorId
   });
   res.cookie(adminCookieName, id, {...adminCookieOptions, maxAge: ADMIN_SESSION_ABSOLUTE_MS});
+  req.dispatchAudit.emit('dispatch_sign_in','succeeded',{actorId:auditActorId});
   res.json({authenticated: true});
 });
 
@@ -2068,7 +2109,7 @@ app.get("/api/admin/session", (req, res) => {
   return res.json({authenticated: true, expiresAt, serverNow});
 });
 require('./routes/dispatch-analytics').installDispatchAnalytics(app,{
-  store:reservationStore,route,rateLimit,requireAdmin,siteUrl:SITE_URL,now:()=>Date.now()
+  store:reservationStore,route,rateLimit,requireAdmin,siteUrl:SITE_URL,now:()=>Date.now(),securityEvent:dispatchSecurityEvent
 });
 
 app.get('/api/admin/toll-validation/config',requireAdmin,(req,res)=>res.json(adminTollValidation.config()));
@@ -2092,13 +2133,15 @@ app.post('/api/admin/toll-validation/estimate',requireAdmin,async(req,res)=>{
   }
 });
 
-app.post("/api/admin/logout", (req, res) => {
+app.post("/api/admin/logout", dispatchAudit('dispatch_logout'), (req, res) => {
   if (!validAdminOrigin(req) || !req.is("application/json")) {
     return res.status(403).json({error: "Unauthorized"});
   }
   const key = adminSessionKey(req);
+  const actorId=key && adminSessions.get(key)?.auditActorId;
   if (key) {adminTollValidation.clear(adminSessions.get(key)?.auditActorId);adminSessions.delete(key);}
   clearAdminCookie(res);
+  req.dispatchAudit.emit('dispatch_logout',actorId?'succeeded':'unchanged',{actorId});
   res.json({authenticated: false});
 });
 
@@ -2439,7 +2482,7 @@ const reconciliationTimer=setInterval(()=>runFirstRideReconciliation().catch(()=
 }),5*MINUTE);
 reconciliationTimer.unref();
 
-app.post('/api/bookings/:id/reconcile',requireAdmin,rateLimit('admin-reconciliation',10),route(async(req,res)=>{
+app.post('/api/bookings/:id/reconcile',dispatchAudit('payment_recheck'),requireAdmin,rateLimit('admin-reconciliation',10),dispatchAuditedRoute(async(req,res)=>{
   if (req.get('origin') !== new URL(SITE_URL).origin ||
       !req.is('application/json') || !req.body || Array.isArray(req.body) || Object.keys(req.body).length) {
     return res.status(403).json({error:'Invalid request.'});
@@ -2448,6 +2491,9 @@ app.post('/api/bookings/:id/reconcile',requireAdmin,rateLimit('admin-reconciliat
   if (!booking) return res.status(404).json({error:'Booking not found.'});
   if (booking.quote.promotion?.code === 'FIRST15') await reconcileFirstRide(booking.id);
   else await paymentConfirmationRecovery.check(booking);
+  // Completion means the check (including any awaited persistence) finished;
+  // it is not evidence that the provider paid or that a mutation was necessary.
+  req.dispatchAudit.emit('payment_recheck','completed',{recordId:booking.id});
   res.json({ok:true});
 }));
 
@@ -2523,7 +2569,7 @@ async function runReservationRefunds(){
   await runBookingEmails();
 }
 const refundTimer=setInterval(()=>{void runReservationRefunds().catch(()=>logDiagnostic({referenceId:crypto.randomUUID()},503,'provider_error','stripe'));},60000);refundTimer.unref();
-async function cancelUnderLock(booking,abandoned=false){
+async function cancelUnderLock(booking,abandoned=false,afterPersist){
  if(booking.status==='cancelled')return true;
  const a=booking.checkoutAttempt;
  let safe=!booking.stripeSessionId && (!a || a.firstSubmittedAt===null && a.submissionCount===0),review=false;
@@ -2533,12 +2579,13 @@ async function cancelUnderLock(booking,abandoned=false){
   if(abandoned && !safe)return false;
  }else if(!safe){if(abandoned)return false;review=true;}
  if(booking.paymentStatus==='paid'){if(abandoned)return false;review=true;}
- await reservationStore.update(booking.id,r=>{
+ const updated=await reservationStore.update(booking.id,r=>{
   if(abandoned && r.paymentStatus==='paid')return;
   r.status='cancelled';r.cancellationReason=abandoned?'first15_hold_expired':'admin_cancelled';
   if(review || r.paymentStatus==='paid')r.paymentReviewRequired=true;
   if(safe && r.checkoutAttempt && r.paymentStatus!=='paid')Object.assign(r.checkoutAttempt,{state:'confirmed_unpaid',evidence:'verified_cancelled_unpaid',lastReconciledAt:Date.now()});
  });
+ if(updated && afterPersist)afterPersist();
  return true;
 }
 async function expireDeferredUnderLock(booking){
@@ -3008,9 +3055,10 @@ for(const action of ['archive','restore'])app.post('/api/bookings/:id/'+action,r
 app.patch(
   "/api/bookings/:id",
 
+  dispatchAudit(reservationAuditActions),
   requireAdmin,
 
-  route(async (req, res) => {
+  dispatchAuditedRoute(async (req, res) => {
     const allowedStatuses = [
       "awaiting_payment",
       "confirmed",
@@ -3023,12 +3071,17 @@ app.patch(
 
     const initial=await reservationStore.get(req.params.id);
     if(!initial)return res.status(404).json({error:'Booking not found.'});
+    let statusChanged=false,driverChanged=false;
     const mutate=async()=>{
     if(req.body.status && !['cancelled','completed'].includes(req.body.status) && (await reservationStore.adminArchiveState(req.params.id))?.archived_at)throw Object.assign(new Error('Restore this trip before reactivating dispatch.'),{status:409});
     if(req.body.status && req.body.status!=='cancelled' && initial.status==='cancelled' &&
       await reservationStore.managedCancellation?.(initial.id))throw Object.assign(new Error('Trip update unavailable. Please refresh and try again.'),{status:409});
-    if(req.body.status==='cancelled')await cancelUnderLock(await reservationStore.get(req.params.id));
-    return reservationStore.update(req.params.id, async booking => {
+    if(req.body.status==='cancelled'){
+      const fresh=await reservationStore.get(req.params.id);
+      await cancelUnderLock(fresh,false,()=>req.dispatchAudit.emit('reservation_cancellation','succeeded',{recordId:fresh.id}));
+      if(fresh.status==='cancelled')req.dispatchAudit.emit('reservation_cancellation','unchanged',{recordId:fresh.id});
+    }
+    const updated=await reservationStore.update(req.params.id, async booking => {
     if (req.body.status) {
       if (
         !allowedStatuses.includes(
@@ -3038,11 +3091,13 @@ app.patch(
         throw Object.assign(new Error("Invalid status."),{status:400});
       }
 
+      statusChanged=booking.status!==req.body.status;
       booking.status =
         req.body.status;
     }
 
     if (req.body.dispatch) {
+      const previous=booking.dispatch;
       booking.dispatch = {
         driver:
           sanitizeText(
@@ -3076,6 +3131,7 @@ app.patch(
             30
           )
       };
+      driverChanged=['driver','driverPhone','vehicle','plate'].some(key=>previous?.[key]!==booking.dispatch[key]);
     }
 
     booking.updatedAt =
@@ -3083,6 +3139,12 @@ app.patch(
         .toISOString();
 
     },req.body.status==='completed'?{reviewCompletion:{authority:req.adminArchiveAuthority,now:Date.now()}}:{});
+    if(updated){
+      if(req.body.status)req.dispatchAudit.emit(req.body.status==='cancelled'?'reservation_cancellation':'reservation_status_update',
+        statusChanged?'succeeded':'unchanged',{recordId:updated.id});
+      if(req.body.dispatch)req.dispatchAudit.emit('driver_assignment_update',driverChanged?'succeeded':'unchanged',{recordId:updated.id});
+    }
+    return updated;
     };
     const booking=req.body.status?await reservationStore.withActionLock(paymentActionKey(initial),mutate):await mutate();
     if (!booking) return res.status(404).json({error:"Booking not found."});

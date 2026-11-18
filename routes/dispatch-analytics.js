@@ -3,8 +3,27 @@
 const {summaryInput, tripsInput, csvHeader, csvTrip} = require('../services/dispatch-analytics');
 const endpoint = '/api/admin/business-analytics';
 
-function installDispatchAnalytics(app, {store, route, rateLimit, requireAdmin, siteUrl, now}) {
+function installDispatchAnalytics(app, {store, route, rateLimit, requireAdmin, siteUrl, now, securityEvent}) {
   const origin = new URL(siteUrl).origin;
+  const exportAudit = Symbol('financial-csv-audit');
+  function observeExport(req, res, next) {
+    const state = {authorized: false, ready: false, failed: false, recorded: false};
+    req[exportAudit] = state;
+    const record = outcome => {
+      if (state.recorded) return;
+      state.recorded = true;
+      // Logging must not change export authorization, content or transport behavior.
+      try { securityEvent?.(req, 'financial_csv_export', outcome); } catch (_) {}
+    };
+    res.once('finish', () => {
+      if (state.failed) return record('failed');
+      if ([401, 403, 429].includes(res.statusCode)) return record(state.authorized ? 'interrupted' : 'denied');
+      if (req.aborted) return record('interrupted');
+      record(state.ready && res.statusCode < 400 ? 'completed' : 'failed');
+    });
+    res.once('close', () => record(state.failed ? 'failed' : 'interrupted'));
+    next();
+  }
   function privateRead(req, res, next) {
     res.set({
       'Cache-Control': 'no-store',
@@ -39,28 +58,36 @@ function installDispatchAnalytics(app, {store, route, rateLimit, requireAdmin, s
   app.get(endpoint + '/trips', ...protect(45, async (req, res) => {
     reply(req, res, await store.dispatchAnalyticsTrips(tripsInput(req.query, now())));
   }));
-  app.get(endpoint + '/trips.csv', ...protect(4, async (req, res) => {
-    const input = tripsInput(req.query, now(), true);
-    let started = false;
-    const active = () => !res.destroyed && !req.aborted && sessionActive(req);
-    await store.exportDispatchAnalyticsTrips(input, active, async rows => {
-      if (!active()) return;
-      const chunk = (started ? '' : csvHeader) + rows.map(csvTrip).join('');
-      if (!started) {
-        res.set('Content-Type', 'text/csv; charset=utf-8');
-        res.attachment('er-dispatch-trips-' + input.from + '_' + input.to + '.csv');
-        started = true;
-      }
-      if (chunk) await new Promise((resolve, reject) => {
-        res.write(chunk, error => error ? reject(error) : resolve());
+  app.get(endpoint + '/trips.csv', observeExport, ...protect(4, async (req, res) => {
+    const audit = req[exportAudit];
+    audit.authorized = true;
+    try {
+      const input = tripsInput(req.query, now(), true);
+      let started = false;
+      const active = () => !res.destroyed && !req.aborted && sessionActive(req);
+      await store.exportDispatchAnalyticsTrips(input, active, async rows => {
+        if (!active()) return;
+        const chunk = (started ? '' : csvHeader) + rows.map(csvTrip).join('');
+        if (!started) {
+          res.set('Content-Type', 'text/csv; charset=utf-8');
+          res.attachment('er-dispatch-trips-' + input.from + '_' + input.to + '.csv');
+          started = true;
+        }
+        if (chunk) await new Promise((resolve, reject) => {
+          res.write(chunk, error => error ? reject(error) : resolve());
+        });
       });
-    });
-    if (res.destroyed) return;
-    if (!sessionActive(req)) {
-      if (started) return res.destroy();
-      return res.status(401).json({error: 'Unauthorized'});
+      if (res.destroyed) return;
+      if (!sessionActive(req)) {
+        if (started) return res.destroy();
+        return res.status(401).json({error: 'Unauthorized'});
+      }
+      audit.ready = true;
+      res.end();
+    } catch (error) {
+      audit.failed = true;
+      throw error;
     }
-    res.end();
   }));
 }
 
