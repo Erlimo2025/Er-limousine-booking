@@ -83,9 +83,41 @@ test('same-state NJ and NY trips waive real or unknown road tolls, even without 
  }
 });
 
-test('state eligibility ignores forged browser state/ID JSON and uses the very same verified IDs for routing',async t=>{
- const h=await fixture(t),r=await h.request('/api/quote',{...normal,pickupState:'NJ',dropoffState:'NJ',pickupPlaceId:'forged_nj',dropoffPlaceId:ids.newark,verifiedLocations:{pickupState:'NJ',dropoffState:'NJ'},tolls:{eligibility:{pickupState:'NJ',dropoffState:'NJ'}}});
+function assertAddressRejected(response,field){
+  assert.equal(response.status,400);
+  assert.equal(response.body.code,'ADDRESS_VERIFICATION_FAILED');
+  assert.equal(response.body.field,field);
+  assert.match(response.body.error,new RegExp((field==='dropoff'?'drop-off':'pickup')+' location.*address suggestions.*try again','i'));
+  assert.equal(response.body.checkoutAllowed,false);
+  for(const key of ['total','totalCents','quoteApproval','quoteRevision','pricingBreakdown','tolls','tollStatus'])assert.equal(response.body[key],undefined,key);
+}
+
+test('forged selected pickup or drop-off IDs fail closed with field-specific guidance and no usable quote',async t=>{
+  for(const field of ['pickup','dropoff']){
+    const h=await fixture(t),forgedId='forged_'+field;
+    h.state.detailsById={
+      [ids.newark]:place('NJ',ids.newark,normal.pickup),
+      [ids.midtown]:place('NY',ids.midtown,normal.dropoff),
+      [forgedId]:place('NJ','different_verified_identity','Provider-verified Newark, NJ')
+    };
+    const trip={...normal,pickupPlaceId:ids.newark,dropoffPlaceId:ids.midtown,
+      [field+'PlaceId']:forgedId,pickupState:'NJ',dropoffState:'NJ',tolls:{status:'waived',amountCents:0}};
+    for(const endpoint of ['/api/quote','/api/checkout'])assertAddressRejected(await h.request(endpoint,{...trip,paymentChoice:'later'}),field);
+    assert.equal(h.state.routes.length,0);assert.equal(h.records().length,0);assert.equal(h.state.creates.length,0);
+  }
+});
+
+test('valid selected addresses ignore forged browser state and toll claims and use the same verified IDs for routing',async t=>{
+  const h=await fixture(t);
+  h.state.detailsById={
+    [ids.newark]:place('NJ',ids.newark,normal.pickup),
+    [ids.midtown]:place('NY',ids.midtown,normal.dropoff)
+  };
+  const r=await h.request('/api/quote',{...normal,pickupState:'NJ',dropoffState:'NJ',pickupPlaceId:ids.newark,dropoffPlaceId:ids.midtown,
+    verifiedLocations:{pickupState:'NJ',dropoffState:'NJ'},tolls:{status:'waived',amountCents:0,eligibility:{pickupState:'NJ',dropoffState:'NJ'}}});
  assert.equal(r.status,200);assert.equal(r.body.total,100.79);assert.equal(r.body.tolls.eligibility.pickupState,'NJ');assert.equal(r.body.tolls.eligibility.dropoffState,'NY');assert.equal(h.state.routes[0].origin.placeId,ids.newark);assert.equal(h.state.routes[0].destination.placeId,ids.midtown);
+  assert.equal(r.body.tolls.amountCents,2079);assert.equal(r.body.pricingBreakdown.tollsCents,2079);
+  assert.equal(h.records().length,0);assert.equal(h.state.creates.length,0);
  const misleading=await fixture(t);misleading.state.searchResults[normal.dropoff]=[place('NJ',ids.trenton,'Provider-verified Trenton, NJ')];const q=await misleading.request('/api/quote',normal);assert.equal(q.status,200);assert.equal(q.body.tolls.status,'waived');assert.equal(misleading.state.routes[0].destination.placeId,ids.trenton);
 });
 
@@ -99,7 +131,7 @@ test('missing, ambiguous, foreign, conflicting or malformed provider state evide
  const noCountry=copy();noCountry.addressComponents=noCountry.addressComponents.filter(item=>!item.types.includes('country'));
  for(const places of [[],[valid,place('NJ',ids.trenton,'Trenton, NJ')],[missing],[duplicate],[foreign],[invalid],[badPoint],[noCountry]]){
   const h=await fixture(t);h.state.searchResults[normal.dropoff]=places;
-  for(const endpoint of ['/api/quote','/api/checkout']){const r=await h.request(endpoint,{...normal,dropoffState:'NJ',paymentChoice:'later'});assert.equal(r.status,422);assert.equal(r.body.code,'TOLL_ESTIMATE_UNAVAILABLE');assert.equal(r.body.checkoutAllowed,false);}
+  for(const endpoint of ['/api/quote','/api/checkout'])assertAddressRejected(await h.request(endpoint,{...normal,dropoffState:'NJ',paymentChoice:'later'}),'dropoff');
   assert.equal(h.state.routes.length,0);assert.equal(h.records().length,0);assert.equal(h.state.creates.length,0);
  }
 });

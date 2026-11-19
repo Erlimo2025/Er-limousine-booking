@@ -1671,9 +1671,13 @@ test('New audit 3: changed identity, ambiguity, inconsistent details and provide
 test('New audit 3: normal hotel/street bookings remain normal; special vehicle/journey/Manhattan rules unchanged',async t=>{
   for(const pickup of ['Newark Airport Hotel','Nearby Street','Rental Car Facility','Airport Parking']) {
     const h=await harness(t);h.state.pickupResults=[airportResult('hotel_id',{types:['hotel']})];
+    const selectedPlace=airportResult('hotel_id',{types:['hotel'],formattedAddress:pickup+', Newark, NJ',
+      addressComponents:[{types:['country'],shortText:'US'},{types:['administrative_area_level_1'],shortText:'NJ'}]});
+    h.state.detailsById={hotel_id:selectedPlace};
     const result=await h.request('/api/checkout',{...booking,pickup,pickupPlaceId:'hotel_id'});
     assert.equal(result.status,200);assert.equal(h.state.creates[0].params.line_items[0].price_data.unit_amount,10000);
-    assert.equal(h.state.routes[0].origin.address,pickup);
+    assert.deepEqual(h.state.routes[0].origin,{placeId:'hotel_id'});
+    assert.equal(h.records()[0].trip.pickup,selectedPlace.formattedAddress);
   }
   for(const change of [{vehicle:'escalade'},{tripType:'hourly',hours:3},
     {tripType:'roundtrip',returnDate:'2026-11-11',returnTime:'12:00'},{dropoff:'Outside Manhattan'}]) {

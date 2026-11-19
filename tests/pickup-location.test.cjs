@@ -9,7 +9,9 @@ test('reverse geocoding returns only a readable address and compatible ID, uses 
  const result=await reverse(h);assert.equal(result.status,200);assert.deepEqual(result.body,{description:'1 Market St, Newark, NJ 07102, USA',placeId:'ChIJ_reverse_street'});assert.equal(upstream.hostname,'maps.googleapis.com');assert.equal(upstream.searchParams.get('key'),'mock-google-key');assert.equal(upstream.searchParams.get('latlng'),coordinates.latitude+','+coordinates.longitude);
  assert.equal(h.state.googleCalls,1);assert.equal(h.state.timeoutMs,8000);assert.match(result.headers.get('cache-control'),/no-store/);assert.equal(result.headers.get('referrer-policy'),'no-referrer');
  assert.deepEqual(h.records(),[]);assert.equal(h.state.creates.length,0);assert.equal((await h.request('/api/address-suggestions?q=Market')).status,200);
- const quoted=await h.request('/api/quote',{...booking,pickup:result.body.description,pickupPlaceId:result.body.placeId});assert.equal(quoted.status,200);assert.equal(quoted.body.total,100);assert.equal(quoted.body.fixedOffer,null);assert.equal(h.state.routes.at(-1).origin.address,result.body.description);
+ h.state.detailsById={...h.state.detailsById,[result.body.placeId]:{id:result.body.placeId,formattedAddress:result.body.description,
+  location:{...coordinates},addressComponents:[{types:['country'],shortText:'US'},{types:['administrative_area_level_1'],shortText:'NJ'}]}};
+ const quoted=await h.request('/api/quote',{...booking,pickup:result.body.description,pickupPlaceId:result.body.placeId});assert.equal(quoted.status,200);assert.equal(quoted.body.total,100);assert.equal(quoted.body.fixedOffer,null);assert.deepEqual(h.state.routes.at(-1).origin,{placeId:result.body.placeId});assert.equal(quoted.body.verifiedAddresses.pickup,result.body.description);
  const logs=h.state.logs.join('\n');for(const privateValue of [String(coordinates.latitude),String(coordinates.longitude),'mock-google-key'])assert.ok(!logs.includes(privateValue));
  assert.ok(!JSON.stringify(result.body).includes('geometry'));
 });
