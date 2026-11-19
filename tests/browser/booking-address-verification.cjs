@@ -162,10 +162,11 @@ test('an ordinary drop-off retains its verified place name in summary and reserv
   assert.equal(saved.trip.dropoffPlaceId, session.places.dropoff.id);
 });
 
-for (const mode of ['missing', 'already included']) {
+for (const mode of ['missing', 'already included', 'oversized']) {
   test(`a ${mode} place name uses the same unduplicated summary and saved address`, {timeout:35000}, async t => {
     const session = await setup(t, 390);
     if (mode === 'missing') delete session.places.pickup.displayName;
+    else if (mode === 'oversized') session.places.pickup.displayName = {text:'N'.repeat(180)};
     else session.places.pickup.formattedAddress = 'NEWARK PENN STATION, ' + session.places.pickup.formattedAddress;
     const expected = session.places.pickup.formattedAddress;
     await customerStep(session);
@@ -173,7 +174,7 @@ for (const mode of ['missing', 'already included']) {
     await successfulSummary(session, result);
     assert.equal(await session.page.locator('#sumPickup').innerText(), expected);
     assert.equal(result.body.verifiedAddresses.pickup, expected);
-    assert.equal((expected.match(/newark penn station/gi) || []).length, mode === 'missing' ? 0 : 1);
+    assert.equal((expected.match(/newark penn station/gi) || []).length, mode === 'already included' ? 1 : 0);
     const saved = await savePayLater(session, result);
     assert.equal(saved.trip.pickup, expected);
     assert.equal(saved.trip.pickupPlaceId, session.places.pickup.id);

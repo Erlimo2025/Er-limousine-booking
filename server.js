@@ -929,8 +929,9 @@ function verifiedBookingAddress(proof) {
   if (!proof.name) return proof.address;
   const normalize = value => value.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
   const name = normalize(proof.name);
-  return name && ` ${normalize(proof.address)} `.includes(` ${name} `)
-    ? proof.address : `${proof.name}, ${proof.address}`;
+  if (name && ` ${normalize(proof.address)} `.includes(` ${name} `)) return proof.address;
+  const namedAddress = `${proof.name}, ${proof.address}`;
+  return namedAddress.length > 200 ? proof.address : namedAddress;
 }
 
 async function verifyTollLocation(text, airportProof, field = 'pickup') {

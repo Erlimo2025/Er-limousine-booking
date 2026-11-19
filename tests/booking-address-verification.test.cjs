@@ -109,9 +109,37 @@ test('selected place names also survive stopped-trip summaries and saved endpoin
   assert.equal(record.quote.totalCents,reviewed.body.totalCents);assert.equal(h.state.creates.length,0);
 });
 
-test('an oversized combined label cannot silently truncate the saved street address',async t=>{
-  const {h,input,places}=await fixture(t);places.pickup.displayName={text:'N'.repeat(180)};
-  rejected(await quote(h,input),'pickup');noWrites(h);
+for(const field of ['pickup','dropoff'])for(const length of [200,201])test(`a ${length}-character ${field} label preserves the full verified street address`,async t=>{
+  const {h,input,places}=await fixture(t,{destination:'ordinary'}),place=places[field];
+  place.displayName={text:'N'.repeat(length-place.formattedAddress.length-2)};
+  const combined=place.displayName.text+', '+place.formattedAddress;
+  assert.equal(combined.length,length);
+  const expected=length>200?place.formattedAddress:combined;
+  const reviewed=await quote(h,input);assertOK(reviewed);
+  assert.equal(reviewed.body.verifiedAddresses[field],expected);
+  assert.equal(reviewed.body.pricingBreakdown.tollsCents,0);
+  const saved=await h.request('/api/checkout',{...input,paymentChoice:'later',quoteRevision:reviewed.body.quoteRevision});assertOK(saved);
+  const record=h.records()[0];
+  assert.equal(record.trip[field],expected);assert.equal(record.trip[field+'PlaceId'],place.id);
+  assert.equal(record.quote.totalCents,reviewed.body.totalCents);
+  assert.ok(h.state.routes.every(route=>route[field==='pickup'?'origin':'destination'].placeId===place.id));
+  assert.equal(h.state.creates.length,0);
+});
+
+test('an oversized place name uses the full verified address in stopped-trip summaries and saved reservations',async t=>{
+  const {h,input,places}=await fixture(t,{destination:'ordinary',stops:true});
+  places.pickup.displayName={text:'N'.repeat(180)};
+  const expected=places.pickup.formattedAddress;
+  const reviewed=await quote(h,input);assertOK(reviewed);
+  assert.equal(reviewed.body.stopSummary.pickup,expected);
+  assert.equal(reviewed.body.verifiedAddresses.pickup,expected);
+  assert.equal(reviewed.body.pricingBreakdown.tollsCents,0);
+  const saved=await h.request('/api/checkout',{...input,paymentChoice:'later',quoteRevision:reviewed.body.quoteRevision});assertOK(saved);
+  const record=h.records()[0];
+  assert.equal(record.trip.pickup,expected);assert.equal(record.quote.stopPlan.origin.address,expected);
+  assert.equal(record.quote.totalCents,reviewed.body.totalCents);
+  assert.ok(h.state.routes.every(route=>route.origin.placeId===places.pickup.id));
+  assert.equal(h.state.creates.length,0);
 });
 
 test('selected NY drop-off remains NY and preserves NJ-to-NYC toll calculations',async t=>{
