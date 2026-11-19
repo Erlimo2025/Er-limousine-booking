@@ -1671,7 +1671,7 @@ test('New audit 3: changed identity, ambiguity, inconsistent details and provide
 test('New audit 3: normal hotel/street bookings remain normal; special vehicle/journey/Manhattan rules unchanged',async t=>{
   for(const pickup of ['Newark Airport Hotel','Nearby Street','Rental Car Facility','Airport Parking']) {
     const h=await harness(t);h.state.pickupResults=[airportResult('hotel_id',{types:['hotel']})];
-    const selectedPlace=airportResult('hotel_id',{types:['hotel'],formattedAddress:pickup+', Newark, NJ',
+    const selectedPlace=airportResult('hotel_id',{types:['hotel'],displayName:{text:pickup},formattedAddress:pickup+', Newark, NJ',
       addressComponents:[{types:['country'],shortText:'US'},{types:['administrative_area_level_1'],shortText:'NJ'}]});
     h.state.detailsById={hotel_id:selectedPlace};
     const result=await h.request('/api/checkout',{...booking,pickup,pickupPlaceId:'hotel_id'});

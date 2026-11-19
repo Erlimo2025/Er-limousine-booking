@@ -25,11 +25,11 @@ test.after(async () => {
 async function setup(t, width) {
   const {h, input} = await create(t, {...cases[0], id:'pickup_confirmation', pickup:detected});
   const [originalPlace] = h.state.searchResults[detected];
-  h.state.searchResults[corrected] = [{...originalPlace, id:'ChIJ_corrected_server', formattedAddress:corrected}];
+  h.state.searchResults[corrected] = [{...originalPlace, id:'ChIJ_corrected_server', displayName:{text:corrected}, formattedAddress:corrected}];
   h.state.detailsById = {
     ...h.state.detailsById,
     ChIJ_reverse_street:{...originalPlace, id:'ChIJ_reverse_street', formattedAddress:detected},
-    ChIJ_corrected_selection:{...originalPlace, id:'ChIJ_corrected_selection', formattedAddress:corrected}
+    ChIJ_corrected_selection:{...originalPlace, id:'ChIJ_corrected_selection', displayName:{text:corrected}, formattedAddress:corrected}
   };
   const mobile = width < 650;
   const context = await browser.newContext({

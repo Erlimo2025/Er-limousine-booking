@@ -907,7 +907,7 @@ async function verifySelectedBookingLocation(id, field) {
   try {
     place = await googleJson('https://places.googleapis.com/v1/places/' + encodeURIComponent(id), {
       headers: {'X-Goog-Api-Key': process.env.GOOGLE_MAPS_API_KEY,
-        'X-Goog-FieldMask': 'id,formattedAddress,addressComponents,location'}
+        'X-Goog-FieldMask': 'id,displayName,formattedAddress,addressComponents,location'}
     });
   } catch (error) {
     throw bookingAddressError(field, ![400, 404].includes(error.googleStatus));
@@ -915,12 +915,22 @@ async function verifySelectedBookingLocation(id, field) {
   try {
     const verified = verifiedRoutePlace(place);
     if (verified.placeId !== id || !bookingStops.address(verified.address)) throw new Error();
-    return Object.defineProperty({...verified, selectedPlace: true}, 'addressComponents', {value: place.addressComponents});
+    const name = typeof place.displayName?.text === 'string' ? place.displayName.text.trim() : '';
+    const proof = {...verified, selectedPlace: true, ...(name ? {name} : {})};
+    // Summary and storage share the existing address limit; never truncate a
+    // verified street address to make room for a place name.
+    if (!bookingStops.address(verifiedBookingAddress(proof))) throw new Error();
+    return Object.defineProperty(proof, 'addressComponents', {value: place.addressComponents});
   } catch (_) { throw bookingAddressError(field); }
 }
 
 function verifiedBookingAddress(proof) {
-  return proof.selectedPlace ? proof.address : `${proof.label}, ${proof.address}`;
+  if (!proof.selectedPlace) return `${proof.label}, ${proof.address}`;
+  if (!proof.name) return proof.address;
+  const normalize = value => value.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  const name = normalize(proof.name);
+  return name && ` ${normalize(proof.address)} `.includes(` ${name} `)
+    ? proof.address : `${proof.name}, ${proof.address}`;
 }
 
 async function verifyTollLocation(text, airportProof, field = 'pickup') {
@@ -1595,7 +1605,8 @@ async function calculateQuote(body,req) {
   if (verifiedPickup) Object.defineProperty(normalQuote,"verifiedPickup",{value:verifiedPickup});
   if (verifiedDropoff) Object.defineProperty(normalQuote,"verifiedDropoff",{value:verifiedDropoff});
   if (stopJourney) {
-    bookingStops.addWaiting(normalQuote, bookingStops.buildPlan(stopJourney.origin,stopJourney.destination,stopJourney.stops,departure,waiting));
+    const displayEndpoint = point => point.selectedPlace ? {...point, address:verifiedBookingAddress(point)} : point;
+    bookingStops.addWaiting(normalQuote, bookingStops.buildPlan(displayEndpoint(stopJourney.origin),displayEndpoint(stopJourney.destination),stopJourney.stops,departure,waiting));
     if (nonstopOfferExcluded) Object.defineProperty(normalQuote,'nonstopOfferExcluded',{value:true});
   }
   // Hourly bookings have no complete route. Preserve their existing fare and
@@ -2422,7 +2433,7 @@ function quoteForReview(req, res, fingerprint, quote) {
   const {stopPlan: _privateStopPlan, stopQuoteRevision, ...displayQuote} = routeTollPricing.customerQuote(quote);
   const verifiedAddresses = Object.fromEntries(['pickup', 'dropoff'].flatMap(field => {
     const proof = quote[field === 'pickup' ? 'verifiedPickup' : 'verifiedDropoff'];
-    return proof?.selectedPlace ? [[field, proof.address]] : [];
+    return proof?.selectedPlace ? [[field, verifiedBookingAddress(proof)]] : [];
   }));
   return {...displayQuote, ...bookingStops.publicSummary(quote),
     ...(Object.keys(verifiedAddresses).length ? {verifiedAddresses} : {}),

@@ -1,8 +1,8 @@
 'use strict';
 
-// Quote-only browser regressions: synthetic locations and mocked providers.
+// Browser regressions: synthetic locations, Pay Later records, mocked providers.
 // Run with ER_TEST_BOOKING_ENGINE=chromium or webkit and the existing browser
-// executable/module variables. No booking, payment, email, or live provider call.
+// executable/module variables. No live booking, payment, email, or provider call.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {fixture} = require('../helpers/selected-booking-locations.cjs');
@@ -107,8 +107,26 @@ async function rejectedSummary(session, result, field, unavailable = false) {
   assert.equal(h.state.creates.length, 0);
 }
 
+async function savePayLater(session, reviewed) {
+  const {page, h} = session;
+  const pending = page.waitForResponse(response => response.url() === h.url + '/api/checkout' && response.request().method() === 'POST');
+  await page.locator('#payLaterBtn').scrollIntoViewIfNeeded();
+  await page.locator('#payLaterBtn').click();
+  const response = await pending;
+  assert.equal(response.status(), 200);
+  assert.equal(h.records().length, 1);
+  const saved = h.records()[0];
+  assert.ok(saved);
+  await page.waitForURL(url => url.origin === h.url && url.pathname === '/success.html' && url.searchParams.get('booking') === saved.id);
+  assert.equal(saved.paymentStatus, 'unpaid');
+  assert.equal(saved.quote.totalCents, reviewed.body.totalCents);
+  assert.equal(saved.quote.pricingBreakdown.tollsCents, 0);
+  assert.equal(h.state.creates.length, 0);
+  return saved;
+}
+
 for (const width of [390, 1440]) {
-  test(`selected Newark Penn Station reaches a zero-toll EWR summary despite two text matches at ${width}px`, {timeout:35000}, async t => {
+  test(`selected Newark Penn Station retains its verified name in summary and reservation at ${width}px`, {timeout:35000}, async t => {
     const session = await setup(t, width);
     await customerStep(session);
     const result = await quote(session);
@@ -116,22 +134,51 @@ for (const width of [390, 1440]) {
     assert.equal(result.sent.pickupPlaceId, session.places.pickup.id);
     assert.deepEqual(session.h.state.routes.at(-1).origin, {placeId:session.places.pickup.id});
     assert.deepEqual(session.h.state.routes.at(-1).destination, {placeId:session.places.ewr.id});
-    assert.equal(await session.page.locator('#sumPickup').innerText(), session.places.pickup.formattedAddress);
+    const expected = 'Newark Penn Station, ' + session.places.pickup.formattedAddress;
+    assert.equal(await session.page.locator('#sumPickup').innerText(), expected);
+    assert.equal(result.body.verifiedAddresses.pickup, expected);
     assert.equal(session.searches.filter(item => item.textQuery === session.input.pickup).length, 0);
-    assert.ok(session.details.some(item => item.id === session.places.pickup.id));
+    assert.ok(session.details.some(item => item.id === session.places.pickup.id && item.fieldMask.split(',').includes('displayName')));
+    const saved = await savePayLater(session, result);
+    assert.equal(saved.trip.pickup, expected);
+    assert.equal(saved.trip.pickupPlaceId, session.places.pickup.id);
+    assert.ok(session.h.state.routes.every(route => route.origin.placeId === session.places.pickup.id && route.destination.placeId === session.places.ewr.id));
   });
 }
 
-test('an ordinary drop-off selection sends its identity and displays the verified destination', {timeout:35000}, async t => {
+test('an ordinary drop-off retains its verified place name in summary and reservation', {timeout:35000}, async t => {
   const session = await setup(t, 390, {destination:'ordinary'});
+  session.places.dropoff.displayName = {text:'Jersey City Hotel'};
   await customerStep(session);
   const result = await quote(session);
   await successfulSummary(session, result);
   assert.equal(result.sent.dropoffPlaceId, session.places.dropoff.id);
   assert.deepEqual(session.h.state.routes.at(-1).destination, {placeId:session.places.dropoff.id});
-  assert.equal(await session.page.locator('#sumDestination').innerText(), session.places.dropoff.formattedAddress);
+  const expected = 'Jersey City Hotel, ' + session.places.dropoff.formattedAddress;
+  assert.equal(await session.page.locator('#sumDestination').innerText(), expected);
   assert.equal(session.searches.filter(item => item.textQuery === session.input.dropoff).length, 0);
+  const saved = await savePayLater(session, result);
+  assert.equal(saved.trip.dropoff, expected);
+  assert.equal(saved.trip.dropoffPlaceId, session.places.dropoff.id);
 });
+
+for (const mode of ['missing', 'already included']) {
+  test(`a ${mode} place name uses the same unduplicated summary and saved address`, {timeout:35000}, async t => {
+    const session = await setup(t, 390);
+    if (mode === 'missing') delete session.places.pickup.displayName;
+    else session.places.pickup.formattedAddress = 'NEWARK PENN STATION, ' + session.places.pickup.formattedAddress;
+    const expected = session.places.pickup.formattedAddress;
+    await customerStep(session);
+    const result = await quote(session);
+    await successfulSummary(session, result);
+    assert.equal(await session.page.locator('#sumPickup').innerText(), expected);
+    assert.equal(result.body.verifiedAddresses.pickup, expected);
+    assert.equal((expected.match(/newark penn station/gi) || []).length, mode === 'missing' ? 0 : 1);
+    const saved = await savePayLater(session, result);
+    assert.equal(saved.trip.pickup, expected);
+    assert.equal(saved.trip.pickupPlaceId, session.places.pickup.id);
+  });
+}
 
 test('editing selected pickup and drop-off removes both old IDs and uses typed-address verification', {timeout:35000}, async t => {
   const session = await setup(t, 390, {destination:'ordinary'});

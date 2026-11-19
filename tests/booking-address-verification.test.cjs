@@ -28,7 +28,8 @@ test('selected Newark Penn Station resolves by its ID despite two text matches a
   assert.deepEqual(searches,[]);
   assert.ok(details.some(value=>value.id===places.pickup.id));
   assert.ok(details.some(value=>value.id===airportId));
-  assert.equal(result.body.verifiedAddresses.pickup,places.pickup.formattedAddress);
+  assert.equal(result.body.verifiedAddresses.pickup,'Newark Penn Station, '+places.pickup.formattedAddress);
+  assert.ok(details.find(value=>value.id===places.pickup.id).fieldMask.split(',').includes('displayName'));
   assert.equal(result.body.verifiedAddresses.dropoff,undefined,'existing EWR display semantics preserved');
   assert.equal(result.body.tolls.status,'waived');
   assert.equal(result.body.tolls.amountCents,0);
@@ -48,6 +49,69 @@ test('ordinary drop-off selection uses verified NJ identity and canonical addres
   assert.equal(result.body.verifiedAddresses.dropoff,places.dropoff.formattedAddress);
   assert.deepEqual(h.state.routes[0].destination,{placeId:places.dropoff.id});
   assert.equal(result.body.pricingBreakdown.tollsCents,0);noWrites(h);
+});
+
+for(const [description,change,expected]of [
+  ['missing name',place=>{delete place.displayName;},address=>address],
+  ['blank name',place=>{place.displayName={text:'   '};},address=>address],
+  ['name already in address',place=>{place.formattedAddress='Newark Penn Station, '+place.formattedAddress;},address=>address],
+  ['case and punctuation differences',place=>{place.formattedAddress='NEWARK   PENN-STATION, '+place.formattedAddress;},address=>address],
+  ['name equal to address',place=>{place.displayName={text:place.formattedAddress};},address=>address],
+  ['name is not a complete word in address',place=>{place.displayName={text:'Park'};place.formattedAddress='1 Parkway, Newark, NJ 07102, USA';},address=>'Park, '+address]
+])test('summary and saved reservation preserve the verified location: '+description,async t=>{
+  const {h,input,places}=await fixture(t);
+  change(places.pickup);
+  const display=expected(places.pickup.formattedAddress);
+  const reviewed=await quote(h,input);assertOK(reviewed);
+  assert.equal(reviewed.body.verifiedAddresses.pickup,display);
+  assert.deepEqual(h.state.routes[0].origin,{placeId:places.pickup.id});
+  assert.equal(reviewed.body.pricingBreakdown.tollsCents,0);
+  const saved=await h.request('/api/checkout',{...input,paymentChoice:'later',quoteRevision:reviewed.body.quoteRevision});assertOK(saved);
+  assert.equal(h.records()[0].trip.pickup,display);
+  assert.equal(h.records()[0].trip.pickupPlaceId,places.pickup.id);
+  assert.equal(h.records()[0].quote.totalCents,reviewed.body.totalCents);assert.equal(h.state.creates.length,0);
+});
+
+test('ordinary drop-off name is preserved in both the summary and saved reservation',async t=>{
+  const {h,input,places}=await fixture(t,{destination:'ordinary'});
+  places.dropoff.displayName={text:'Jersey City Hotel'};
+  const display='Jersey City Hotel, '+places.dropoff.formattedAddress;
+  const reviewed=await quote(h,input);assertOK(reviewed);
+  assert.equal(reviewed.body.verifiedAddresses.dropoff,display);
+  assert.deepEqual(h.state.routes[0].destination,{placeId:places.dropoff.id});
+  const saved=await h.request('/api/checkout',{...input,paymentChoice:'later',quoteRevision:reviewed.body.quoteRevision});assertOK(saved);
+  assert.equal(h.records()[0].trip.dropoff,display);assert.equal(h.state.creates.length,0);
+});
+
+test('only the Google-verified place name is used instead of the client display label',async t=>{
+  const {h,input,places}=await fixture(t);
+  input.pickup='Unverified client station label';
+  const display='Newark Penn Station, '+places.pickup.formattedAddress;
+  const reviewed=await quote(h,input);assertOK(reviewed);
+  assert.equal(reviewed.body.verifiedAddresses.pickup,display);
+  const saved=await h.request('/api/checkout',{...input,paymentChoice:'later',quoteRevision:reviewed.body.quoteRevision});assertOK(saved);
+  assert.equal(h.records()[0].trip.pickup,display);assert.equal(h.state.creates.length,0);
+});
+
+test('selected place names also survive stopped-trip summaries and saved endpoints',async t=>{
+  const {h,input,places}=await fixture(t,{destination:'ordinary',stops:true});
+  places.dropoff.displayName={text:'Jersey City Hotel'};
+  const pickup='Newark Penn Station, '+places.pickup.formattedAddress;
+  const dropoff='Jersey City Hotel, '+places.dropoff.formattedAddress;
+  const reviewed=await quote(h,input);assertOK(reviewed);
+  assert.equal(reviewed.body.stopSummary.pickup,pickup);assert.equal(reviewed.body.stopSummary.dropoff,dropoff);
+  assert.deepEqual(h.state.routes[0].origin,{placeId:places.pickup.id});assert.deepEqual(h.state.routes[0].destination,{placeId:places.dropoff.id});
+  assert.equal(reviewed.body.pricingBreakdown.tollsCents,0);
+  const saved=await h.request('/api/checkout',{...input,paymentChoice:'later',quoteRevision:reviewed.body.quoteRevision});assertOK(saved);
+  const record=h.records()[0];
+  assert.equal(record.trip.pickup,pickup);assert.equal(record.trip.dropoff,dropoff);
+  assert.equal(record.quote.stopPlan.origin.address,pickup);assert.equal(record.quote.stopPlan.destination.address,dropoff);
+  assert.equal(record.quote.totalCents,reviewed.body.totalCents);assert.equal(h.state.creates.length,0);
+});
+
+test('an oversized combined label cannot silently truncate the saved street address',async t=>{
+  const {h,input,places}=await fixture(t);places.pickup.displayName={text:'N'.repeat(180)};
+  rejected(await quote(h,input),'pickup');noWrites(h);
 });
 
 test('selected NY drop-off remains NY and preserves NJ-to-NYC toll calculations',async t=>{
@@ -155,7 +219,7 @@ test('accepted ordinary addresses remain canonical and frozen Checkout reuse doe
   const reviewed=await quote(h,input);assertOK(reviewed);
   const first=await h.request('/api/checkout',{...input,paymentChoice:'now',quoteRevision:reviewed.body.quoteRevision});assertOK(first);
   const before=h.records()[0],parameters=structuredClone(before.checkoutAttempt.parameters),key=before.checkoutAttempt.key;
-  assert.equal(before.trip.pickup,places.pickup.formattedAddress);assert.equal(before.trip.dropoff,places.dropoff.formattedAddress);
+  assert.equal(before.trip.pickup,'Newark Penn Station, '+places.pickup.formattedAddress);assert.equal(before.trip.dropoff,places.dropoff.formattedAddress);
   assert.equal(before.trip.pickupPlaceId,places.pickup.id);assert.equal(before.trip.dropoffPlaceId,places.dropoff.id);
   assert.doesNotMatch(JSON.stringify(before.trip),/undefined,/);
   const detailCount=details.length,searchCount=searches.length;
