@@ -1059,14 +1059,15 @@ function distanceMiles(
    $150 EWR → MANHATTAN SPECIAL
 ========================================= */
 
-async function verifyEwrPickup(body,req,isPickup=true) {
+async function verifyEwrPickup(body,req,isPickup=true,regularDropoff=false) {
   const id = body.pickupPlaceId;
   // Sanitized EWR diagnostics: fixed categories and booleans, never payload values.
   const labels=['GENERAL','TERMINAL_A','TERMINAL_B','TERMINAL_C'];
   const identity=labels[Object.keys(ewrPickups).indexOf(id)] || 'UNAPPROVED';
   const referenceId=req?.referenceId || crypto.randomUUID();
   const diagnostic=(reason,structure={})=>console.error(JSON.stringify({timestamp:new Date().toISOString(),referenceId,operation:'ewr_verification',identity,reason,...structure}));
-  const rejected = () => new Error("The $150 special requires pickup at Newark Liberty International Airport (EWR).");
+  const rejected = () => regularDropoff ? bookingAddressError("dropoff") :
+    new Error("The $150 special requires pickup at Newark Liberty International Airport (EWR).");
   if (typeof id !== "string" || !Object.hasOwn(ewrPickups,id)) {
     diagnostic(id===undefined||id===null||id===''?'EWR_VERIFY_PLACE_ID_MISSING':typeof id!=='string'?'EWR_VERIFY_PLACE_ID_MALFORMED':'EWR_VERIFY_PLACE_ID_NOT_APPROVED');
     throw rejected();
@@ -1110,7 +1111,11 @@ async function verifyEwrPickup(body,req,isPickup=true) {
   if (!terminalCPickup) names.push(details.displayName.text);
   const compatible=new Set(names.flatMap(name=>[normalize(name),normalize(name+', '+details.formattedAddress)]));
   if(entry.kind==='airport') compatible.add(normalize('Newark Liberty International Airport (EWR), 3 Brewster Rd, Newark, NJ 07114'));
-  const textCompatible=compatible.has(normalize(body.pickup));
+  const text = normalize(body.pickup);
+  // Autocomplete can supply a locality instead of the full Places Details address.
+  const localityLabel = regularDropoff && entry.kind === 'airport' &&
+    /^newark liberty international airport(?: \(ewr\))?, newark, (?:nj|new jersey)(?: 07114)?(?:, (?:usa|united states))?$/.test(text);
+  const textCompatible = compatible.has(text) || localityLabel;
   if(!textCompatible){diagnostic('EWR_VERIFY_TEXT_CONFLICT',{...structure,textCompatible});throw rejected();}
   diagnostic('EWR_VERIFY_SUCCESS',{...structure,textCompatible});
   return {placeId:verificationId, label:details.displayName.text+(terminalCPickup ? " (Terminal C)" : ""),address:details.formattedAddress,location:details.location};
@@ -1235,8 +1240,8 @@ async function verifyBookingLocations(body,req,freshQuote=false) {
   if (fixedOffer && body.dropoffTerminal !== undefined) throw new Error("Invalid request.");
   if (!fixedOffer && body.dropoffTerminal !== undefined) {
     const terminalKeys={general:"ChIJ7wzsxeFSwokRhvLXxTe087M",a:"ChIJ2dQDPZNSwokRVJr9XE2SPt0",b:"ChIJ-6uTxfZSwokR-VfW-WSM53k",c:"ChIJMYEleJSwokRawcDBeH8NVg"};
-    if (!Object.hasOwn(terminalKeys,body.dropoffTerminal) || terminalKeys[body.dropoffTerminal]!==body.dropoffPlaceId) throw new Error("Invalid request.");
-    verifiedDropoff=await verifyEwrPickup({pickupPlaceId:body.dropoffPlaceId,pickup:body.dropoff},req,false);
+    if (!Object.hasOwn(terminalKeys,body.dropoffTerminal) || terminalKeys[body.dropoffTerminal]!==body.dropoffPlaceId) throw bookingAddressError('dropoff');
+    verifiedDropoff=await verifyEwrPickup({pickupPlaceId:body.dropoffPlaceId,pickup:body.dropoff},req,false,true);
   }
   return {fixedOffer,verifiedPickup,verifiedDropoff,nonstopOfferExcluded};
 }

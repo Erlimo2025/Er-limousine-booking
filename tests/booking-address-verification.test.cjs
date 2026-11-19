@@ -41,6 +41,24 @@ test('selected Newark Penn Station resolves by its ID despite two text matches a
   noWrites(h);
 });
 
+test('regular EWR drop-off accepts the airport autocomplete locality label', async t => {
+  const {h, input} = await fixture(t);
+  input.dropoff = 'Newark Liberty International Airport (EWR), Newark, NJ, USA';
+  const result = await quote(h, input);
+  assertOK(result);
+  assert.equal(result.body.pricingBreakdown.tollsCents, 0);
+  assert.deepEqual(h.state.routes[0].destination, {placeId: airportId});
+  noWrites(h);
+});
+
+test('regular EWR drop-off rejects conflicting text with drop-off guidance', async t => {
+  const {h, input} = await fixture(t);
+  input.dropoff = 'Newark Liberty International Airport (EWR), Newark, DE, USA';
+  rejected(await quote(h, input), 'dropoff');
+  assert.equal(h.state.routes.length, 0);
+  noWrites(h);
+});
+
 test('ordinary drop-off selection uses verified NJ identity and canonical address without another text search',async t=>{
   const {h,input,places,searches,details}=await fixture(t,{destination:'ordinary'});
   const result=await quote(h,input);assertOK(result);
