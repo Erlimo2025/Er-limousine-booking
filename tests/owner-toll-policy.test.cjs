@@ -163,19 +163,21 @@ test('a stop across the border does not make an excluded endpoint pair chargeabl
   await bookAndPay(h,trip,quote,'later');
 });
 
-for (const [label,alter] of [
+for (const [label,alter,addressFailure] of [
   ['missing county',list=>list[0].addressComponents.splice(2,1)],
   ['ambiguous county',list=>list[0].addressComponents.push({types:['administrative_area_level_2'],longText:'Orange County'})],
   ['unknown county',list=>{list[0].addressComponents[2].longText='Unverified County';}],
-  ['unverified state',list=>{list[0].addressComponents[1].shortText='invalid';}],
-  ['ambiguous resolution',list=>list.push({...list[0],id:'policy_other_result'})]
+  ['unverified state',list=>{list[0].addressComponents[1].shortText='invalid';},true],
+  ['ambiguous resolution',list=>list.push({...list[0],id:'policy_other_result'}),true]
 ]) {
   test(label+' cannot authorize a charge or waiver',async t=>{
     const h = await harness(t,enabled);
     const trip = configure(h,nj,boroughs[0]);
     alter(h.state.searchResults[trip.dropoff]);
     const response = await h.request('/api/quote',{...trip,dropoffCounty:'New York County',dropoffState:'PA'});
-    assert.equal(response.status,422);
+    assert.equal(response.status,addressFailure?400:422);
+    assert.equal(response.body.code,addressFailure?'ADDRESS_VERIFICATION_FAILED':'TOLL_ESTIMATE_UNAVAILABLE');
+    if(addressFailure)assert.equal(response.body.field,'dropoff');
     assert.equal(response.body.checkoutAllowed,false);
     assert.equal(h.state.routes.length,0);
   });

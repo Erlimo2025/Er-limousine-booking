@@ -398,9 +398,9 @@ function getFormData() {
   }
 
   if (pickup.dataset.placeId) data.pickupPlaceId = pickup.dataset.placeId;
+  if (data.tripType !== "hourly" && dropoff.dataset.placeId) data.dropoffPlaceId = dropoff.dataset.placeId;
   if (!pickupTerminal.disabled) data.pickupTerminal = pickupTerminal.value || "general";
   if (data.tripType !== "hourly" && !dropoffTerminal.disabled) {
-    data.dropoffPlaceId = dropoff.dataset.placeId;
     data.dropoffTerminal = dropoffTerminal.value || "general";
   }
   const stops = bookingStopEditor?.values();
@@ -1293,8 +1293,8 @@ function displayQuoteForReview(data, bookingData, requestKey) {
   sumMinutesLabel.textContent = data.roundTrip ? "Estimated Drive Time (round trip)" : "Estimated Drive Time";
   sumTotalLabel.textContent = "Total";
   const stopSummary = data.stopSummary;
-  document.getElementById("sumPickup").textContent = stopSummary?.pickup || bookingData.pickup;
-  document.getElementById("sumDestination").textContent = stopSummary?.dropoff || bookingData.dropoff;
+  document.getElementById("sumPickup").textContent = stopSummary?.pickup || data.verifiedAddresses?.pickup || bookingData.pickup;
+  document.getElementById("sumDestination").textContent = stopSummary?.dropoff || data.verifiedAddresses?.dropoff || bookingData.dropoff;
   const destinationLabel = document.getElementById("sumDestinationLabel");
   if (destinationLabel) destinationLabel.textContent = stopSummary ? "Final Destination" : "Destination";
   globalThis.BookingStops?.renderSummary(document.getElementById("summaryStops"),stopSummary);

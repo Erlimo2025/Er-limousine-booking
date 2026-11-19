@@ -72,7 +72,25 @@ app.use((req,res,next)=>{
 
 // Explicit customer-safe message allowlist. HTTP status alone never grants trust.
 const ONLINE_PAYMENT_UNAVAILABLE = "Online payment is temporarily unavailable. Please try again later or contact ER Limousine Service.";
+const bookingAddressMessages = {
+  pickup: {
+    invalid: 'Please select your pickup location from the address suggestions and try again.',
+    unavailable: 'Pickup address lookup is temporarily unavailable. Please try again.'
+  },
+  dropoff: {
+    invalid: 'Please select your drop-off location from the address suggestions and try again.',
+    unavailable: 'Drop-off address lookup is temporarily unavailable. Please try again.'
+  }
+};
+function bookingAddressError(field, unavailable = false) {
+  return Object.assign(new Error(bookingAddressMessages[field][unavailable ? 'unavailable' : 'invalid']),
+    {addressField: field, addressUnavailable: unavailable});
+}
 const customerErrorMessages=new Map();
+for (const messages of Object.values(bookingAddressMessages)) {
+  customerErrorMessages.set(messages.invalid, {message: messages.invalid, status: 400});
+  customerErrorMessages.set(messages.unavailable, {message: messages.unavailable, status: 503});
+}
 customerErrorMessages.set(ONLINE_PAYMENT_UNAVAILABLE,{message:ONLINE_PAYMENT_UNAVAILABLE,status:503});
 for(const message of [
   'Unknown vehicle type.','A valid vehicle is required.','A valid trip type is required.',
@@ -139,8 +157,15 @@ function sendSafeError(req,res,error,fallbackStatus=500) {
     if(req.diagnosticTollReason.startsWith('provider_')){category='provider_error';provider='google';}
     else if(req.diagnosticTollReason==='vehicle_estimate_profile_missing')category='configuration_unavailable';
   }
+  const addressField = ['pickup', 'dropoff'].includes(error?.addressField) ? error.addressField : null;
+  if (addressField) {
+    category = error.addressUnavailable ? 'provider_error' : 'validation_error';
+    if (error.addressUnavailable) provider = 'google';
+  }
   req.diagnosticCategory=category;req.diagnosticProvider=provider;
   return res.status(status).json({error:trusted?message:`${message} Reference: ${req.referenceId}`,
+    ...(addressField ? {code: error.addressUnavailable ? 'ADDRESS_LOOKUP_UNAVAILABLE' : 'ADDRESS_VERIFICATION_FAILED',
+      field: addressField, checkoutAllowed: false} : {}),
     ...(error?.tollReview===true?{code:'TOLL_ESTIMATE_UNAVAILABLE',tollStatus:'review_required',checkoutAllowed:false}:{})});
 }
 
@@ -279,12 +304,14 @@ function rateLimit(scope, limit, windowMs = MINUTE) {
 
 // Timeout covers both the request and reading the response body.
 async function googleJson(url, options, ewrDiagnostic) {
+  let providerStatus;
   try {
     if(ewrDiagnostic) ewrDiagnostic('EWR_VERIFY_PROVIDER_REQUEST_STARTED');
     let response;
     try { response=await fetch(url, { ...options, signal: AbortSignal.timeout(8000) }); }
     catch(error) { if(ewrDiagnostic) ewrDiagnostic(error?.name==='TimeoutError'||error?.name==='AbortError'?'EWR_VERIFY_PROVIDER_TIMEOUT':'EWR_VERIFY_PROVIDER_NETWORK_FAILURE'); throw error; }
     if (!response.ok) {
+      if (Number.isInteger(response.status) && response.status >= 100 && response.status <= 599) providerStatus = response.status;
       if(ewrDiagnostic) {
         const diagnostic=Number.isInteger(response.status)&&response.status>=100&&response.status<=599?{providerStatus:response.status}:{};
         const statuses=new Set(['CANCELLED','UNKNOWN','INVALID_ARGUMENT','DEADLINE_EXCEEDED','NOT_FOUND','ALREADY_EXISTS','PERMISSION_DENIED','RESOURCE_EXHAUSTED','FAILED_PRECONDITION','ABORTED','OUT_OF_RANGE','UNIMPLEMENTED','INTERNAL','UNAVAILABLE','DATA_LOSS','UNAUTHENTICATED']);
@@ -303,7 +330,8 @@ async function googleJson(url, options, ewrDiagnostic) {
     if(ewrDiagnostic) ewrDiagnostic('EWR_VERIFY_PROVIDER_RESPONSE_RECEIVED');
     return data;
   } catch (_) {
-    throw new Error("Address and route lookup is temporarily unavailable. Please try again.");
+    throw Object.assign(new Error("Address and route lookup is temporarily unavailable. Please try again."),
+      providerStatus === undefined ? {} : {googleStatus: providerStatus});
   }
 }
 
@@ -872,13 +900,53 @@ function verifiedRoutePlace(place) {
     address: place.formattedAddress.trim(), location: place.location};
 }
 
-async function verifyTollLocation(text, airportProof) {
+async function verifySelectedBookingLocation(id, field) {
+  if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,255}$/.test(id)) throw bookingAddressError(field);
+  if (!process.env.GOOGLE_MAPS_API_KEY) throw bookingAddressError(field, true);
+  let place;
+  try {
+    place = await googleJson('https://places.googleapis.com/v1/places/' + encodeURIComponent(id), {
+      headers: {'X-Goog-Api-Key': process.env.GOOGLE_MAPS_API_KEY,
+        'X-Goog-FieldMask': 'id,displayName,formattedAddress,addressComponents,location'}
+    });
+  } catch (error) {
+    throw bookingAddressError(field, ![400, 404].includes(error.googleStatus));
+  }
+  try {
+    const verified = verifiedRoutePlace(place);
+    if (verified.placeId !== id || !bookingStops.address(verified.address)) throw new Error();
+    const name = typeof place.displayName?.text === 'string' ? place.displayName.text.trim() : '';
+    const proof = {...verified, selectedPlace: true, ...(name ? {name} : {})};
+    // Summary and storage share the existing address limit; never truncate a
+    // verified street address to make room for a place name.
+    if (!bookingStops.address(verifiedBookingAddress(proof))) throw new Error();
+    return Object.defineProperty(proof, 'addressComponents', {value: place.addressComponents});
+  } catch (_) { throw bookingAddressError(field); }
+}
+
+function verifiedBookingAddress(proof) {
+  if (!proof.selectedPlace) return `${proof.label}, ${proof.address}`;
+  if (!proof.name) return proof.address;
+  const normalize = value => value.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  const name = normalize(proof.name);
+  if (name && ` ${normalize(proof.address)} `.includes(` ${name} `)) return proof.address;
+  const namedAddress = `${proof.name}, ${proof.address}`;
+  return namedAddress.length > 200 ? proof.address : namedAddress;
+}
+
+async function verifyTollLocation(text, airportProof, field = 'pickup') {
+  // Ordinary details have already passed the country/state checks. Never apply
+  // the EWR-only NJ shortcut to another selected location.
+  if (airportProof?.selectedPlace) return airportProof;
   // Airport proof exists only after the maintained EWR identity/location checks.
   // Its verified EWR geography establishes NJ, including Terminal C's fallback.
   if (airportProof) return {state:'NJ',placeId:airportProof.placeId,location:airportProof.location,
     address:sanitizeText(airportProof.label+', '+airportProof.address,200)};
   // Browser state/ID fields never choose the jurisdiction.
-  return verifiedRoutePlace(await lookupPlace(text,true));
+  try { return verifiedRoutePlace(await lookupPlace(text,true)); }
+  catch (error) {
+    throw bookingAddressError(field, error?.message === 'Address and route lookup is temporarily unavailable. Please try again.');
+  }
 }
 
 async function verifyStop(stop) {
@@ -902,15 +970,15 @@ async function verifyStop(stop) {
 }
 
 async function verifyStopJourney(pickupText, dropoffText, verifiedPickup, verifiedDropoff, requested) {
-  const verifyEndpoint = async (text, proof) => {
+  const verifyEndpoint = async (text, proof, field) => {
     try {
-      const point = await verifyTollLocation(text, proof);
+      const point = await verifyTollLocation(text, proof, field);
       if (!bookingStops.address(point.address)) throw new Error();
       return point;
-    } catch (_) { throw new Error(bookingStops.errors.route); }
+    } catch (error) { throw error.addressField ? error : new Error(bookingStops.errors.route); }
   };
   const [origin, destination, ...stops] = await Promise.all([
-    verifyEndpoint(pickupText, verifiedPickup), verifyEndpoint(dropoffText, verifiedDropoff),
+    verifyEndpoint(pickupText, verifiedPickup, 'pickup'), verifyEndpoint(dropoffText, verifiedDropoff, 'dropoff'),
     ...requested.map(verifyStop)
   ]);
   if (!routeTollPricing.advanceCoverage(origin, destination) ||
@@ -1049,7 +1117,7 @@ async function verifyEwrPickup(body,req,isPickup=true) {
 
 }
 
-async function verifyFixedOffer(body,req) {
+async function verifyFixedOffer(body,req,selectedDropoff) {
   const code =
     sanitizeText(
       body.offerCode,
@@ -1098,7 +1166,7 @@ async function verifyFixedOffer(body,req) {
     dropoffPlace
   ] = await Promise.all([
     verifyEwrPickup(body,req),
-    lookupPlace(body.dropoff)
+    selectedDropoff || lookupPlace(body.dropoff)
   ]);
 
   if (
@@ -1118,7 +1186,7 @@ async function verifyFixedOffer(body,req) {
     the Manhattan sublocality.
   */
 
-  const isManhattan =
+  const isManhattan = (!selectedDropoff || selectedDropoff.state === 'NY') && (
     componentEquals(
       dropoffPlace,
       "administrative_area_level_2",
@@ -1133,7 +1201,7 @@ async function verifyFixedOffer(body,req) {
       dropoffPlace,
       "sublocality",
       "Manhattan"
-    );
+    ));
 
   if (!isManhattan) {
     throw new Error(
@@ -1146,16 +1214,24 @@ async function verifyFixedOffer(body,req) {
   return verifiedOffer;
 }
 
-async function verifyBookingLocations(body,req) {
+async function verifyBookingLocations(body,req,freshQuote=false) {
+  const selectedLocation = field => {
+    const id = body[field + 'PlaceId'];
+    return !freshQuote || id === undefined || body[field + 'Terminal'] !== undefined ||
+      field === 'pickup' && !body.stops?.length && !!sanitizeText(body.offerCode, 50) ||
+      typeof id === 'string' && Object.hasOwn(ewrPickups, id)
+      ? undefined : verifySelectedBookingLocation(id, field);
+  };
+  const [selectedPickup, selectedDropoff] = await Promise.all([selectedLocation('pickup'), selectedLocation('dropoff')]);
   const nonstopOfferExcluded = !!body.stops?.length && sanitizeText(body.offerCode,50).toUpperCase() === 'EWR_MANHATTAN_SUV';
-  const fixedOffer = nonstopOfferExcluded ? null : await verifyFixedOffer(body,req);
-  let verifiedPickup = fixedOffer?.verifiedPickup;
+  const fixedOffer = nonstopOfferExcluded ? null : await verifyFixedOffer(body,req,selectedDropoff);
+  let verifiedPickup = fixedOffer?.verifiedPickup || selectedPickup;
   if (!fixedOffer && body.pickupTerminal !== undefined) {
     const terminalKeys={general:"ChIJ7wzsxeFSwokRhvLXxTe087M",a:"ChIJ2dQDPZNSwokRVJr9XE2SPt0",b:"ChIJ-6uTxfZSwokR-VfW-WSM53k",c:"ChIJMYEleJSwokRawcDBeH8NVg"};
     if (!Object.hasOwn(terminalKeys,body.pickupTerminal) || terminalKeys[body.pickupTerminal]!==body.pickupPlaceId) throw new Error("Invalid request.");
     verifiedPickup=await verifyEwrPickup(body,req);
   }
-  let verifiedDropoff;
+  let verifiedDropoff = selectedDropoff;
   if (fixedOffer && body.dropoffTerminal !== undefined) throw new Error("Invalid request.");
   if (!fixedOffer && body.dropoffTerminal !== undefined) {
     const terminalKeys={general:"ChIJ7wzsxeFSwokRhvLXxTe087M",a:"ChIJ2dQDPZNSwokRVJr9XE2SPt0",b:"ChIJ-6uTxfZSwokR-VfW-WSM53k",c:"ChIJMYEleJSwokRawcDBeH8NVg"};
@@ -1361,7 +1437,9 @@ async function calculateQuote(body,req) {
 
   const requestedStops = body.stops || [];
   const waiting = requestedStops.length ? bookingStops.waitingPlan(requestedStops, body.vehicle, process.env.BOOKING_STOP_WAITING_RATES_CENTS_JSON) : null;
-  const {fixedOffer,verifiedPickup,verifiedDropoff,nonstopOfferExcluded} = await verifyBookingLocations(body,req);
+  // Resolve fresh ordinary selections once; stored Checkout retries do not use
+  // this mode and retain their original accepted route and payment parameters.
+  const {fixedOffer,verifiedPickup,verifiedDropoff,nonstopOfferExcluded} = await verifyBookingLocations(body,req,true);
   const stopJourney = waiting ? await verifyStopJourney(body.pickup,body.dropoff,verifiedPickup,verifiedDropoff,requestedStops) : null;
   const tollProfile = tollPricingEnabled ? (tollEstimateMode
     ? routeTollPricing.customerEstimateProfile(pricing,process.env,body.vehicle)
@@ -1374,7 +1452,7 @@ async function calculateQuote(body,req) {
   if(tollPricingEnabled && !fixedOffer && !isHourly){
     try {
       const [from,to]=stopJourney ? [stopJourney.origin,stopJourney.destination] :
-        await Promise.all([verifyTollLocation(body.pickup,verifiedPickup),verifyTollLocation(body.dropoff,verifiedDropoff)]);
+        await Promise.all([verifyTollLocation(body.pickup,verifiedPickup,'pickup'),verifyTollLocation(body.dropoff,verifiedDropoff,'dropoff')]);
       tollEligibility=routeTollPricing.eligibility(from,to);
       outboundTolls=routeTollPricing.chargeableLeg(from,to);
       returnTolls=isRoundTrip&&routeTollPricing.chargeableLeg(to,from);
@@ -1393,7 +1471,7 @@ async function calculateQuote(body,req) {
           }
         }
       }
-    }catch(error){throw error?.tollReview===true?error:routeTollPricing.reviewError('location_unverified');}
+    }catch(error){throw error?.tollReview===true || error?.addressField ? error : routeTollPricing.reviewError('location_unverified');}
   }
   const departure = !isHourly && (isRoundTrip || tollPricingEnabled || stopJourney) ?
     new Date(parseServiceDateTime(body.date, body.time, "pickup")).toISOString() : undefined;
@@ -1452,6 +1530,7 @@ async function calculateQuote(body,req) {
 
       fixedOffer
     };
+    if (verifiedDropoff) Object.defineProperty(specialQuote, 'verifiedDropoff', {value: verifiedDropoff});
     // This offer is $150 all-inclusive, even when the internal toll cost is unknown.
     const internalTolls=routeTollPricing.aggregateTolls([route?.tolls || {status:'unknown',amountCents:null}],tollProfile);
     return routeTollPricing.attachTolls(specialQuote,internalTolls,true);
@@ -1527,7 +1606,8 @@ async function calculateQuote(body,req) {
   if (verifiedPickup) Object.defineProperty(normalQuote,"verifiedPickup",{value:verifiedPickup});
   if (verifiedDropoff) Object.defineProperty(normalQuote,"verifiedDropoff",{value:verifiedDropoff});
   if (stopJourney) {
-    bookingStops.addWaiting(normalQuote, bookingStops.buildPlan(stopJourney.origin,stopJourney.destination,stopJourney.stops,departure,waiting));
+    const displayEndpoint = point => point.selectedPlace ? {...point, address:verifiedBookingAddress(point)} : point;
+    bookingStops.addWaiting(normalQuote, bookingStops.buildPlan(displayEndpoint(stopJourney.origin),displayEndpoint(stopJourney.destination),stopJourney.stops,departure,waiting));
     if (nonstopOfferExcluded) Object.defineProperty(normalQuote,'nonstopOfferExcluded',{value:true});
   }
   // Hourly bookings have no complete route. Preserve their existing fare and
@@ -1608,6 +1688,8 @@ function createBookingRecord(
 
 
     trip: {
+      ...(quote?.verifiedPickup?.selectedPlace ? {pickupPlaceId:quote.verifiedPickup.placeId} : {}),
+      ...(quote?.verifiedDropoff?.selectedPlace ? {dropoffPlaceId:quote.verifiedDropoff.placeId} : {}),
       ...(body.dropoffTerminal !== undefined ? {dropoffPlaceId:body.dropoffPlaceId || null} : {}),
       ...((body.offerCode || body.pickupTerminal !== undefined) ? {pickupPlaceId:body.pickupPlaceId || null} : {}),
       ...(quote?.stopPlan && body.pickupTerminal === undefined ? {pickupPlaceId:quote.stopPlan.origin.placeId} : {}),
@@ -1620,12 +1702,12 @@ function createBookingRecord(
 
       pickup:
         sanitizeText(
-          (quote?.fixedOffer?.verifiedPickup || quote?.verifiedPickup) ? `${(quote.fixedOffer?.verifiedPickup || quote.verifiedPickup).label}, ${(quote.fixedOffer?.verifiedPickup || quote.verifiedPickup).address}` : (quote?.stopPlan?.origin.address ?? body.pickup)
+          (quote?.fixedOffer?.verifiedPickup || quote?.verifiedPickup) ? verifiedBookingAddress(quote.fixedOffer?.verifiedPickup || quote.verifiedPickup) : (quote?.stopPlan?.origin.address ?? body.pickup)
         ),
 
       dropoff:
         sanitizeText(
-          quote?.verifiedDropoff ? `${quote.verifiedDropoff.label}, ${quote.verifiedDropoff.address}` : (quote?.stopPlan?.destination.address ?? body.dropoff)
+          quote?.verifiedDropoff ? verifiedBookingAddress(quote.verifiedDropoff) : (quote?.stopPlan?.destination.address ?? body.dropoff)
         ),
 
       date:
@@ -2350,7 +2432,12 @@ app.get(
 
 function quoteForReview(req, res, fingerprint, quote) {
   const {stopPlan: _privateStopPlan, stopQuoteRevision, ...displayQuote} = routeTollPricing.customerQuote(quote);
+  const verifiedAddresses = Object.fromEntries(['pickup', 'dropoff'].flatMap(field => {
+    const proof = quote[field === 'pickup' ? 'verifiedPickup' : 'verifiedDropoff'];
+    return proof?.selectedPlace ? [[field, verifiedBookingAddress(proof)]] : [];
+  }));
   return {...displayQuote, ...bookingStops.publicSummary(quote),
+    ...(Object.keys(verifiedAddresses).length ? {verifiedAddresses} : {}),
     ...(stopQuoteRevision ? {quoteRevision: stopQuoteRevision} : {}),
     ...(quote.nonstopOfferExcluded ? {nonstopOfferExcluded: true} : {}),
     cancellationPolicy: cancellationPolicy.currentPolicy,
